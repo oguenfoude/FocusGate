@@ -54,16 +54,8 @@ public class MongoSyncService : BackgroundService
         var connected = await _mongo.TestConnectionAsync();
         if (!connected)
         {
-            _logger.LogWarning("MongoDB unavailable — sync disabled until connection succeeds");
-            while (!stoppingToken.IsCancellationRequested)
-            {
-                await Task.Delay(TimeSpan.FromSeconds(60), stoppingToken);
-                if (await _mongo.TestConnectionAsync())
-                {
-                    _logger.LogInformation("MongoDB now available — resuming sync");
-                    break;
-                }
-            }
+            _logger.LogWarning("MongoDB unavailable — sync disabled (app works without cloud)");
+            return;
         }
 
         while (!stoppingToken.IsCancellationRequested)

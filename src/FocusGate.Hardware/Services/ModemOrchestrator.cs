@@ -144,12 +144,18 @@ public class ModemOrchestrator : BackgroundService
         }
 
         // Orphan check runs AFTER probes so all active IMEIs are registered
+        if (ct.IsCancellationRequested) return;
+
         string[] activeImeiArray;
         lock (_activeImeis)
         {
             activeImeiArray = _activeImeis.ToArray();
         }
-        await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.UpdateOrphanedModems, Data = new { ActiveImeis = activeImeiArray } });
+        try
+        {
+            await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.UpdateOrphanedModems, Data = new { ActiveImeis = activeImeiArray } });
+        }
+        catch { }
     }
 
     private async Task<(ModemHandler? handler, string imei)> ProbeAsync(string port, CancellationToken ct)
