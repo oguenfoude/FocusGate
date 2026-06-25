@@ -216,10 +216,8 @@ public partial class AtCommandService : IAtCommandService
 
     public async Task<string> GetPhoneNumberViaUssdAsync()
     {
-        // Mobilis Algeria: *101# with DCS=15
-        // NOTE: ZTE MF667 modems do not send +CUSD: URC — USSD returns only OK.
-        // This is a known modem firmware limitation. We try quickly and fall back.
-        var resp = await SendUssdAsync("*101#", 10000);
+        var phoneCode = _config.Get("modem.ussd.phone_code", "*101#");
+        var resp = await SendUssdAsync(phoneCode, 10000);
         _logger.LogInformation("[USSD] Phone raw response: {Raw}", resp.ReplaceLineEndings(" "));
 
         var decoded = DecodeUssdResponse(resp);
@@ -249,8 +247,8 @@ public partial class AtCommandService : IAtCommandService
 
     public async Task<decimal?> GetBalanceAsync()
     {
-        // Mobilis Algeria: *222# with DCS=15, response is UTF-16 hex
-        var resp = await SendUssdAsync("*222#", 10000);
+        var balanceCode = _config.Get("modem.ussd.balance_code", "*222#");
+        var resp = await SendUssdAsync(balanceCode, 10000);
         _logger.LogInformation("[USSD] Balance raw response: {Raw}", resp.ReplaceLineEndings(" "));
 
         var decoded = DecodeUssdResponse(resp);

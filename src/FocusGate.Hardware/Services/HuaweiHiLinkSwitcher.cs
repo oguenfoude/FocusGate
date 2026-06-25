@@ -24,37 +24,9 @@ public static class HuaweiHiLinkSwitcher
         "F4-55-9C", "F4-C7-14"
     ];
 
-    public static async Task<int> DetectAndSwitchAsync(string[] gatewayIps, ILogger logger, CancellationToken ct)
+    public static HashSet<string> FindHuaweiGateways()
     {
-        var gateways = new List<string>();
-
-        var macGateways = FindHuaweiGateways();
-        gateways.AddRange(macGateways);
-        logger.LogInformation("Found {Count} Huawei adapter(s) via MAC", macGateways.Count);
-
-        foreach (var ip in gatewayIps)
-        {
-            if (!gateways.Contains(ip)) gateways.Add(ip);
-        }
-
-        if (gateways.Count == 0) return 0;
-
-        logger.LogInformation("Scanning {Count} gateway(s) for Huawei HiLink...", gateways.Count);
-
-        int switched = 0;
-        foreach (var ip in gateways)
-        {
-            if (ct.IsCancellationRequested) break;
-            var result = await ProbeAndSwitchAsync(ip, logger, ct);
-            if (result) switched++;
-        }
-
-        return switched;
-    }
-
-    public static List<string> FindHuaweiGateways()
-    {
-        var gateways = new List<string>();
+        var gateways = new HashSet<string>();
 
         try
         {
@@ -92,33 +64,42 @@ public static class HuaweiHiLinkSwitcher
         return $"{clean[0..2]}-{clean[2..4]}-{clean[4..6]}-{clean[6..8]}-{clean[8..10]}-{clean[10..12]}";
     }
 
-    private static async Task<bool> ProbeAndSwitchAsync(string ip, ILogger logger, CancellationToken ct)
+    public static async Task<int> DetectAndOpenBrowsersAsync(ILogger logger, CancellationToken ct)
     {
-        try
+        var gateways = FindHuaweiGateways();
+        if (gateways.Count == 0)
         {
+            logger.LogDebug("No Huawei adapters detected via MAC");
+            return 0;
+        }
+
+        logger.LogInformation("Found {Count} Huawei adapter(s) via MAC", gateways.Count);
+
+        int opened = 0;
+        foreach (var ip in gateways)
+        {
+            if (ct.IsCancellationRequested) break;
+
             var deviceInfo = await GetDeviceInfoAsync(ip, ct);
-            if (deviceInfo == null) return false;
+            if (deviceInfo == null) continue;
 
-            logger.LogInformation("Huawei HiLink found at {Ip} — Model: {Model}, FW: {Firmware}",
-                ip, deviceInfo.Model, deviceInfo.Firmware);
+            logger.LogWarning("Huawei HiLink detected at {Ip} — Model: {Model}, FW: {Firmware}", ip, deviceInfo.Model, deviceInfo.Firmware);
+            OpenBrowser(ip, logger);
 
-            var apiResult = await TryHiLinkApiSwitchAsync(ip, logger, ct);
-            if (apiResult)
-            {
-                logger.LogInformation("Mode switch triggered via HiLink API on {Ip}", ip);
-                return true;
-            }
+            logger.LogWarning("=== MANUAL SWITCH REQUIRED for Huawei {Model} ===", deviceInfo.Model);
+            logger.LogWarning("The modem is in HiLink mode (no COM ports). To use as SMS modem:");
+            logger.LogWarning("  1. A browser window opened to the modem web UI");
+            logger.LogWarning("  2. Login if prompted (default password: admin)");
+            logger.LogWarning("  3. Look for 'USB Mode' or 'Network Mode' in Settings");
+            logger.LogWarning("  4. Change from 'HiLink' to 'Modem' or 'Stick' mode");
+            logger.LogWarning("  5. The modem will reboot — wait 60 seconds");
+            logger.LogWarning("  6. The app will detect the new COM port automatically");
+            logger.LogWarning("If no USB Mode option exists, install Huawei Mobile Broadband drivers from huawei.com");
 
-            logger.LogWarning("Cannot auto-switch {Ip} — opening web UI for manual switch", ip);
-            OpenBrowserForManualSwitch(ip, deviceInfo, logger);
-            return false;
+            opened++;
         }
-        catch (OperationCanceledException) { return false; }
-        catch (Exception ex)
-        {
-            logger.LogDebug("HiLink probe {Ip} failed: {Error}", ip, ex.Message);
-            return false;
-        }
+
+        return opened;
     }
 
     private static async Task<DeviceInfo?> GetDeviceInfoAsync(string ip, CancellationToken ct)
@@ -161,53 +142,9 @@ public static class HuaweiHiLinkSwitcher
         return null;
     }
 
-    private static async Task<bool> TryHiLinkApiSwitchAsync(string ip, ILogger logger, CancellationToken ct)
-    {
-        string[] apiPaths =
-        [
-            "/api/device/control",
-            "/api/system/mode-switch",
-            "/api/usb-switch"
-        ];
-
-        string[] payloads =
-        [
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><request><Control>1</Control></request>",
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><request><DataCard>modem</DataCard></request>",
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><request><SwitchMode>1</SwitchMode></request>"
-        ];
-
-        foreach (var apiPath in apiPaths)
-        {
-            foreach (var payload in payloads)
-            {
-                try
-                {
-                    var url = $"http://{ip}{apiPath}";
-                    using var content = new StringContent(payload, Encoding.UTF8, "application/xml");
-                    using var response = await SharedClient.PostAsync(url, content, ct);
-
-                    if (response.IsSuccessStatusCode)
-                    {
-                        var body = await response.Content.ReadAsStringAsync(ct);
-                        if (body.Contains("OK") || body.Contains("success") || body.Contains("Success") || body.Length < 50)
-                        {
-                            logger.LogInformation("HiLink API {Path} responded on {Ip}", apiPath, ip);
-                            return true;
-                        }
-                    }
-                }
-                catch { }
-            }
-        }
-
-        return false;
-    }
-
-    private static void OpenBrowserForManualSwitch(string ip, DeviceInfo device, ILogger logger)
+    private static void OpenBrowser(string ip, ILogger logger)
     {
         var url = $"http://{ip}/html/index.html";
-
         try
         {
             Process.Start(new ProcessStartInfo
@@ -223,20 +160,6 @@ public static class HuaweiHiLinkSwitcher
         {
             logger.LogWarning("Could not open browser: {Error}", ex.Message);
         }
-
-        logger.LogWarning("=== MANUAL SWITCH REQUIRED for Huawei {Model} (FW: {Firmware}) ===", device.Model, device.Firmware);
-        logger.LogWarning("The modem is in HiLink mode (network adapter). To use as SMS modem:");
-        logger.LogWarning("  1. A browser window opened to the modem web UI");
-        logger.LogWarning("  2. Login if prompted (default password: admin)");
-        logger.LogWarning("  3. Look for 'USB Mode' or 'Network Mode' in Settings");
-        logger.LogWarning("  4. Change from 'HiLink' to 'Modem' or 'Stick' mode");
-        logger.LogWarning("  5. The modem will reboot — wait 60 seconds");
-        logger.LogWarning("  6. The app will detect the new COM port automatically");
-        logger.LogWarning("");
-        logger.LogWarning("If no USB Mode option exists, you need Huawei drivers:");
-        logger.LogWarning("  1. Download Huawei Mobile Broadband drivers from huawei.com");
-        logger.LogWarning("  2. Install the drivers (includes 'PC UI Interface' serial port)");
-        logger.LogWarning("  3. Run the app again — it will detect the modem via AT commands");
     }
 
     private sealed class DeviceInfo

@@ -50,6 +50,23 @@ public static class ConfigMerger
             }
         }
 
+        if (existing.TryGetValue("mongodb.uri", out var currentUri))
+        {
+            if (currentUri.Contains("ac-8knjxta-shard") || currentUri.StartsWith("mongodb://", StringComparison.OrdinalIgnoreCase))
+            {
+                existing["mongodb.uri"] = RequiredKeys["mongodb.uri"];
+                changed = true;
+                Console.WriteLine("[ConfigMerger] Migrated MongoDB URI to SRV connection");
+            }
+        }
+
+        var deadKeys = new[] { "huawei.hilink.auto_switch", "huawei.hilink.gateway_ips" };
+        foreach (var dead in deadKeys)
+        {
+            if (existing.Remove(dead))
+                changed = true;
+        }
+
         if (changed || !File.Exists(configPath))
         {
             var sorted = existing.OrderBy(k => k.Key).ToDictionary(k => k.Key, k => k.Value);
