@@ -20,7 +20,6 @@ public class ModemOrchestrator : BackgroundService
     private readonly Dictionary<string, (ModemHandler handler, string imei)> _handlers = new();
     private readonly HashSet<string> _activeImeis = new();
     private readonly HashSet<string> _failedPorts = new();
-    private bool _huaweiChecked = false;
 
     public ModemOrchestrator(IServiceProvider services, DatabaseWriteChannel db, ILogger<ModemOrchestrator> log)
     {
@@ -65,13 +64,6 @@ public class ModemOrchestrator : BackgroundService
 
     private async Task ScanAsync(CancellationToken ct)
     {
-        if (!_huaweiChecked)
-        {
-            _huaweiChecked = true;
-            try { await HuaweiHiLinkSwitcher.DetectAndOpenBrowsersAsync(_log, ct); }
-            catch (Exception ex) { _log.LogDebug("Huawei detection failed: {Error}", ex.Message); }
-        }
-
         var ports = SerialPort.GetPortNames();
 
         lock (_handlers)
