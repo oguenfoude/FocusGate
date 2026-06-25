@@ -7,7 +7,7 @@ public static class ConfigMerger
     private static readonly Dictionary<string, string> RequiredKeys = new()
     {
         ["gateway.name"] = "FocusGate",
-        ["gateway.admin.password"] = "Admin@FocusGate2024",
+        ["gateway.admin.password"] = "ChangeMeImmediately",
         ["machine.id"] = "",
         ["sms.verification.enabled"] = "true",
         ["sms.verification.threshold"] = "50000",
@@ -22,11 +22,13 @@ public static class ConfigMerger
         ["modem.ussd.phone_code"] = "*101#",
         ["modem.ussd.balance_code"] = "*222#",
         ["modem.ussd.dcs"] = "15",
-        ["mongodb.uri"] = "mongodb+srv://admin:admin@cluster0.ldndrwe.mongodb.net/?appName=Cluster0",
+        ["mongodb.uri"] = "mongodb+srv://user:password@cluster.example.net/?appName=Cluster0",
         ["mongodb.database"] = "focusgate",
         ["sync.interval_seconds"] = "30",
         ["app.version"] = "1.0.0"
     };
+
+    private const string MigratedUri = "mongodb+srv://user:password@cluster.example.net/?appName=Cluster0";
 
     public static void EnsureConfig(string configPath)
     {
@@ -52,11 +54,11 @@ public static class ConfigMerger
 
         if (existing.TryGetValue("mongodb.uri", out var currentUri))
         {
-            if (currentUri.Contains("ac-8knjxta-shard") || currentUri.StartsWith("mongodb://", StringComparison.OrdinalIgnoreCase))
+            if (currentUri.Contains("ac-8knjxta-shard") || currentUri.Contains("admin:admin") || currentUri.StartsWith("mongodb://", StringComparison.OrdinalIgnoreCase))
             {
-                existing["mongodb.uri"] = RequiredKeys["mongodb.uri"];
+                existing["mongodb.uri"] = MigratedUri;
                 changed = true;
-                Console.WriteLine("[ConfigMerger] Migrated MongoDB URI to SRV connection");
+                // User must update config.json with their real MongoDB Atlas URI
             }
         }
 

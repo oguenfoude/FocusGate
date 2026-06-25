@@ -23,7 +23,7 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         var machineId = App.MachineId;
         MachineIdText.Text = string.IsNullOrEmpty(machineId) ? "" : $"Machine: {machineId[..8]}...";
 
-        ContentFrame.Navigated += ContentFrame_Navigated;
+        ContentFrame.Navigated += (_, _) => { };
         NavigateToOverview();
 
         Closing += OnClosing;
@@ -136,10 +136,6 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
         }
-    }
-
-    private void ContentFrame_Navigated(object sender, System.Windows.Navigation.NavigationEventArgs e)
-    {
     }
 
     private void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e)

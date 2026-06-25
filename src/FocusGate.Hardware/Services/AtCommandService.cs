@@ -161,15 +161,7 @@ public partial class AtCommandService : IAtCommandService
     public async Task<bool> IsAliveAsync()
     {
         var resp = await SendCommandAsync("AT");
-        if (resp.Contains("OK")) return true;
-
-        var imei = await GetImeiAsync();
-        if (!string.IsNullOrEmpty(imei) && imei.Length >= 14)
-        {
-            _logger.LogInformation("IMEI readable ({IMEI}) — modem alive", imei);
-            return true;
-        }
-        return false;
+        return resp.Contains("OK");
     }
 
     public async Task<string> GetImeiAsync()
@@ -818,9 +810,6 @@ public partial class AtCommandService : IAtCommandService
         try { _serialPort?.Close(); } catch { }
         try { _serialPort?.Dispose(); } catch { }
     }
-
-    [GeneratedRegex(@"(\d{10,12})")]
-    private static partial Regex PhoneRegex();
 
     [GeneratedRegex(@"\+CNUM:\s*""([^""]*)"",\s*""(\+?\d+)""")]
     private static partial Regex CnumRegex();

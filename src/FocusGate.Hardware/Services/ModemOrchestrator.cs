@@ -1,4 +1,5 @@
-﻿using System.IO.Ports;
+﻿using System.Collections.Concurrent;
+using System.IO.Ports;
 using FocusGate.Core.Enums;
 using FocusGate.Core.Interfaces;
 using FocusGate.Core.Models;
@@ -17,9 +18,9 @@ public class ModemOrchestrator : BackgroundService
     private readonly IServiceProvider _services;
     private readonly DatabaseWriteChannel _db;
     private readonly ILogger<ModemOrchestrator> _log;
-    private readonly Dictionary<string, (ModemHandler handler, string imei)> _handlers = new();
-    private readonly HashSet<string> _activeImeis = new();
-    private readonly HashSet<string> _failedPorts = new();
+    private readonly ConcurrentDictionary<string, (ModemHandler handler, string imei)> _handlers = new();
+    private readonly ConcurrentDictionary<string, byte> _activeImeis = new();
+    private readonly ConcurrentDictionary<string, byte> _failedPorts = new();
 
     public ModemOrchestrator(IServiceProvider services, DatabaseWriteChannel db, ILogger<ModemOrchestrator> log)
     {
@@ -45,13 +46,9 @@ public class ModemOrchestrator : BackgroundService
     {
         _log.LogInformation("Orchestrator shutting down, disposing {Count} handlers...", _handlers.Count);
 
-        List<ModemHandler> handlers;
-        lock (_handlers)
-        {
-            handlers = _handlers.Values.Select(v => v.handler).ToList();
-            _handlers.Clear();
-            _activeImeis.Clear();
-        }
+        var handlers = _handlers.Values.Select(v => v.handler).ToList();
+        _handlers.Clear();
+        _activeImeis.Clear();
 
         foreach (var handler in handlers)
         {
@@ -66,25 +63,20 @@ public class ModemOrchestrator : BackgroundService
     {
         var ports = SerialPort.GetPortNames();
 
-        lock (_handlers)
+        foreach (var kv in _handlers.Where(kv => !kv.Value.handler.IsAlive))
         {
-            foreach (var port in _handlers.Where(kv => !kv.Value.handler.IsAlive).Select(kv => kv.Key).ToList())
-            {
-                var (handler, imei) = _handlers[port];
-                _log.LogWarning("{Port}: Dead handler, freeing IMEI {IMEI}", port, imei);
-                _handlers.Remove(port);
-                _activeImeis.Remove(imei);
-                try { handler.Dispose(); } catch { }
-            }
+            var (handler, imei) = kv.Value;
+            _log.LogWarning("{Port}: Dead handler, freeing IMEI {IMEI}", kv.Key, imei);
+            _handlers.TryRemove(kv.Key, out _);
+            _activeImeis.TryRemove(imei, out _);
+            try { handler.Dispose(); } catch { }
         }
 
-        List<string> toProbe;
-        lock (_handlers)
-        {
-            var currentPorts = new HashSet<string>(ports);
-            _failedPorts.IntersectWith(currentPorts);
-            toProbe = ports.Where(p => !_handlers.ContainsKey(p) && !_failedPorts.Contains(p) && _handlers.Count < MaxModems).ToList();
-        }
+        var currentPorts = new HashSet<string>(ports);
+        foreach (var key in _failedPorts.Keys.Where(k => !currentPorts.Contains(k)).ToList())
+            _failedPorts.TryRemove(key, out _);
+
+        var toProbe = ports.Where(p => !_handlers.ContainsKey(p) && !_failedPorts.ContainsKey(p) && _handlers.Count < MaxModems).ToList();
         if (toProbe.Count == 0) return;
 
         _log.LogInformation("Probing {Count} port(s) in parallel...", toProbe.Count);
@@ -95,62 +87,47 @@ public class ModemOrchestrator : BackgroundService
 
         foreach (var (port, task) in probes)
         {
-            lock (_handlers)
-            {
-                if (_handlers.Count >= MaxModems) break;
-            }
+            if (_handlers.Count >= MaxModems) break;
             if (!task.IsCompletedSuccessfully) continue;
 
             var (handler, imei) = task.Result;
             if (handler == null || string.IsNullOrEmpty(imei))
             {
-                lock (_handlers) { _failedPorts.Add(port); }
+                _failedPorts.TryAdd(port, 0);
                 continue;
             }
 
-            lock (_activeImeis)
+            if (!_activeImeis.TryAdd(imei, 0))
             {
-                if (_activeImeis.Contains(imei))
-                {
-                    _log.LogInformation("{Port}: Duplicate IMEI {IMEI}", port, imei);
-                    try { handler.Dispose(); } catch { }
-                    continue;
-                }
-                _activeImeis.Add(imei);
+                _log.LogInformation("{Port}: Duplicate IMEI {IMEI}", port, imei);
+                try { handler.Dispose(); } catch { }
+                continue;
             }
 
-            lock (_handlers)
-            {
-                _handlers[port] = (handler, imei);
-            }
+            _handlers[port] = (handler, imei);
             _ = Task.Run(async () =>
             {
                 try
                 {
                     if (!await handler.StartAsync(ct))
                     {
-                        lock (_activeImeis) { _activeImeis.Remove(imei); }
-                        lock (_handlers) { _handlers.Remove(port); }
+                        _activeImeis.TryRemove(imei, out _);
+                        _handlers.TryRemove(port, out _);
                         try { handler.Dispose(); } catch { }
                     }
                 }
                 catch
                 {
-                    lock (_activeImeis) { _activeImeis.Remove(imei); }
-                    lock (_handlers) { _handlers.Remove(port); }
+                    _activeImeis.TryRemove(imei, out _);
+                    _handlers.TryRemove(port, out _);
                     try { handler.Dispose(); } catch { }
                 }
             }, ct);
         }
 
-        // Orphan check runs AFTER probes so all active IMEIs are registered
         if (ct.IsCancellationRequested) return;
 
-        string[] activeImeiArray;
-        lock (_activeImeis)
-        {
-            activeImeiArray = _activeImeis.ToArray();
-        }
+        var activeImeiArray = _activeImeis.Keys.ToArray();
         try
         {
             await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.UpdateOrphanedModems, Data = new { ActiveImeis = activeImeiArray } });

@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using FocusGate.Core.Enums;
 using FocusGate.Core.Models;
 using FocusGate.Infrastructure.Data;
@@ -91,7 +93,7 @@ public class ConsoleCommandHandler : BackgroundService
         var admin = new User
         {
             Username = "admin",
-            Password = "admin",
+            Password = HashPassword("admin"),
             DisplayName = "Administrator",
             Role = UserRole.Admin,
             IsActive = true,
@@ -344,7 +346,7 @@ public class ConsoleCommandHandler : BackgroundService
         var user = new User
         {
             Username = username,
-            Password = password,
+            Password = HashPassword(password),
             DisplayName = display,
             Role = UserRole.User,
             IsActive = true,
@@ -613,5 +615,11 @@ public class ConsoleCommandHandler : BackgroundService
     {
         var um = await db.UserModems.FirstOrDefaultAsync(x => x.ModemId == modemId && x.RemovedAt == null);
         return um?.UserId ?? 1;
+    }
+
+    private static string HashPassword(string password)
+    {
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(password));
+        return Convert.ToHexString(bytes).ToLowerInvariant();
     }
 }

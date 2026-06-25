@@ -39,7 +39,7 @@ public static class DependencyInjection
 
         var mongoUri = config["mongodb.uri"]
             ?? Environment.GetEnvironmentVariable("MONGODB_URI")
-            ?? "mongodb+srv://admin:admin@cluster0.ldndrwe.mongodb.net/?appName=Cluster0";
+            ?? "mongodb+srv://user:password@cluster.example.net/?appName=Cluster0";
 
         if (!mongoUri.Contains("connectTimeoutMS"))
         {
