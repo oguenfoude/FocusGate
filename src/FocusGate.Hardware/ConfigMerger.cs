@@ -25,6 +25,9 @@ public static class ConfigMerger
         ["mongodb.uri"] = "mongodb+srv://user:password@cluster.example.net/?appName=Cluster0",
         ["mongodb.database"] = "focusgate",
         ["sync.interval_seconds"] = "30",
+        ["hilink.enabled"] = "true",
+        ["hilink.scan_ips"] = "192.168.8.1,192.168.200.1,192.168.1.1",
+        ["hilink.probe_timeout_ms"] = "3000",
         ["app.version"] = "1.0.0"
     };
 

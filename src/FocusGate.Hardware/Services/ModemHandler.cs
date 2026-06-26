@@ -15,6 +15,7 @@ public class ModemHandler : IDisposable
     private readonly IConfigProvider _config;
     private readonly int _modemId;
     private readonly string _comPort;
+    private readonly bool _isHiLink;
     private long _simCardId;
     private DateTime _lastUssdCheck;
     private bool _disposed;
@@ -27,7 +28,7 @@ public class ModemHandler : IDisposable
     public bool IsAlive => _at?.IsOpen == true;
 
     public ModemHandler(IAtCommandService at, DatabaseWriteChannel db,
-        ILogger<ModemHandler> log, IConfigProvider config, int modemId, string comPort)
+        ILogger<ModemHandler> log, IConfigProvider config, int modemId, string comPort, bool isHiLink = false)
     {
         _at = at;
         _db = db;
@@ -35,6 +36,7 @@ public class ModemHandler : IDisposable
         _config = config;
         _modemId = modemId;
         _comPort = comPort;
+        _isHiLink = isHiLink;
         _loopCts = new CancellationTokenSource();
     }
 
@@ -42,33 +44,36 @@ public class ModemHandler : IDisposable
     {
         try
         {
-            _log.LogInformation("Modem {Id}: {Port} starting...", _modemId, _comPort);
+            _log.LogInformation("Modem {Id}: {Port} starting ({Type})...", _modemId, _comPort, _isHiLink ? "HiLink" : "AT");
 
             var imei = await _at.GetImeiAsync();
             if (string.IsNullOrEmpty(imei)) { _log.LogWarning("Modem {Id}: No IMEI", _modemId); return false; }
             _log.LogInformation("Modem {Id}: IMEI={IMEI}", _modemId, imei);
 
-            var pinResp = await _at.SendCommandAsync("AT+CPIN?");
-            _log.LogInformation("Modem {Id}: CPIN? -> {Resp}", _modemId, pinResp.ReplaceLineEndings(" "));
-            if (pinResp.Contains("SIM PIN") || pinResp.Contains("SIM PUK"))
+            if (!_isHiLink)
             {
-                _log.LogWarning("Modem {Id}: SIM is PIN/PUK locked, cannot proceed", _modemId);
-                return false;
+                var pinResp = await _at.SendCommandAsync("AT+CPIN?");
+                _log.LogInformation("Modem {Id}: CPIN? -> {Resp}", _modemId, pinResp.ReplaceLineEndings(" "));
+                if (pinResp.Contains("SIM PIN") || pinResp.Contains("SIM PUK"))
+                {
+                    _log.LogWarning("Modem {Id}: SIM is PIN/PUK locked, cannot proceed", _modemId);
+                    return false;
+                }
+
+                var manufacturer = await _at.SendCommandAsync("AT+CGMI");
+                _log.LogInformation("Modem {Id}: Manufacturer -> {Resp}", _modemId, manufacturer.ReplaceLineEndings(" "));
+
+                var model = await _at.SendCommandAsync("AT+CGMM");
+                _log.LogInformation("Modem {Id}: Model -> {Resp}", _modemId, model.ReplaceLineEndings(" "));
+
+                var zteResp = await _at.SendCommandAsync("AT+ZCDRUN=2");
+                if (!zteResp.Contains("ERROR"))
+                    _log.LogInformation("Modem {Id}: ZTE modem mode forced (AT+ZCDRUN=2)", _modemId);
+
+                var huaweiResp = await _at.SendCommandAsync("AT^U2DIAG=0");
+                if (!huaweiResp.Contains("ERROR"))
+                    _log.LogInformation("Modem {Id}: Huawei modem mode forced (AT^U2DIAG=0)", _modemId);
             }
-
-            var manufacturer = await _at.SendCommandAsync("AT+CGMI");
-            _log.LogInformation("Modem {Id}: Manufacturer -> {Resp}", _modemId, manufacturer.ReplaceLineEndings(" "));
-
-            var model = await _at.SendCommandAsync("AT+CGMM");
-            _log.LogInformation("Modem {Id}: Model -> {Resp}", _modemId, model.ReplaceLineEndings(" "));
-
-            var zteResp = await _at.SendCommandAsync("AT+ZCDRUN=2");
-            if (!zteResp.Contains("ERROR"))
-                _log.LogInformation("Modem {Id}: ZTE modem mode forced (AT+ZCDRUN=2)", _modemId);
-
-            var huaweiResp = await _at.SendCommandAsync("AT^U2DIAG=0");
-            if (!huaweiResp.Contains("ERROR"))
-                _log.LogInformation("Modem {Id}: Huawei modem mode forced (AT^U2DIAG=0)", _modemId);
 
             var imsi = await _at.GetImsiAsync();
             if (string.IsNullOrEmpty(imsi)) { _log.LogWarning("Modem {Id}: No SIM", _modemId); return false; }
@@ -86,23 +91,26 @@ public class ModemHandler : IDisposable
             _log.LogInformation("Modem {Id}: Waiting 5s for network...", _modemId);
             await Task.Delay(5000, ct);
 
-            var csqResp = await _at.SendCommandAsync("AT+CSQ");
-            _log.LogInformation("Modem {Id}: Signal -> {Resp}", _modemId, csqResp.ReplaceLineEndings(" "));
-
-            var cmgf = await _at.SendCommandAsync("AT+CMGF=1");
-            _log.LogInformation("Modem {Id}: CMGF -> {Resp}", _modemId, cmgf.ReplaceLineEndings(" "));
-            var charset = await _at.TrySetCharsetAsync("IRA");
-            if (!charset)
+            if (!_isHiLink)
             {
-                _log.LogInformation("Modem {Id}: IRA not supported, trying GSM...", _modemId);
-                charset = await _at.TrySetCharsetAsync("GSM");
+                var csqResp = await _at.SendCommandAsync("AT+CSQ");
+                _log.LogInformation("Modem {Id}: Signal -> {Resp}", _modemId, csqResp.ReplaceLineEndings(" "));
+
+                var cmgf = await _at.SendCommandAsync("AT+CMGF=1");
+                _log.LogInformation("Modem {Id}: CMGF -> {Resp}", _modemId, cmgf.ReplaceLineEndings(" "));
+                var charset = await _at.TrySetCharsetAsync("IRA");
                 if (!charset)
                 {
-                    _log.LogInformation("Modem {Id}: GSM not supported, trying UCS2...", _modemId);
-                    charset = await _at.TrySetCharsetAsync("UCS2");
+                    _log.LogInformation("Modem {Id}: IRA not supported, trying GSM...", _modemId);
+                    charset = await _at.TrySetCharsetAsync("GSM");
+                    if (!charset)
+                    {
+                        _log.LogInformation("Modem {Id}: GSM not supported, trying UCS2...", _modemId);
+                        charset = await _at.TrySetCharsetAsync("UCS2");
+                    }
                 }
+                _log.LogInformation("Modem {Id}: CSCS={Result}", _modemId, charset);
             }
-            _log.LogInformation("Modem {Id}: CSCS={Result}", _modemId, charset);
 
             var (existingImsi, existingPhone) = await _db.GetActiveSimInfoAsync(_modemId);
             var phoneNum = existingPhone;
@@ -142,12 +150,15 @@ public class ModemHandler : IDisposable
 
             _simCardId = await ResolveSimCardIdAsync();
 
-            var cpms = await _at.SendCommandAsync("AT+CPMS?");
-            _log.LogInformation("Modem {Id}: CPMS? -> {Resp}", _modemId, cpms.ReplaceLineEndings(" "));
-            cpms = await _at.SendCommandAsync("AT+CPMS=\"SM\",\"SM\",\"SM\"");
-            _log.LogInformation("Modem {Id}: CPMS=SM -> {Resp}", _modemId, cpms.ReplaceLineEndings(" "));
-            var cnmi = await _at.SendCommandAsync("AT+CNMI=2,1,0,0,0");
-            _log.LogInformation("Modem {Id}: CNMI -> {Resp}", _modemId, cnmi.ReplaceLineEndings(" "));
+            if (!_isHiLink)
+            {
+                var cpms = await _at.SendCommandAsync("AT+CPMS?");
+                _log.LogInformation("Modem {Id}: CPMS? -> {Resp}", _modemId, cpms.ReplaceLineEndings(" "));
+                cpms = await _at.SendCommandAsync("AT+CPMS=\"SM\",\"SM\",\"SM\"");
+                _log.LogInformation("Modem {Id}: CPMS=SM -> {Resp}", _modemId, cpms.ReplaceLineEndings(" "));
+                var cnmi = await _at.SendCommandAsync("AT+CNMI=2,1,0,0,0");
+                _log.LogInformation("Modem {Id}: CNMI -> {Resp}", _modemId, cnmi.ReplaceLineEndings(" "));
+            }
 
             var messages = await _at.ReadAllSmsAsync();
             _log.LogInformation("Modem {Id}: {Count} SMS on SIM", _modemId, messages.Count);
@@ -313,6 +324,18 @@ public class ModemHandler : IDisposable
     {
         _log.LogInformation("Modem {Id}: Watchdog starting...", _modemId);
         if (_at == null || !_at.IsOpen) { _log.LogInformation("Modem {Id}: Watchdog - port closed", _modemId); return; }
+
+        if (_isHiLink)
+        {
+            var alive = await _at.IsAliveAsync();
+            if (!alive)
+            {
+                _log.LogWarning("Modem {Id}: HiLink unreachable, disconnecting for re-probe", _modemId);
+                await DisconnectAsync();
+            }
+            return;
+        }
+
         try
         {
             var resp = await _at.SendCommandAsync("AT");

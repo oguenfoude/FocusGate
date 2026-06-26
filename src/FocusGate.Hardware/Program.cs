@@ -35,22 +35,6 @@ var dataDir = PathService.DataDirectory;
 Directory.CreateDirectory(dataDir);
 Directory.CreateDirectory(PathService.LogsDirectory);
 
-var licenseDst = Path.Combine(dataDir, "license.json");
-if (!File.Exists(licenseDst))
-{
-    var licenseDir = AppContext.BaseDirectory;
-    while (licenseDir != null)
-    {
-        var candidate = Path.Combine(licenseDir, "license.json");
-        if (File.Exists(candidate))
-        {
-            File.Copy(candidate, licenseDst);
-            break;
-        }
-        licenseDir = Directory.GetParent(licenseDir)?.FullName;
-    }
-}
-
 var configPath = PathService.ConfigPath;
 ConfigMerger.EnsureConfig(configPath);
 
@@ -98,33 +82,6 @@ try
     {
         PersistMachineId(configPath, context.MachineId);
         logger.LogInformation("MachineId persisted to config: {Machine}", context.MachineId);
-    }
-
-    if (!LicenseService.VerifyLicense(dataDir, context.MachineId, out var licenseError))
-    {
-        logger.LogWarning("License invalid, generating new license for machine {Machine}...", context.MachineId);
-
-        var generated = LicenseService.GenerateForMachine(context.MachineId);
-        var licensePath = Path.Combine(dataDir, "license.json");
-        File.WriteAllText(licensePath, System.Text.Json.JsonSerializer.Serialize(generated, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
-
-        if (!LicenseService.VerifyLicense(dataDir, context.MachineId, out var retryError))
-        {
-            logger.LogCritical("LICENSE ERROR: {Error}", retryError);
-            ShowErrorDialog("FocusGate - License Error",
-                $"License verification failed.\n\n" +
-                $"Machine ID: {context.MachineId}\n\n" +
-                $"Please contact the developer:\n" +
-                $"Email: ouguenfoude@gmail.com");
-        }
-        else
-        {
-            logger.LogInformation("New license generated and verified for machine {Machine}", context.MachineId);
-        }
-    }
-    else
-    {
-        logger.LogInformation("License verified for machine {Machine}", context.MachineId);
     }
 
     var writeChannel = scope.ServiceProvider.GetRequiredService<DatabaseWriteChannel>();
