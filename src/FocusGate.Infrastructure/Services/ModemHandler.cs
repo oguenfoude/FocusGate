@@ -17,13 +17,13 @@ public class ModemHandler : IDisposable
     private readonly string _comPort;
     private readonly bool _isHiLink;
     private long _simCardId;
-    private DateTime _lastUssdCheck;
     private bool _disposed;
     private CancellationTokenSource _loopCts;
     private Task? _watchdogLoop;
     private Task? _pollLoop;
-    private Task? _balanceLoop;
+    private Task? _networkRetryLoop;
     private readonly SemaphoreSlim _atLock = new(1, 1);
+    private bool _ussdUnavailable;
 
     public bool IsAlive => _at?.IsOpen == true;
 
@@ -80,12 +80,12 @@ public class ModemHandler : IDisposable
             _log.LogInformation("Modem {Id}: IMSI={IMSI}", _modemId, imsi);
 
             NetworkRegistration netReg = NetworkRegistration.Unknown;
-            for (int i = 1; i <= 5; i++)
+            for (int i = 1; i <= 10; i++)
             {
                 netReg = await _at.GetNetworkRegistrationAsync();
+                _log.LogInformation("Modem {Id}: Network {Attempt}/10 - {Status}", _modemId, i, netReg);
                 if (netReg == NetworkRegistration.Registered) break;
-                _log.LogInformation("Modem {Id}: Network {Attempt}/5 - {Status}", _modemId, i, netReg);
-                await Task.Delay(3000, ct);
+                await Task.Delay(5000, ct);
             }
 
             _log.LogInformation("Modem {Id}: Waiting 5s for network...", _modemId);
@@ -113,40 +113,8 @@ public class ModemHandler : IDisposable
             }
 
             var (existingImsi, existingPhone) = await _db.GetActiveSimInfoAsync(_modemId);
-            var phoneNum = existingPhone;
 
-            _log.LogInformation("Modem {Id}: Running *101# to get phone...", _modemId);
-            var phone = await _at.GetPhoneNumberViaUssdAsync();
-            if (!string.IsNullOrEmpty(phone))
-            {
-                _log.LogInformation("Modem {Id}: Phone={Phone}", _modemId, phone);
-                if (long.TryParse(phone, out var parsed))
-                    phoneNum = parsed;
-            }
-            else
-                _ = RetryPhoneAsync(ct);
-
-            try
-            {
-                _log.LogInformation("Modem {Id}: Running *222# for balance...", _modemId);
-                var balance = await _at.GetBalanceAsync();
-                if (balance.HasValue)
-                {
-                    _log.LogInformation("Modem {Id}: Balance={Balance} DZD", _modemId, balance.Value);
-                    await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.UpdateSimBalance, Data = new { ModemId = _modemId, Balance = balance.Value } });
-                }
-                else
-                {
-                    _log.LogInformation("Modem {Id}: *222# returned no balance, will use SMS", _modemId);
-                }
-                _lastUssdCheck = DateTime.UtcNow;
-            }
-            catch (Exception ex)
-            {
-                _log.LogWarning(ex, "Modem {Id}: *222# failed", _modemId);
-            }
-
-            await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.UpsertSimCard, Data = new { ModemId = _modemId, IMSI = imsi, PhoneNumber = phoneNum } });
+            await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.UpsertSimCard, Data = new { ModemId = _modemId, IMSI = imsi, PhoneNumber = existingPhone } });
 
             _simCardId = await ResolveSimCardIdAsync();
 
@@ -198,8 +166,13 @@ public class ModemHandler : IDisposable
                 TimeSpan.FromSeconds(_config.Get<int>("modem.watchdog.interval", 30)), loopToken);
             _pollLoop = PollSmsLoopAsync(
                 TimeSpan.FromSeconds(_config.Get<int>("modem.sms.poll.interval", 30)), loopToken);
-            _balanceLoop = PeriodicBalanceLoopAsync(
-                TimeSpan.FromMinutes(_config.Get<int>("modem.balance.poll.interval", 30)), loopToken);
+
+            if (status == ModemStatus.Online)
+            {
+                _ = Task.Run(async () => await TryGetPhoneAndBalanceAsync(loopToken), loopToken);
+            }
+
+            _networkRetryLoop = NetworkRetryLoopAsync(loopToken);
 
             _log.LogInformation("Modem {Id}: {Status} on {Port}", _modemId, status, _comPort);
             return true;
@@ -247,25 +220,6 @@ public class ModemHandler : IDisposable
         }
     }
 
-    private async Task PeriodicBalanceLoopAsync(TimeSpan interval, CancellationToken ct)
-    {
-        while (!ct.IsCancellationRequested)
-        {
-            try { await Task.Delay(interval, ct); }
-            catch (OperationCanceledException) { break; }
-
-            if (_disposed) break;
-            try
-            {
-                await _atLock.WaitAsync(ct);
-                try { await PeriodicBalanceCheckAsync(); }
-                finally { _atLock.Release(); }
-            }
-            catch (OperationCanceledException) { break; }
-            catch (Exception ex) { _log.LogError(ex, "Modem {Id}: Balance loop error", _modemId); }
-        }
-    }
-
     private async Task<long> ResolveSimCardIdAsync()
     {
         for (int i = 0; i < 30; i++)
@@ -285,7 +239,7 @@ public class ModemHandler : IDisposable
         _loopCts.Cancel();
         if (_watchdogLoop != null) try { await _watchdogLoop; } catch { }
         if (_pollLoop != null) try { await _pollLoop; } catch { }
-        if (_balanceLoop != null) try { await _balanceLoop; } catch { }
+        if (_networkRetryLoop != null) try { await _networkRetryLoop; } catch { }
         try
         {
             await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.UpdateModemStatus, Data = new { ModemId = _modemId, Status = ModemStatus.Offline } });
@@ -295,28 +249,13 @@ public class ModemHandler : IDisposable
         _at.Dispose();
     }
 
-    private async Task RetryPhoneAsync(CancellationToken ct)
-    {
-        try
-        {
-            await Task.Delay(15000, ct);
-            var phone = await _at.GetPhoneNumberViaUssdAsync();
-            if (!string.IsNullOrEmpty(phone) && long.TryParse(phone, out var phoneNum))
-            {
-                await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.UpdateSimCardPhone, Data = new { ModemId = _modemId, PhoneNumber = phoneNum } });
-                _log.LogInformation("Modem {Id}: Phone resolved: {Phone}", _modemId, phone);
-            }
-        }
-        catch (OperationCanceledException) { }
-        catch (Exception ex) { _log.LogError(ex, "Modem {Id}: Phone retry failed", _modemId); }
-    }
-
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
         _loopCts.Cancel();
         _loopCts.Dispose();
+        _atLock.Dispose();
         _at?.Dispose();
     }
 
@@ -397,29 +336,6 @@ public class ModemHandler : IDisposable
             {
                 _log.LogInformation("Modem {Id}: Poll - {SavedCount} SMS saved to DB, {SkippedCount} skipped (duplicates)", _modemId, savedCount, skippedCount);
                 await _at.DeleteAllSmsAsync();
-
-                if (DateTime.UtcNow - _lastUssdCheck > TimeSpan.FromSeconds(60))
-                {
-                    _lastUssdCheck = DateTime.UtcNow;
-                    try
-                    {
-                        _log.LogInformation("Modem {Id}: SMS received, running *222# for balance check...", _modemId);
-                        var balance = await _at.GetBalanceAsync();
-                        if (balance.HasValue)
-                        {
-                            _log.LogInformation("Modem {Id}: Balance: {Balance} DZD", _modemId, balance.Value);
-                            await _db.EnqueueAsync(new()
-                            {
-                                Type = DatabaseWriteChannel.Op.UpdateSimBalance,
-                                Data = new { ModemId = _modemId, Balance = balance.Value }
-                            });
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _log.LogWarning(ex, "Modem {Id}: *222# balance check failed", _modemId);
-                    }
-                }
             }
         }
         catch (IOException) { await DisconnectAsync(); }
@@ -427,30 +343,78 @@ public class ModemHandler : IDisposable
         catch (Exception ex) { _log.LogError(ex, "Modem {Id}: Poll error", _modemId); }
     }
 
-    private async Task PeriodicBalanceCheckAsync()
+    private async Task TryGetPhoneAndBalanceAsync(CancellationToken ct)
     {
-        if (_at == null || !_at.IsOpen) return;
+        if (_ussdUnavailable) return;
         try
         {
-            _log.LogInformation("Modem {Id}: Periodic balance check (*222#)...", _modemId);
-            var balance = await _at.GetBalanceAsync();
-            if (balance.HasValue)
+            await _atLock.WaitAsync(ct);
+            try
             {
-                _log.LogInformation("Modem {Id}: Periodic balance: {Balance} DZD", _modemId, balance.Value);
-                await _db.EnqueueAsync(new()
+                var existingPhone = (await _db.GetActiveSimInfoAsync(_modemId)).PhoneNumber;
+                if (existingPhone == 0)
                 {
-                    Type = DatabaseWriteChannel.Op.UpdateSimBalance,
-                    Data = new { ModemId = _modemId, Balance = balance.Value }
-                });
+                    _log.LogInformation("Modem {Id}: Running USSD *101# for phone number...", _modemId);
+                    var phone = await _at.GetPhoneNumberViaUssdAsync();
+                    if (!string.IsNullOrEmpty(phone))
+                    {
+                        _log.LogInformation("Modem {Id}: Phone number: {Phone}", _modemId, phone);
+                        await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.UpdateSimCardPhone, Data = new { ModemId = _modemId, PhoneNumber = long.Parse(phone) } });
+                    }
+                    else
+                    {
+                        _log.LogWarning("Modem {Id}: Phone USSD returned empty", _modemId);
+                    }
+                }
+
+                _log.LogInformation("Modem {Id}: Running USSD *222# for balance...", _modemId);
+                var balance = await _at.GetBalanceAsync();
+                if (balance.HasValue)
+                {
+                    _log.LogInformation("Modem {Id}: Balance: {Balance:F2} DZD", _modemId, balance.Value);
+                    await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.UpdateSimBalance, Data = new { ModemId = _modemId, Balance = balance.Value } });
+                }
+                else
+                {
+                    _log.LogWarning("Modem {Id}: Balance USSD returned empty", _modemId);
+                    _ussdUnavailable = true;
+                    _log.LogWarning("Modem {Id}: USSD marked unavailable — will rely on SMS for balance", _modemId);
+                }
             }
-            else
-            {
-                _log.LogWarning("Modem {Id}: Periodic balance check returned no value", _modemId);
-            }
+            finally { _atLock.Release(); }
         }
-        catch (Exception ex)
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { _log.LogError(ex, "Modem {Id}: USSD phone/balance error", _modemId); }
+    }
+
+    private async Task NetworkRetryLoopAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
         {
-            _log.LogWarning(ex, "Modem {Id}: Periodic balance check failed", _modemId);
+            try { await Task.Delay(TimeSpan.FromMinutes(2), ct); }
+            catch (OperationCanceledException) { break; }
+
+            if (_disposed) break;
+
+            if (_ussdUnavailable) return;
+
+            try
+            {
+                await _atLock.WaitAsync(ct);
+                try
+                {
+                    var netReg = await _at.GetNetworkRegistrationAsync();
+                    if (netReg != NetworkRegistration.Registered)
+                        continue;
+
+                    await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.UpdateModemStatus, Data = new { ModemId = _modemId, Status = ModemStatus.Online } });
+
+                    await TryGetPhoneAndBalanceAsync(ct);
+                }
+                finally { _atLock.Release(); }
+            }
+            catch (OperationCanceledException) { break; }
+            catch (Exception ex) { _log.LogError(ex, "Modem {Id}: Network retry loop error", _modemId); }
         }
     }
 }

@@ -154,9 +154,9 @@ public class HiLinkModemOrchestrator : BackgroundService
                     imei = device.Imei;
                     _log.LogInformation("{Ip}: Using discovery IMEI: {IMEI}", device.Ip, imei);
                 }
-                if (string.IsNullOrEmpty(imei))
+                if (string.IsNullOrEmpty(imei) || imei.StartsWith("HILINK-", StringComparison.OrdinalIgnoreCase))
                 {
-                    _log.LogWarning("{Ip}: No IMEI from service or discovery", device.Ip);
+                    _log.LogWarning("{Ip}: No real IMEI available (got '{IMEI}'), skipping modem", device.Ip, imei);
                     try { hilink.Dispose(); } catch { }
                     continue;
                 }

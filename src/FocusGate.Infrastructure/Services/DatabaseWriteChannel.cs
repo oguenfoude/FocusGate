@@ -347,7 +347,7 @@ public class DatabaseWriteChannel
         _logger.LogInformation("SMS stored: SimCardId={SimId} Sender={Sender}",
             sms.SimCardId, sms.SenderNumber);
 
-        if (sms.SenderNumber != "7711198105108105115") return true;
+        if (sms.SenderNumber != "MCIRMN" && sms.SenderNumber != "Mobilis" && !sms.SenderNumber.Contains("77111")) return true;
 
         var sim = await db.SimCards.FindAsync(new object[] { sms.SimCardId }, ct);
         if (sim == null) return true;
@@ -410,7 +410,49 @@ public class DatabaseWriteChannel
 
             _logger.LogInformation("Credit transfer: Modem={Id} Amount={Amount} DZD", sim.ModemId, amount);
         }
+
+        if (sms.Content.Contains("recharg"))
+        {
+            var amount = ExtractRechargeAmount(sms.Content);
+            if (amount > 0)
+            {
+                var oldBalance = sim.Balance;
+                sim.Balance += amount;
+                sim.VerifiedAt = DateTime.UtcNow;
+                sim.LastSeen = DateTime.UtcNow;
+                await db.SaveChangesAsync(ct);
+
+                db.BalanceHistories.Add(new BalanceHistory
+                {
+                    SimCardId = sms.SimCardId,
+                    ModemId = sim.ModemId,
+                    UserId = userId,
+                    Balance = sim.Balance,
+                    PreviousBalance = oldBalance,
+                    Source = BalanceSource.SMS,
+                    RecordedAt = DateTime.UtcNow
+                });
+                await db.SaveChangesAsync(ct);
+
+                _logger.LogInformation("Recharge from SMS: Modem={Id} +{Amount:F2} DZD → Balance {New:F2} DZD", sim.ModemId, amount, sim.Balance);
+            }
+        }
         return true;
+    }
+
+    private static decimal ExtractRechargeAmount(string content)
+    {
+        var marker = "recharg";
+        var idx = content.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (idx < 0) return 0;
+
+        var afterMarker = content[idx..];
+        var numMatch = System.Text.RegularExpressions.Regex.Match(afterMarker, @"(\d+[\.,]?\d*)");
+        if (!numMatch.Success) return 0;
+
+        var numStr = numMatch.Groups[1].Value.Replace(",", ".");
+        return decimal.TryParse(numStr, System.Globalization.NumberStyles.Any,
+            System.Globalization.CultureInfo.InvariantCulture, out var val) ? val : 0;
     }
 
     private static decimal ExtractCreditAmount(string content)

@@ -177,8 +177,11 @@ public class HiLinkDiscovery
                         info.Manufacturer = devRoot.Element(Ns + "Manufacturer")?.Value
                             ?? devRoot.Element("Manufacturer")?.Value ?? "Huawei";
 
-                        if (string.IsNullOrEmpty(info.Imei))
-                            info.Imei = $"HILINK-{ip.Replace(".", "-")}";
+                if (string.IsNullOrEmpty(info.Imei))
+                {
+                    _log.LogWarning("{Ip}: IMEI not returned by device info — skipping (HiLink modems must provide IMEI via API)", ip);
+                    return;
+                }
                     }
                 }
                 catch (Exception ex)
@@ -186,45 +189,10 @@ public class HiLinkDiscovery
                     _log.LogDebug(ex, "{Ip}: Failed to get device info (non-critical)", ip);
                 }
 
-                if (string.IsNullOrEmpty(info.Imei) || info.Imei.StartsWith("HILINK-"))
+                if (string.IsNullOrEmpty(info.Imei))
                 {
-                    try
-                    {
-                        var atBody = @"<request><Command>AT+CGSN</Command><Timeout>5000</Timeout></request>";
-                        var atReq = new HttpRequestMessage(HttpMethod.Post, $"{scheme}://{ip}/api/terminal/command")
-                        {
-                            Content = new System.Net.Http.StringContent(atBody, System.Text.Encoding.UTF8, "application/xml")
-                        };
-                        var atCookie = sesInfo.StartsWith("SessionID=", StringComparison.OrdinalIgnoreCase)
-                            ? sesInfo["SessionID=".Length..]
-                            : sesInfo;
-                        atReq.Headers.Add("Cookie", $"SessionID={atCookie}");
-                        if (!string.IsNullOrEmpty(info.CsrfToken))
-                            atReq.Headers.Add("__RequestVerificationToken", info.CsrfToken);
-                        atReq.Headers.Add("User-Agent", UserAgent);
-                        atReq.Headers.Add("X-Requested-With", "XMLHttpRequest");
-                        var atResp = await http.SendAsync(atReq);
-                        var atXml = await atResp.Content.ReadAsStringAsync();
-                        var atDoc = XDocument.Parse(atXml);
-                        var atRoot = atDoc.Root;
-                        if (atRoot != null)
-                        {
-                            var atResponse = atRoot.Element(Ns + "Response")?.Value
-                                ?? atRoot.Element("Response")?.Value
-                                ?? atRoot.Element(Ns + "response")?.Value
-                                ?? atRoot.Element("response")?.Value ?? "";
-                            var match = System.Text.RegularExpressions.Regex.Match(atResponse, @"(\d{15})");
-                            if (match.Success)
-                            {
-                                info.Imei = match.Value;
-                                _log.LogInformation("{Ip}: IMEI from AT+CGSN: {IMEI}", ip, match.Value);
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _log.LogDebug(ex, "{Ip}: AT+CGSN failed (non-critical)", ip);
-                    }
+                    _log.LogWarning("{Ip}: IMEI empty after device info — skipping", ip);
+                    return;
                 }
 
                 _log.LogInformation("{Ip}: FOUND HiLink ({Scheme}) | IMEI={IMEI} Model={Model}",

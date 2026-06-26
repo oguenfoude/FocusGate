@@ -46,7 +46,15 @@ public partial class HiLinkCommandService : IAtCommandService
     {
         _log = log;
         _config = config;
-        _http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+        _http = new HttpClient(new HttpClientHandler
+        {
+            UseCookies = false,
+            ServerCertificateCustomValidationCallback = (_, _, _, _) => true,
+            SslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13
+        })
+        {
+            Timeout = TimeSpan.FromSeconds(10)
+        };
     }
 
     public async Task OpenAsync(string ip)
@@ -78,6 +86,8 @@ public partial class HiLinkCommandService : IAtCommandService
 
             _isOpen = true;
             _log.LogInformation("HiLink {Ip}: Connected (HTTP)", ip);
+
+            await RefreshCsrfFromGetAsync("/api/device/information");
         }
         catch (HttpRequestException)
         {
@@ -113,12 +123,31 @@ public partial class HiLinkCommandService : IAtCommandService
 
                 _isOpen = true;
                 _log.LogInformation("HiLink {Ip}: Connected (HTTPS)", ip);
+
+                await RefreshCsrfFromGetAsync("/api/device/information");
             }
             catch (Exception ex)
             {
                 _log.LogError(ex, "HiLink {Ip}: Connection failed on both HTTP and HTTPS", ip);
                 throw new InvalidOperationException($"HiLink connection failed at {ip}: {ex.Message}");
             }
+        }
+    }
+
+    private async Task RefreshCsrfFromGetAsync(string path)
+    {
+        try
+        {
+            var request = new HttpRequestMessage(HttpMethod.Get, $"{_baseUrl}{path}");
+            ApplyHeaders(request);
+            var response = await _http.SendAsync(request);
+            UpdateCsrfFromResponse(response);
+            _ = await response.Content.ReadAsStringAsync();
+            _log.LogDebug("[HiLink] CSRF token refreshed via GET {Path}", path);
+        }
+        catch (Exception ex)
+        {
+            _log.LogDebug(ex, "[HiLink] CSRF refresh GET failed (non-critical)");
         }
     }
 
@@ -178,45 +207,10 @@ public partial class HiLinkCommandService : IAtCommandService
 
         if (string.IsNullOrEmpty(_imei))
         {
-            _log.LogInformation("[HiLink] IMEI not in device info, trying AT+CGSN via terminal command...");
-            _imei = await GetImeiViaAtAsync();
+            _log.LogWarning("[HiLink] IMEI not available from /api/device/information — modem will be skipped");
         }
 
-        if (string.IsNullOrEmpty(_imei))
-        {
-            _log.LogWarning("[HiLink] IMEI not available, using IP-based ID");
-            if (_baseUrl != null && Uri.TryCreate(_baseUrl, UriKind.Absolute, out var uri))
-                _imei = $"HILINK-{uri.Host.Replace(".", "-")}";
-        }
-
-        return _imei;
-    }
-
-    private async Task<string> GetImeiViaAtAsync()
-    {
-        try
-        {
-            var body = @"<request><Command>AT+CGSN</Command><Timeout>5000</Timeout></request>";
-            var xml = await SendPostAsync("/api/terminal/command", body);
-            if (string.IsNullOrEmpty(xml)) return string.Empty;
-
-            _log.LogDebug("[HiLink] AT+CGSN response: {Xml}",
-                xml.Length > 300 ? xml[..300] : xml);
-
-            var doc = XDocument.Parse(xml);
-            var response = GetElement(doc.Root!, "Response") ?? GetElement(doc.Root!, "response") ?? string.Empty;
-            var match = Regex.Match(response, @"(\d{15})");
-            if (match.Success)
-            {
-                _log.LogInformation("[HiLink] IMEI from AT+CGSN: {IMEI}", match.Value);
-                return match.Value;
-            }
-        }
-        catch (Exception ex)
-        {
-            _log.LogDebug(ex, "[HiLink] AT+CGSN failed (non-critical)");
-        }
-        return string.Empty;
+        return _imei ?? string.Empty;
     }
 
     public async Task<string> GetImsiAsync()
@@ -226,27 +220,7 @@ public partial class HiLinkCommandService : IAtCommandService
 
         if (string.IsNullOrEmpty(_imsi))
         {
-            _log.LogInformation("[HiLink] IMSI not in device info, trying AT+CIMI...");
-            try
-            {
-                var body = @"<request><Command>AT+CIMI</Command><Timeout>5000</Timeout></request>";
-                var xml = await SendPostAsync("/api/terminal/command", body);
-                if (!string.IsNullOrEmpty(xml))
-                {
-                    var doc = XDocument.Parse(xml);
-                    var response = GetElement(doc.Root!, "Response") ?? GetElement(doc.Root!, "response") ?? string.Empty;
-                    var match = Regex.Match(response, @"(\d{15})");
-                    if (match.Success)
-                    {
-                        _imsi = match.Value;
-                        _log.LogInformation("[HiLink] IMSI from AT+CIMI: {IMSI}", _imsi);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _log.LogDebug(ex, "[HiLink] AT+CIMI failed (non-critical)");
-            }
+            _log.LogWarning("[HiLink] IMSI not available from /api/device/information — modem may not register");
         }
 
         return _imsi ?? string.Empty;
@@ -258,8 +232,13 @@ public partial class HiLinkCommandService : IAtCommandService
         if (string.IsNullOrEmpty(xml)) return NetworkRegistration.Unknown;
 
         var doc = XDocument.Parse(xml);
-        var status = GetElement(doc.Root!, "ConnectionStatus");
-        if (int.TryParse(status, out var val))
+
+        var serviceStatus = GetElement(doc.Root!, "ServiceStatus");
+        if (int.TryParse(serviceStatus, out var svc) && svc == 2)
+            return NetworkRegistration.Registered;
+
+        var connStatus = GetElement(doc.Root!, "ConnectionStatus");
+        if (int.TryParse(connStatus, out var val))
         {
             return val switch
             {
@@ -321,6 +300,14 @@ public partial class HiLinkCommandService : IAtCommandService
             if (string.IsNullOrEmpty(xml)) return messages;
 
             var doc = XDocument.Parse(xml);
+
+            var errorEl = GetElement(doc.Root!, "code");
+            if (errorEl != null && doc.Root!.Name.LocalName == "error")
+            {
+                _log.LogWarning("[HiLink] SMS list returned error {Code}: {Xml}", errorEl, xml.Length > 200 ? xml[..200] : xml);
+                return messages;
+            }
+
             var msgElements = GetElements(doc.Root!, "Messages").Elements().ToList();
             var messageElements = msgElements.Count > 0 ? msgElements : GetElements(doc.Root!, "Message").ToList();
             if (!messageElements.Any()) return messages;
@@ -379,23 +366,118 @@ public partial class HiLinkCommandService : IAtCommandService
         await _lock.WaitAsync();
         try
         {
-            var body = $@"<request><Code>{System.Security.SecurityElement.Escape(code)}</Code><Timeout>{timeoutMs}</Timeout></request>";
-            var xml = await SendPostAsync("/api/ussd/send", body);
-            if (string.IsNullOrEmpty(xml)) return string.Empty;
+            // Step 0: Release any existing USSD dialog (no cookies, no CSRF — browser pattern)
+            await SendUssdRawGetAsync("/api/ussd/release");
 
-            var doc = XDocument.Parse(xml);
-            var response = GetElement(doc.Root!, "Response");
-            if (!string.IsNullOrEmpty(response)) return response;
+            // Step 1: Send USSD code via form-urlencoded
+            var escaped = System.Security.SecurityElement.Escape(code);
+            var body = $@"<?xml version=""1.0"" encoding=""UTF-8""?><request><content>{escaped}</content><codeType>CodeType</codeType><timeout></timeout></request>";
+            var xml = await SendUssdSendAsync("/api/ussd/send", body);
+            if (string.IsNullOrEmpty(xml))
+            {
+                _log.LogWarning("[HiLink] USSD {Code}: empty response from /api/ussd/send", code);
+                return string.Empty;
+            }
 
-            var content = GetElement(doc.Root!, "Content");
-            if (!string.IsNullOrEmpty(content)) return content;
+            _log.LogInformation("[HiLink] USSD {Code}: send response: {Xml}",
+                code, xml.Length > 200 ? xml[..200] : xml);
 
-            return xml;
+            var sendDoc = XDocument.Parse(xml);
+            var sendError = GetElement(sendDoc.Root!, "code");
+            if (sendError != null && sendDoc.Root!.Name.LocalName == "error")
+            {
+                _log.LogWarning("[HiLink] USSD {Code} send error {Error}: {Xml}",
+                    code, sendError, xml.Length > 200 ? xml[..200] : xml);
+                return string.Empty;
+            }
+
+            // Step 2: Poll /api/ussd/get — no cookies, no CSRF (matches browser exactly)
+            var pollIntervalMs = 3000;
+            var totalTimeoutMs = 60_000;
+            var deadline = DateTime.UtcNow.AddMilliseconds(totalTimeoutMs);
+            var pollCount = 0;
+            while (DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(pollIntervalMs);
+                pollCount++;
+                var getResult = await SendUssdRawGetAsync("/api/ussd/get");
+                if (string.IsNullOrEmpty(getResult))
+                {
+                    _log.LogDebug("[HiLink] USSD {Code} poll #{Count}: empty response", code, pollCount);
+                    continue;
+                }
+
+                _log.LogDebug("[HiLink] USSD {Code} poll #{Count}: {Xml}",
+                    code, pollCount, getResult.Length > 200 ? getResult[..200] : getResult);
+
+                var getDoc = XDocument.Parse(getResult);
+                var getError = GetElement(getDoc.Root!, "code");
+                if (getError != null && getDoc.Root!.Name.LocalName == "error")
+                {
+                    if (getError == "111019")
+                        continue;
+
+                    _log.LogWarning("[HiLink] USSD {Code} poll error {Error}",
+                        code, getError);
+                    break;
+                }
+
+                var content = GetElement(getDoc.Root!, "Content");
+                if (!string.IsNullOrEmpty(content))
+                {
+                    _log.LogInformation("[HiLink] USSD {Code} got result after {Count} polls: {Content}",
+                        code, pollCount, content);
+                    await SendUssdRawGetAsync("/api/ussd/release");
+                    return content;
+                }
+            }
+
+            _log.LogWarning("[HiLink] USSD {Code}: no response after {Count} polls ({Seconds}s)",
+                code, pollCount, (int)(pollCount * pollIntervalMs / 1000));
+            await SendUssdRawGetAsync("/api/ussd/release");
+            return string.Empty;
         }
         finally
         {
             _lock.Release();
         }
+    }
+
+    private async Task<string?> SendUssdSendAsync(string path, string xmlBody)
+    {
+        if (string.IsNullOrEmpty(_baseUrl)) return null;
+
+        var request = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}{path}")
+        {
+            Content = new StringContent(xmlBody, Encoding.UTF8, "application/x-www-form-urlencoded")
+        };
+        ApplyHeaders(request);
+        request.Headers.Add("Referer", $"{_baseUrl}/html/ussd.html");
+        request.Headers.Add("X-Requested-With", "XMLHttpRequest");
+        request.Headers.Add("Origin", _baseUrl);
+        if (!string.IsNullOrEmpty(_csrfToken))
+            request.Headers.Add("__RequestVerificationToken", _csrfToken);
+
+        var response = await _http.SendAsync(request);
+        UpdateCsrfFromResponse(response);
+        var respBody = await response.Content.ReadAsStringAsync();
+        _log.LogDebug("[HiLink] USSD POST {Path} → {Status}", path, response.StatusCode);
+        response.EnsureSuccessStatusCode();
+        return respBody;
+    }
+
+    private async Task<string?> SendUssdRawGetAsync(string path)
+    {
+        if (string.IsNullOrEmpty(_baseUrl)) return null;
+
+        var request = new HttpRequestMessage(HttpMethod.Get, $"{_baseUrl}{path}");
+        ApplyHeaders(request);
+        request.Headers.Add("Referer", $"{_baseUrl}/html/ussd.html");
+        request.Headers.Add("X-Requested-With", "XMLHttpRequest");
+
+        var response = await _http.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadAsStringAsync();
     }
 
     public Task<bool> TrySetCharsetAsync(string charset) => Task.FromResult(true);
@@ -422,6 +504,7 @@ public partial class HiLinkCommandService : IAtCommandService
         ApplyHeaders(request);
 
         var response = await _http.SendAsync(request);
+        UpdateCsrfFromResponse(response);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadAsStringAsync();
     }
@@ -437,8 +520,22 @@ public partial class HiLinkCommandService : IAtCommandService
         ApplyHeaders(request);
 
         var response = await _http.SendAsync(request);
+        UpdateCsrfFromResponse(response);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadAsStringAsync();
+    }
+
+    private void UpdateCsrfFromResponse(HttpResponseMessage response)
+    {
+        if (response.Headers.TryGetValues("__RequestVerificationToken", out var values))
+        {
+            var newToken = values.FirstOrDefault();
+            if (!string.IsNullOrEmpty(newToken) && newToken != _csrfToken)
+            {
+                _log.LogDebug("[HiLink] CSRF token refreshed from response header");
+                _csrfToken = newToken;
+            }
+        }
     }
 
     private void ApplyHeaders(HttpRequestMessage request)

@@ -664,6 +664,15 @@ public class ConsoleCommandHandler : BackgroundService
                 }
                 request.Headers.Add("X-Requested-With", "XMLHttpRequest");
                 var resp = await http.SendAsync(request);
+                if (resp.Headers.TryGetValues("__RequestVerificationToken", out var tokens))
+                {
+                    var newToken = tokens.FirstOrDefault();
+                    if (!string.IsNullOrEmpty(newToken))
+                    {
+                        csrfToken = newToken;
+                        Console.WriteLine($"    >> CSRF refreshed from response header");
+                    }
+                }
                 var xml = await resp.Content.ReadAsStringAsync();
                 return (name, xml);
             }
@@ -693,6 +702,49 @@ public class ConsoleCommandHandler : BackgroundService
                     request.Headers.Add("__RequestVerificationToken", csrfToken);
                 request.Headers.Add("X-Requested-With", "XMLHttpRequest");
                 var resp = await http.SendAsync(request);
+                if (resp.Headers.TryGetValues("__RequestVerificationToken", out var tokens))
+                {
+                    var newToken = tokens.FirstOrDefault();
+                    if (!string.IsNullOrEmpty(newToken))
+                        csrfToken = newToken;
+                }
+                var xml = await resp.Content.ReadAsStringAsync();
+                return (name, xml);
+            }
+            catch (Exception ex)
+            {
+                return (name, $"ERROR: {ex.Message}");
+            }
+        }
+
+        async Task<(string name, string raw)> ProbePostForm(string name, string path, string body)
+        {
+            try
+            {
+                var url = $"{baseUrl}{path}";
+                var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, url)
+                {
+                    Content = new System.Net.Http.StringContent(body, Encoding.UTF8)
+                };
+                request.Content.Headers.TryAddWithoutValidation("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8");
+                if (!string.IsNullOrEmpty(sessionCookie))
+                {
+                    var cv = sessionCookie.StartsWith("SessionID=", StringComparison.OrdinalIgnoreCase)
+                        ? sessionCookie["SessionID=".Length..]
+                        : sessionCookie;
+                    request.Headers.Add("Cookie", $"SessionID={cv}");
+                }
+                if (!string.IsNullOrEmpty(csrfToken))
+                    request.Headers.Add("__RequestVerificationToken", csrfToken);
+                request.Headers.Add("X-Requested-With", "XMLHttpRequest");
+                request.Headers.Add("Referer", $"{baseUrl}/html/ussd.html");
+                var resp = await http.SendAsync(request);
+                if (resp.Headers.TryGetValues("__RequestVerificationToken", out var tokens))
+                {
+                    var newToken = tokens.FirstOrDefault();
+                    if (!string.IsNullOrEmpty(newToken))
+                        csrfToken = newToken;
+                }
                 var xml = await resp.Content.ReadAsStringAsync();
                 return (name, xml);
             }
@@ -794,19 +846,31 @@ public class ConsoleCommandHandler : BackgroundService
         results.Add((n9, r9));
         PrintResult(9, n9, r9);
 
-        // [10] USSD balance
-        Console.WriteLine("[10/11] Sending USSD *222# (balance)...");
-        var (n10, r10) = await ProbePost("USSD *222#", "/api/ussd/send",
-            "<request><Code>*222#</Code><Timeout>15000</Timeout></request>");
+        // [10] USSD status check
+        Console.WriteLine("[10/13] USSD status...");
+        var (n10, r10) = await ProbeGet("USSD Status", "/api/ussd/status");
         results.Add((n10, r10));
         PrintResult(10, n10, r10);
 
-        // [11] USSD phone
-        Console.WriteLine("[11/11] Sending USSD *101# (phone)...");
-        var (n11, r11) = await ProbePost("USSD *101#", "/api/ussd/send",
-            "<request><Code>*101#</Code><Timeout>15000</Timeout></request>");
+        // [11] USSD balance
+        Console.WriteLine("[11/13] Sending USSD *222# (balance)...");
+        var (n11, r11) = await ProbePostForm("USSD *222#", "/api/ussd/send",
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><request><content>*222#</content><codeType>CodeType</codeType><timeout></timeout></request>");
         results.Add((n11, r11));
         PrintResult(11, n11, r11);
+
+        // [12] USSD phone
+        Console.WriteLine("[12/13] Sending USSD *101# (phone)...");
+        var (n12, r12) = await ProbePostForm("USSD *101#", "/api/ussd/send",
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><request><content>*101#</content><codeType>CodeType</codeType><timeout></timeout></request>");
+        results.Add((n12, r12));
+        PrintResult(12, n12, r12);
+
+        // [13] USSD get (poll result)
+        Console.WriteLine("[13/13] USSD get result...");
+        var (n13, r13) = await ProbeGet("USSD Get", "/api/ussd/get");
+        results.Add((n13, r13));
+        PrintResult(13, n13, r13);
 
         // Save to file
         try
