@@ -216,6 +216,7 @@ public class DatabaseWriteChannel
         {
             activeSim.IsActive = false;
             activeSim.RemovedAt = DateTime.UtcNow;
+            activeSim.ReplacedAt = DateTime.UtcNow;
             activeSim.LastSeen = DateTime.UtcNow;
         }
 
@@ -447,10 +448,23 @@ public class DatabaseWriteChannel
         if (idx < 0) return 0;
 
         var afterMarker = content[idx..];
-        var numMatch = System.Text.RegularExpressions.Regex.Match(afterMarker, @"(\d+[\.,]?\d*)");
+        var numMatch = System.Text.RegularExpressions.Regex.Match(afterMarker, @"(\d[\d.,]+)");
         if (!numMatch.Success) return 0;
 
-        var numStr = numMatch.Groups[1].Value.Replace(",", ".");
+        var numStr = numMatch.Groups[1].Value;
+        if (numStr.Contains(',') && numStr.Contains('.'))
+        {
+            var lastComma = numStr.LastIndexOf(',');
+            var lastDot = numStr.LastIndexOf('.');
+            if (lastComma > lastDot)
+                numStr = numStr.Replace(".", "").Replace(",", ".");
+            else
+                numStr = numStr.Replace(",", "");
+        }
+        else if (numStr.Contains(','))
+        {
+            numStr = numStr.Replace(",", ".");
+        }
         return decimal.TryParse(numStr, System.Globalization.NumberStyles.Any,
             System.Globalization.CultureInfo.InvariantCulture, out var val) ? val : 0;
     }
@@ -463,7 +477,20 @@ public class DatabaseWriteChannel
         idx += marker.Length;
         var end = content.IndexOf(" DZD", idx, StringComparison.Ordinal);
         if (end < 0) return 0;
-        var numStr = content[idx..end].Replace(',', '.');
+        var numStr = content[idx..end];
+        if (numStr.Contains(',') && numStr.Contains('.'))
+        {
+            var lastComma = numStr.LastIndexOf(',');
+            var lastDot = numStr.LastIndexOf('.');
+            if (lastComma > lastDot)
+                numStr = numStr.Replace(".", "").Replace(",", ".");
+            else
+                numStr = numStr.Replace(",", "");
+        }
+        else if (numStr.Contains(','))
+        {
+            numStr = numStr.Replace(",", ".");
+        }
         return decimal.TryParse(numStr, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var val) ? val : 0;
     }
 
@@ -475,10 +502,24 @@ public class DatabaseWriteChannel
         if (soldeIdx < 0) return null;
 
         var afterSolde = content[(soldeIdx + 5)..];
-        var numMatch = System.Text.RegularExpressions.Regex.Match(afterSolde, @"(\d+[,\\.]?\d*)");
+        var numMatch = System.Text.RegularExpressions.Regex.Match(afterSolde, @"(\d[\d.,]+)");
         if (!numMatch.Success) return null;
 
-        var numStr = numMatch.Groups[1].Value.Replace(",", ".");
+        var numStr = numMatch.Groups[1].Value;
+        if (numStr.Contains(',') && numStr.Contains('.'))
+        {
+            var lastComma = numStr.LastIndexOf(',');
+            var lastDot = numStr.LastIndexOf('.');
+            if (lastComma > lastDot)
+                numStr = numStr.Replace(".", "").Replace(",", ".");
+            else
+                numStr = numStr.Replace(",", "");
+        }
+        else if (numStr.Contains(','))
+        {
+            numStr = numStr.Replace(",", ".");
+        }
+
         if (decimal.TryParse(numStr, System.Globalization.NumberStyles.Any,
             System.Globalization.CultureInfo.InvariantCulture, out var val))
             return val;

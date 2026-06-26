@@ -258,8 +258,21 @@ public partial class AtCommandService : IAtCommandService
         var balanceMatch = BalanceRegex().Match(decoded);
         if (balanceMatch.Success)
         {
-            var amountStr = balanceMatch.Groups[1].Value.Replace(",", ".");
-            if (decimal.TryParse(amountStr, System.Globalization.NumberStyles.Any,
+            var numStr = balanceMatch.Groups[1].Value;
+            if (numStr.Contains(',') && numStr.Contains('.'))
+            {
+                var lastComma = numStr.LastIndexOf(',');
+                var lastDot = numStr.LastIndexOf('.');
+                if (lastComma > lastDot)
+                    numStr = numStr.Replace(".", "").Replace(",", ".");
+                else
+                    numStr = numStr.Replace(",", "");
+            }
+            else if (numStr.Contains(','))
+            {
+                numStr = numStr.Replace(",", ".");
+            }
+            if (decimal.TryParse(numStr, System.Globalization.NumberStyles.Any,
                 System.Globalization.CultureInfo.InvariantCulture, out var amount))
                 return amount;
         }
@@ -814,6 +827,6 @@ public partial class AtCommandService : IAtCommandService
     [GeneratedRegex(@"\+CNUM:\s*""([^""]*)"",\s*""(\+?\d+)""")]
     private static partial Regex CnumRegex();
 
-    [GeneratedRegex(@"(\d+[\.,]?\d*)")]
+    [GeneratedRegex(@"(\d[\d.,]+)")]
     private static partial Regex BalanceRegex();
 }

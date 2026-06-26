@@ -23,7 +23,7 @@ public class ModemHandler : IDisposable
     private Task? _pollLoop;
     private Task? _networkRetryLoop;
     private readonly SemaphoreSlim _atLock = new(1, 1);
-    private bool _ussdUnavailable;
+    private DateTime? _ussdUnavailableSince;
 
     public bool IsAlive => _at?.IsOpen == true;
 
@@ -345,7 +345,9 @@ public class ModemHandler : IDisposable
 
     private async Task TryGetPhoneAndBalanceAsync(CancellationToken ct)
     {
-        if (_ussdUnavailable) return;
+        if (_ussdUnavailableSince.HasValue && DateTime.UtcNow - _ussdUnavailableSince.Value < TimeSpan.FromMinutes(10))
+            return;
+        _ussdUnavailableSince = null;
         try
         {
             await _atLock.WaitAsync(ct);
@@ -377,8 +379,8 @@ public class ModemHandler : IDisposable
                 else
                 {
                     _log.LogWarning("Modem {Id}: Balance USSD returned empty", _modemId);
-                    _ussdUnavailable = true;
-                    _log.LogWarning("Modem {Id}: USSD marked unavailable — will rely on SMS for balance", _modemId);
+                    _ussdUnavailableSince = DateTime.UtcNow;
+                    _log.LogWarning("Modem {Id}: USSD temporarily unavailable — retry in 10 min", _modemId);
                 }
             }
             finally { _atLock.Release(); }
@@ -395,8 +397,6 @@ public class ModemHandler : IDisposable
             catch (OperationCanceledException) { break; }
 
             if (_disposed) break;
-
-            if (_ussdUnavailable) return;
 
             try
             {

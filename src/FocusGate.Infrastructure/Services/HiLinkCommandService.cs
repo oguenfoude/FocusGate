@@ -282,11 +282,38 @@ public partial class HiLinkCommandService : IAtCommandService
         var match = BalanceRegex().Match(resp);
         if (match.Success)
         {
-            var amountStr = match.Groups[1].Value.Replace(",", ".");
-            if (decimal.TryParse(amountStr, System.Globalization.NumberStyles.Any,
-                System.Globalization.CultureInfo.InvariantCulture, out var amount))
-                return amount;
+            var numStr = match.Groups[1].Value;
+            var parsed = ParseFrenchNumber(numStr);
+            if (parsed.HasValue)
+                return parsed.Value;
         }
+        return null;
+    }
+
+    private static decimal? ParseFrenchNumber(string numStr)
+    {
+        numStr = numStr.TrimEnd('.', ',');
+        if (numStr.Contains(',') && numStr.Contains('.'))
+        {
+            var lastComma = numStr.LastIndexOf(',');
+            var lastDot = numStr.LastIndexOf('.');
+            if (lastComma > lastDot)
+            {
+                numStr = numStr.Replace(".", "").Replace(",", ".");
+            }
+            else
+            {
+                numStr = numStr.Replace(",", "");
+            }
+        }
+        else if (numStr.Contains(','))
+        {
+            numStr = numStr.Replace(",", ".");
+        }
+
+        if (decimal.TryParse(numStr, System.Globalization.NumberStyles.Any,
+            System.Globalization.CultureInfo.InvariantCulture, out var amount))
+            return amount;
         return null;
     }
 
@@ -391,9 +418,9 @@ public partial class HiLinkCommandService : IAtCommandService
                 return string.Empty;
             }
 
-            // Step 2: Poll /api/ussd/get — no cookies, no CSRF (matches browser exactly)
-            var pollIntervalMs = 3000;
-            var totalTimeoutMs = 60_000;
+            // Step 2: Poll /api/ussd/get — no CSRF (browser pattern)
+            var pollIntervalMs = 2000;
+            var totalTimeoutMs = 30_000;
             var deadline = DateTime.UtcNow.AddMilliseconds(totalTimeoutMs);
             var pollCount = 0;
             while (DateTime.UtcNow < deadline)
@@ -403,26 +430,33 @@ public partial class HiLinkCommandService : IAtCommandService
                 var getResult = await SendUssdRawGetAsync("/api/ussd/get");
                 if (string.IsNullOrEmpty(getResult))
                 {
-                    _log.LogDebug("[HiLink] USSD {Code} poll #{Count}: empty response", code, pollCount);
+                    _log.LogInformation("[HiLink] USSD {Code} poll #{Count}: empty response", code, pollCount);
                     continue;
                 }
 
-                _log.LogDebug("[HiLink] USSD {Code} poll #{Count}: {Xml}",
-                    code, pollCount, getResult.Length > 200 ? getResult[..200] : getResult);
+                if (pollCount <= 3)
+                    _log.LogInformation("[HiLink] USSD {Code} poll #{Count}: {Xml}",
+                        code, pollCount, getResult.Length > 300 ? getResult[..300] : getResult);
 
                 var getDoc = XDocument.Parse(getResult);
-                var getError = GetElement(getDoc.Root!, "code");
-                if (getError != null && getDoc.Root!.Name.LocalName == "error")
+                var rootName = getDoc.Root!.Name.LocalName;
+                if (rootName == "error")
                 {
+                    var getError = GetElement(getDoc.Root!, "code");
                     if (getError == "111019")
+                    {
+                        if (pollCount <= 3)
+                            _log.LogInformation("[HiLink] USSD {Code} poll #{Count}: 111019 (waiting)", code, pollCount);
                         continue;
+                    }
 
                     _log.LogWarning("[HiLink] USSD {Code} poll error {Error}",
                         code, getError);
                     break;
                 }
 
-                var content = GetElement(getDoc.Root!, "Content");
+                var content = GetElement(getDoc.Root!, "Content")
+                    ?? GetElement(getDoc.Root!, "content");
                 if (!string.IsNullOrEmpty(content))
                 {
                     _log.LogInformation("[HiLink] USSD {Code} got result after {Count} polls: {Content}",
@@ -430,6 +464,9 @@ public partial class HiLinkCommandService : IAtCommandService
                     await SendUssdRawGetAsync("/api/ussd/release");
                     return content;
                 }
+
+                _log.LogWarning("[HiLink] USSD {Code} poll #{Count}: unrecognized XML: {Xml}",
+                    code, pollCount, getResult.Length > 300 ? getResult[..300] : getResult);
             }
 
             _log.LogWarning("[HiLink] USSD {Code}: no response after {Count} polls ({Seconds}s)",
@@ -471,7 +508,13 @@ public partial class HiLinkCommandService : IAtCommandService
         if (string.IsNullOrEmpty(_baseUrl)) return null;
 
         var request = new HttpRequestMessage(HttpMethod.Get, $"{_baseUrl}{path}");
-        ApplyHeaders(request);
+        if (!string.IsNullOrEmpty(_sessionCookie))
+        {
+            var cv = _sessionCookie.StartsWith("SessionID=", StringComparison.OrdinalIgnoreCase)
+                ? _sessionCookie["SessionID=".Length..]
+                : _sessionCookie;
+            request.Headers.Add("Cookie", $"SessionID={cv}");
+        }
         request.Headers.Add("Referer", $"{_baseUrl}/html/ussd.html");
         request.Headers.Add("X-Requested-With", "XMLHttpRequest");
 
@@ -554,6 +597,6 @@ public partial class HiLinkCommandService : IAtCommandService
         request.Headers.Add("X-Requested-With", "XMLHttpRequest");
     }
 
-    [GeneratedRegex(@"(\d+[\.,]?\d*)")]
+    [GeneratedRegex(@"(\d[\d.,]+)")]
     private static partial Regex BalanceRegex();
 }
