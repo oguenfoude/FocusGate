@@ -164,19 +164,27 @@ public partial class HiLinkCommandService : IAtCommandService
     public async Task<string> GetImeiAsync()
     {
         if (!string.IsNullOrEmpty(_imei)) return _imei;
+
         var xml = await SendGetAsync("/api/device/information");
-        if (string.IsNullOrEmpty(xml)) return string.Empty;
+        if (!string.IsNullOrEmpty(xml))
+        {
+            _log.LogDebug("[HiLink] /api/device/information raw: {Xml}",
+                xml.Length > 300 ? xml[..300] : xml);
 
-        _log.LogDebug("[HiLink] /api/device/information raw: {Xml}",
-            xml.Length > 300 ? xml[..300] : xml);
-
-        var doc = XDocument.Parse(xml);
-        _imei = GetElement(doc.Root!, "Imei") ?? GetElement(doc.Root!, "imei") ?? string.Empty;
-        _imsi = GetElement(doc.Root!, "Imsi") ?? GetElement(doc.Root!, "imsi") ?? string.Empty;
+            var doc = XDocument.Parse(xml);
+            _imei = GetElement(doc.Root!, "Imei") ?? GetElement(doc.Root!, "imei") ?? string.Empty;
+            _imsi = GetElement(doc.Root!, "Imsi") ?? GetElement(doc.Root!, "imsi") ?? string.Empty;
+        }
 
         if (string.IsNullOrEmpty(_imei))
         {
-            _log.LogWarning("[HiLink] IMEI not found in XML, generating IP-based ID");
+            _log.LogInformation("[HiLink] IMEI not in device info, trying AT+CGSN via terminal command...");
+            _imei = await GetImeiViaAtAsync();
+        }
+
+        if (string.IsNullOrEmpty(_imei))
+        {
+            _log.LogWarning("[HiLink] IMEI not available, using IP-based ID");
             if (_baseUrl != null && Uri.TryCreate(_baseUrl, UriKind.Absolute, out var uri))
                 _imei = $"HILINK-{uri.Host.Replace(".", "-")}";
         }
@@ -184,10 +192,63 @@ public partial class HiLinkCommandService : IAtCommandService
         return _imei;
     }
 
+    private async Task<string> GetImeiViaAtAsync()
+    {
+        try
+        {
+            var body = @"<request><Command>AT+CGSN</Command><Timeout>5000</Timeout></request>";
+            var xml = await SendPostAsync("/api/terminal/command", body);
+            if (string.IsNullOrEmpty(xml)) return string.Empty;
+
+            _log.LogDebug("[HiLink] AT+CGSN response: {Xml}",
+                xml.Length > 300 ? xml[..300] : xml);
+
+            var doc = XDocument.Parse(xml);
+            var response = GetElement(doc.Root!, "Response") ?? GetElement(doc.Root!, "response") ?? string.Empty;
+            var match = Regex.Match(response, @"(\d{15})");
+            if (match.Success)
+            {
+                _log.LogInformation("[HiLink] IMEI from AT+CGSN: {IMEI}", match.Value);
+                return match.Value;
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.LogDebug(ex, "[HiLink] AT+CGSN failed (non-critical)");
+        }
+        return string.Empty;
+    }
+
     public async Task<string> GetImsiAsync()
     {
         if (!string.IsNullOrEmpty(_imsi)) return _imsi;
         await GetImeiAsync();
+
+        if (string.IsNullOrEmpty(_imsi))
+        {
+            _log.LogInformation("[HiLink] IMSI not in device info, trying AT+CIMI...");
+            try
+            {
+                var body = @"<request><Command>AT+CIMI</Command><Timeout>5000</Timeout></request>";
+                var xml = await SendPostAsync("/api/terminal/command", body);
+                if (!string.IsNullOrEmpty(xml))
+                {
+                    var doc = XDocument.Parse(xml);
+                    var response = GetElement(doc.Root!, "Response") ?? GetElement(doc.Root!, "response") ?? string.Empty;
+                    var match = Regex.Match(response, @"(\d{15})");
+                    if (match.Success)
+                    {
+                        _imsi = match.Value;
+                        _log.LogInformation("[HiLink] IMSI from AT+CIMI: {IMSI}", _imsi);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.LogDebug(ex, "[HiLink] AT+CIMI failed (non-critical)");
+            }
+        }
+
         return _imsi ?? string.Empty;
     }
 
