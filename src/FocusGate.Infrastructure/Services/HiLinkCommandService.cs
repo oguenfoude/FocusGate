@@ -444,10 +444,17 @@ public partial class HiLinkCommandService : IAtCommandService
     private void ApplyHeaders(HttpRequestMessage request)
     {
         if (!string.IsNullOrEmpty(_sessionCookie))
-            request.Headers.Add("Cookie", $"SessionID={_sessionCookie}");
+        {
+            var cookieValue = _sessionCookie.StartsWith("SessionID=", StringComparison.OrdinalIgnoreCase)
+                ? _sessionCookie["SessionID=".Length..]
+                : _sessionCookie;
+            request.Headers.Add("Cookie", $"SessionID={cookieValue}");
+        }
 
         if (!string.IsNullOrEmpty(_csrfToken))
             request.Headers.Add("__RequestVerificationToken", _csrfToken);
+
+        request.Headers.Add("X-Requested-With", "XMLHttpRequest");
     }
 
     [GeneratedRegex(@"(\d+[\.,]?\d*)")]

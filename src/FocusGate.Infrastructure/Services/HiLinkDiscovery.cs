@@ -149,9 +149,13 @@ public class HiLinkDiscovery
 
                 try
                 {
+                    var sesCookie = sesInfo.StartsWith("SessionID=", StringComparison.OrdinalIgnoreCase)
+                        ? sesInfo["SessionID=".Length..]
+                        : sesInfo;
                     var request = new HttpRequestMessage(HttpMethod.Get, $"{scheme}://{ip}/api/device/information");
-                    request.Headers.Add("Cookie", $"SessionID={sesInfo}");
+                    request.Headers.Add("Cookie", $"SessionID={sesCookie}");
                     request.Headers.Add("User-Agent", UserAgent);
+                    request.Headers.Add("X-Requested-With", "XMLHttpRequest");
                     var devResp = await http.SendAsync(request);
                     var devXml = await devResp.Content.ReadAsStringAsync();
                     var devDoc = XDocument.Parse(devXml);
@@ -191,10 +195,14 @@ public class HiLinkDiscovery
                         {
                             Content = new System.Net.Http.StringContent(atBody, System.Text.Encoding.UTF8, "application/xml")
                         };
-                        atReq.Headers.Add("Cookie", $"SessionID={sesInfo}");
+                        var atCookie = sesInfo.StartsWith("SessionID=", StringComparison.OrdinalIgnoreCase)
+                            ? sesInfo["SessionID=".Length..]
+                            : sesInfo;
+                        atReq.Headers.Add("Cookie", $"SessionID={atCookie}");
                         if (!string.IsNullOrEmpty(info.CsrfToken))
                             atReq.Headers.Add("__RequestVerificationToken", info.CsrfToken);
                         atReq.Headers.Add("User-Agent", UserAgent);
+                        atReq.Headers.Add("X-Requested-With", "XMLHttpRequest");
                         var atResp = await http.SendAsync(atReq);
                         var atXml = await atResp.Content.ReadAsStringAsync();
                         var atDoc = XDocument.Parse(atXml);

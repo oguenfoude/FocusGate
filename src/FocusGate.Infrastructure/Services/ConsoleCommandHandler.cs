@@ -656,7 +656,13 @@ public class ConsoleCommandHandler : BackgroundService
                 var url = $"{baseUrl}{path}";
                 var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, url);
                 if (!string.IsNullOrEmpty(sessionCookie))
-                    request.Headers.Add("Cookie", $"SessionID={sessionCookie}");
+                {
+                    var cv = sessionCookie.StartsWith("SessionID=", StringComparison.OrdinalIgnoreCase)
+                        ? sessionCookie["SessionID=".Length..]
+                        : sessionCookie;
+                    request.Headers.Add("Cookie", $"SessionID={cv}");
+                }
+                request.Headers.Add("X-Requested-With", "XMLHttpRequest");
                 var resp = await http.SendAsync(request);
                 var xml = await resp.Content.ReadAsStringAsync();
                 return (name, xml);
@@ -677,9 +683,15 @@ public class ConsoleCommandHandler : BackgroundService
                     Content = new System.Net.Http.StringContent(body, Encoding.UTF8, "application/xml")
                 };
                 if (!string.IsNullOrEmpty(sessionCookie))
-                    request.Headers.Add("Cookie", $"SessionID={sessionCookie}");
+                {
+                    var cv = sessionCookie.StartsWith("SessionID=", StringComparison.OrdinalIgnoreCase)
+                        ? sessionCookie["SessionID=".Length..]
+                        : sessionCookie;
+                    request.Headers.Add("Cookie", $"SessionID={cv}");
+                }
                 if (!string.IsNullOrEmpty(csrfToken))
                     request.Headers.Add("__RequestVerificationToken", csrfToken);
+                request.Headers.Add("X-Requested-With", "XMLHttpRequest");
                 var resp = await http.SendAsync(request);
                 var xml = await resp.Content.ReadAsStringAsync();
                 return (name, xml);
