@@ -1,8 +1,9 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
-using System.Text;
 using System.Xml.Linq;
 using Microsoft.Extensions.Logging;
 
@@ -27,56 +28,14 @@ public class HiLinkDiscovery
 
     public static string[] DiscoverGatewayIps()
     {
-        var gateways = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        try
-        {
-            foreach (var iface in NetworkInterface.GetAllNetworkInterfaces())
-            {
-                if (iface.OperationalStatus != OperationalStatus.Up) continue;
-                if (iface.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
-                if (iface.NetworkInterfaceType == NetworkInterfaceType.Tunnel) continue;
-
-                var props = iface.GetIPProperties();
-                foreach (var gw in props.GatewayAddresses)
-                {
-                    var addr = gw.Address;
-                    if (IPAddress.IsLoopback(addr)) continue;
-                    if (addr.AddressFamily != AddressFamily.InterNetwork) continue;
-
-                    var ip = addr.ToString();
-                    if (!string.IsNullOrEmpty(ip) && ip != "0.0.0.0")
-                        gateways.Add(ip);
-                }
-
-                foreach (var unicast in props.UnicastAddresses)
-                {
-                    if (unicast.Address.AddressFamily != AddressFamily.InterNetwork) continue;
-                    var ip = unicast.Address.ToString();
-                    var parts = ip.Split('.');
-                    if (parts.Length == 4)
-                    {
-                        var subnet = $"{parts[0]}.{parts[1]}.{parts[2]}.1";
-                        if (subnet != ip)
-                            gateways.Add(subnet);
-                    }
-                }
-            }
-        }
-        catch { }
+        var gateways = new List<string>();
 
         foreach (var ip in DefaultHiLinkIps)
             gateways.Add(ip);
 
-        return gateways.ToArray();
-    }
-
-    public static string[] GetAutoScanIps()
-    {
-        var gateways = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
         try
         {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var iface in NetworkInterface.GetAllNetworkInterfaces())
             {
                 if (iface.OperationalStatus != OperationalStatus.Up) continue;
@@ -89,37 +48,48 @@ public class HiLinkDiscovery
                     var addr = gw.Address;
                     if (IPAddress.IsLoopback(addr)) continue;
                     if (addr.AddressFamily != AddressFamily.InterNetwork) continue;
+
                     var ip = addr.ToString();
-                    if (!string.IsNullOrEmpty(ip) && ip != "0.0.0.0")
+                    if (!string.IsNullOrEmpty(ip) && ip != "0.0.0.0" && seen.Add(ip))
                         gateways.Add(ip);
                 }
             }
         }
         catch { }
 
-        return gateways.ToArray();
+        return gateways.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
-    public async Task<List<HiLinkDeviceInfo>> DiscoverAsync(string[] ips, int timeoutMs = 3000)
+    public async Task<List<HiLinkDeviceInfo>> DiscoverAsync(string[] ips, int timeoutMs = 2000)
     {
-        var found = new List<HiLinkDeviceInfo>();
-        using var http = new HttpClient { Timeout = TimeSpan.FromMilliseconds(timeoutMs) };
+        var results = new ConcurrentBag<HiLinkDeviceInfo>();
+        var sw = Stopwatch.StartNew();
 
-        foreach (var ip in ips)
+        _log.LogInformation("Probing {Count} IPs (parallel, {Ms}ms timeout)...", ips.Length, timeoutMs);
+
+        var tasks = ips.Select(ip => ProbeIpAsync(ip, timeoutMs, results));
+        await Task.WhenAll(tasks);
+
+        sw.Stop();
+        _log.LogInformation("Probe complete: {Count} device(s) found in {Ms}ms", results.Count, sw.ElapsedMilliseconds);
+        return results.ToList();
+    }
+
+    private async Task ProbeIpAsync(string ip, int timeoutMs, ConcurrentBag<HiLinkDeviceInfo> results)
+    {
+        for (int attempt = 1; attempt <= 2; attempt++)
         {
             try
             {
+                using var http = new HttpClient { Timeout = TimeSpan.FromMilliseconds(timeoutMs) };
                 var response = await http.GetAsync($"http://{ip}/api/webserver/SesTokInfo");
                 var xml = await response.Content.ReadAsStringAsync();
                 var doc = XDocument.Parse(xml);
                 var root = doc.Root;
-
-                if (root == null) continue;
+                if (root == null) return;
 
                 var sesInfo = root.Element(Ns + "SesInfo")?.Value;
-                if (string.IsNullOrEmpty(sesInfo)) continue;
-
-                _log.LogInformation("{Ip}: HiLink modem detected", ip);
+                if (string.IsNullOrEmpty(sesInfo)) return;
 
                 var info = new HiLinkDeviceInfo { Ip = ip, SessionCookie = sesInfo };
 
@@ -130,14 +100,11 @@ public class HiLinkDiscovery
                 try
                 {
                     var request = new HttpRequestMessage(HttpMethod.Get, $"http://{ip}/api/device/information");
-                    if (!string.IsNullOrEmpty(sesInfo))
-                        request.Headers.Add("Cookie", $"SessionID={sesInfo}");
-
+                    request.Headers.Add("Cookie", $"SessionID={sesInfo}");
                     var devResp = await http.SendAsync(request);
                     var devXml = await devResp.Content.ReadAsStringAsync();
                     var devDoc = XDocument.Parse(devXml);
                     var devRoot = devDoc.Root;
-
                     if (devRoot != null)
                     {
                         info.Imei = devRoot.Element(Ns + "Imei")?.Value ?? "";
@@ -146,23 +113,19 @@ public class HiLinkDiscovery
                         info.Manufacturer = devRoot.Element(Ns + "Manufacturer")?.Value ?? "Huawei";
                     }
                 }
-                catch (Exception ex)
-                {
-                    _log.LogWarning(ex, "{Ip}: Failed to get device info", ip);
-                }
+                catch { }
 
-                found.Add(info);
-                _log.LogInformation("{Ip}: IMEI={IMEI} Model={Model}", ip, info.Imei, info.Model);
+                _log.LogInformation("{Ip}: FOUND HiLink | IMEI={IMEI} Model={Model}",
+                    ip, info.Imei, info.Model);
+                results.Add(info);
+                return;
             }
-            catch (HttpRequestException) { }
-            catch (TaskCanceledException) { }
-            catch (Exception ex)
-            {
-                _log.LogDebug(ex, "{Ip}: Not a HiLink modem", ip);
-            }
+            catch (HttpRequestException) when (attempt < 2) { await Task.Delay(300); }
+            catch (TaskCanceledException) when (attempt < 2) { await Task.Delay(300); }
+            catch (HttpRequestException) { return; }
+            catch (TaskCanceledException) { return; }
+            catch { return; }
         }
-
-        return found;
     }
 }
 

@@ -27,7 +27,7 @@ public static class ConfigMerger
         ["sync.interval_seconds"] = "30",
         ["hilink.enabled"] = "true",
         ["hilink.scan_ips"] = "",
-        ["hilink.probe_timeout_ms"] = "3000",
+        ["hilink.probe_timeout_ms"] = "2000",
         ["at.enabled"] = "true",
         ["at.probe_timeout_ms"] = "8000",
         ["app.version"] = "1.0.0"

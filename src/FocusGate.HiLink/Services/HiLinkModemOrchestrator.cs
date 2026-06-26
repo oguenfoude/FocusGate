@@ -80,52 +80,47 @@ public class HiLinkModemOrchestrator : BackgroundService
 
     private async Task ScanAsync(CancellationToken ct)
     {
+        foreach (var kv in _handlers.Where(kv => !kv.Value.handler.IsAlive))
+        {
+            var (handler, imei) = kv.Value;
+            _log.LogWarning("{Ip}: Handler dead, freeing IMEI {IMEI} — will re-probe next cycle", kv.Key, imei);
+            _handlers.TryRemove(kv.Key, out _);
+            _activeImeis.TryRemove(imei, out _);
+            try { handler.Dispose(); } catch { }
+        }
+
         if (_handlers.Count >= MaxModems)
         {
             _log.LogDebug("Max modems reached ({Max}), skipping scan", MaxModems);
             return;
         }
 
-        foreach (var kv in _handlers.Where(kv => !kv.Value.handler.IsAlive))
-        {
-            var (handler, imei) = kv.Value;
-            _log.LogWarning("{Ip}: Dead handler, freeing IMEI {IMEI}", kv.Key, imei);
-            _handlers.TryRemove(kv.Key, out _);
-            _activeImeis.TryRemove(imei, out _);
-            try { handler.Dispose(); } catch { }
-        }
-
         var ipsRaw = _config.Get("hilink.scan_ips", "");
-        string[] toScan;
+        string[] allIps;
 
         if (!string.IsNullOrWhiteSpace(ipsRaw))
         {
-            toScan = ipsRaw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Where(ip => !_handlers.ContainsKey(ip))
+            allIps = ipsRaw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
-            _log.LogInformation("Using config IPs: {Ips}", string.Join(", ", toScan));
         }
         else
         {
-            var autoIps = HiLinkDiscovery.DiscoverGatewayIps();
-            toScan = autoIps.Where(ip => !_handlers.ContainsKey(ip)).ToArray();
-            _log.LogInformation("Auto-detected {Count} gateway IPs: {Ips}", toScan.Length, string.Join(", ", toScan));
+            allIps = HiLinkDiscovery.DiscoverGatewayIps();
         }
 
-        if (toScan.Length == 0)
-        {
-            _log.LogWarning("No IPs to scan");
-            return;
-        }
+        var toScan = allIps.Where(ip => !_handlers.ContainsKey(ip)).ToArray();
+
+        _log.LogInformation("Scanning {ToScan} of {Total} IPs (active handlers: {Active})",
+            toScan.Length, allIps.Length, _handlers.Count);
+
+        if (toScan.Length == 0) return;
 
         using var scope = _services.CreateScope();
         var discoveryLog = scope.ServiceProvider.GetRequiredService<ILogger<HiLinkDiscovery>>();
         var discovery = new HiLinkDiscovery(discoveryLog);
-        var probeTimeout = int.TryParse(_config.Get("hilink.probe_timeout_ms", "3000"), out var t) ? t : 3000;
-
-        _log.LogInformation("Probing {Count} IPs (timeout {Ms}ms each)...", toScan.Length, probeTimeout);
+        var probeTimeout = int.TryParse(_config.Get("hilink.probe_timeout_ms", "2000"), out var t) ? t : 2000;
         var devices = await discovery.DiscoverAsync(toScan, probeTimeout);
-        _log.LogInformation("Found {Count} HiLink device(s)", devices.Count);
 
         foreach (var device in devices)
         {

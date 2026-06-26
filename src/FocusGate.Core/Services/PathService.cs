@@ -15,8 +15,8 @@ public static class PathService
         if (!string.IsNullOrEmpty(envOverride) && Directory.Exists(envOverride))
             return envOverride;
 
-        var cwd = Directory.GetCurrentDirectory();
-        var data = Path.Combine(cwd, "data");
+        var roaming = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var data = Path.Combine(roaming, "FocusGate");
         Directory.CreateDirectory(data);
         return data;
     }
