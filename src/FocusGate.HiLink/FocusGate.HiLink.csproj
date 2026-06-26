@@ -23,7 +23,6 @@
     <Nullable>enable</Nullable>
     <NuGetAudit>false</NuGetAudit>
     <AssemblyName>FocusGate.HiLink</AssemblyName>
-    <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 
 </Project>
