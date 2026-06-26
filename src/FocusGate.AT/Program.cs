@@ -1,6 +1,5 @@
 using FocusGate.Core.Services;
-using FocusGate.Hardware;
-using FocusGate.Hardware.Services;
+using FocusGate.AT.Services;
 using FocusGate.Infrastructure;
 using FocusGate.Infrastructure.Data;
 using FocusGate.Infrastructure.Services;
@@ -14,7 +13,7 @@ using Serilog.Events;
 using var appCts = new CancellationTokenSource();
 CancellationTokenSource? linkedCts = null;
 
-var mutex = new System.Threading.Mutex(true, @"Global\FocusGate_Hardware", out bool createdNew);
+var mutex = new System.Threading.Mutex(true, @"Global\FocusGate_AT", out bool createdNew);
 if (!createdNew)
 {
     try
@@ -53,16 +52,14 @@ var host = Host.CreateDefaultBuilder(args)
         .MinimumLevel.Override("Microsoft.EntityFrameworkCore", Serilog.Events.LogEventLevel.Warning)
         .MinimumLevel.Override("MongoDB", Serilog.Events.LogEventLevel.Warning)
         .WriteTo.Console()
-        .WriteTo.File(Path.Combine(PathService.LogsDirectory, "focusgate-.log"),
+        .WriteTo.File(Path.Combine(PathService.LogsDirectory, "focusgate-at-.log"),
             rollingInterval: RollingInterval.Day,
             retainedFileCountLimit: 30))
     .ConfigureServices((ctx, services) =>
     {
-        services.AddInfrastructure(ctx.Configuration, dataDir);
-        services.AddHardware();
-        services.AddHostedService<ModemOrchestrator>();
-        services.AddHostedService<ConsoleCommandHandler>();
-        services.AddHostedService<RestartService>();
+        services.AddFocusGate(ctx.Configuration, dataDir);
+        services.AddSingleton<AtModemOrchestrator>();
+        services.AddHostedService(sp => sp.GetRequiredService<AtModemOrchestrator>());
     })
     .Build();
 
@@ -88,7 +85,7 @@ try
     linkedCts = CancellationTokenSource.CreateLinkedTokenSource(appCts.Token);
     writeChannel.Start(linkedCts.Token);
 
-    logger.LogInformation("FocusGate started | DB: {DbPath} | Machine: {Machine}",
+    logger.LogInformation("FocusGate AT started | DB: {DbPath} | Machine: {Machine}",
         PathService.DatabasePath, context.MachineId);
 
     var lifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
@@ -97,52 +94,10 @@ try
         _ = writeChannel.CompleteAsync();
         linkedCts.Cancel();
     });
-
-    var desktopPath = "";
-    var searchDir = AppContext.BaseDirectory;
-    while (searchDir != null)
-    {
-        var candidate = Path.Combine(searchDir, "FocusGate.Desktop.exe");
-        if (File.Exists(candidate)) { desktopPath = candidate; break; }
-        candidate = Path.Combine(searchDir, "Desktop", "FocusGate.Desktop.exe");
-        if (File.Exists(candidate)) { desktopPath = candidate; break; }
-        searchDir = Directory.GetParent(searchDir)?.FullName;
-    }
-
-    if (string.IsNullOrEmpty(desktopPath))
-    {
-        var srcDir = AppContext.BaseDirectory;
-        while (srcDir != null)
-        {
-            var candidate = Path.Combine(srcDir, "src", "FocusGate.Desktop", "bin", "Debug", "net10.0-windows", "FocusGate.Desktop.exe");
-            if (File.Exists(candidate)) { desktopPath = candidate; break; }
-            candidate = Path.Combine(srcDir, "src", "FocusGate.Desktop", "bin", "Release", "net10.0-windows", "FocusGate.Desktop.exe");
-            if (File.Exists(candidate)) { desktopPath = candidate; break; }
-            srcDir = Directory.GetParent(srcDir)?.FullName;
-        }
-    }
-
-    if (File.Exists(desktopPath))
-    {
-        try
-        {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = desktopPath,
-                UseShellExecute = true,
-                WorkingDirectory = Directory.GetCurrentDirectory()
-            });
-            logger.LogInformation("Desktop monitor launched");
-        }
-        catch (Exception dex)
-        {
-            logger.LogWarning(dex, "Could not launch Desktop monitor");
-        }
-    }
 }
 catch (Exception ex)
 {
-    ShowErrorDialog("FocusGate - Startup Error", $"Failed to start FocusGate:\n\n{ex.Message}\n\n{ex.InnerException?.Message}");
+    ShowErrorDialog("FocusGate AT - Startup Error", $"Failed to start:\n\n{ex.Message}\n\n{ex.InnerException?.Message}");
 }
 
 await host.RunAsync();

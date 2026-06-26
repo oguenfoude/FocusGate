@@ -5,7 +5,7 @@ using FocusGate.Core.Models;
 using FocusGate.Infrastructure.Services;
 using Microsoft.Extensions.Logging;
 
-namespace FocusGate.Hardware.Services;
+namespace FocusGate.Infrastructure.Services;
 
 public class ModemHandler : IDisposable
 {
@@ -186,7 +186,7 @@ public class ModemHandler : IDisposable
                 var savedCount = results.Count(r => r);
                 var skippedCount = results.Length - savedCount;
                 await _at.DeleteAllSmsAsync();
-                _log.LogInformation("Modem {Id}: Processed {TotalCount} startup SMS ({SavedCount} saved, {SkippedCount} skipped/duplicates) and deleted from SIM", 
+                _log.LogInformation("Modem {Id}: Processed {TotalCount} startup SMS ({SavedCount} saved, {SkippedCount} skipped/duplicates) and deleted from SIM",
                     _modemId, messages.Count, savedCount, skippedCount);
             }
 

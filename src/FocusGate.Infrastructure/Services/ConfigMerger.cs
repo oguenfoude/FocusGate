@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace FocusGate.Hardware;
+namespace FocusGate.Infrastructure.Services;
 
 public static class ConfigMerger
 {
@@ -26,8 +26,10 @@ public static class ConfigMerger
         ["mongodb.database"] = "focusgate",
         ["sync.interval_seconds"] = "30",
         ["hilink.enabled"] = "true",
-        ["hilink.scan_ips"] = "192.168.8.1,192.168.200.1,192.168.1.1",
+        ["hilink.scan_ips"] = "",
         ["hilink.probe_timeout_ms"] = "3000",
+        ["at.enabled"] = "true",
+        ["at.probe_timeout_ms"] = "8000",
         ["app.version"] = "1.0.0"
     };
 
@@ -61,7 +63,6 @@ public static class ConfigMerger
             {
                 existing["mongodb.uri"] = MigratedUri;
                 changed = true;
-                // User must update config.json with their real MongoDB Atlas URI
             }
         }
 

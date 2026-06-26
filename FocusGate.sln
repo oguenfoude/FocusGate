@@ -6,7 +6,9 @@ Project("{{8E2E20D7-585E-4E7E-A3EB-922ADE886358}}") = "FocusGate.Core", "src\Foc
 EndProject
 Project("{{8E2E20D7-585E-4E7E-A3EB-922ADE886358}}") = "FocusGate.Infrastructure", "src\FocusGate.Infrastructure\FocusGate.Infrastructure.csproj", "{{B5888757-316A-4789-A214-4A9CACE4D05D}}"
 EndProject
-Project("{{8E2E20D7-585E-4E7E-A3EB-922ADE886358}}") = "FocusGate.Hardware", "src\FocusGate.Hardware\FocusGate.Hardware.csproj", "{{FEA14F28-07F0-4EED-8101-324478A0944D}}"
+Project("{{8E2E20D7-585E-4E7E-A3EB-922ADE886358}}") = "FocusGate.AT", "src\FocusGate.AT\FocusGate.AT.csproj", "{{A1B2C3D4-E5F6-7890-ABCD-EF1234567891}}"
+EndProject
+Project("{{8E2E20D7-585E-4E7E-A3EB-922ADE886358}}") = "FocusGate.HiLink", "src\FocusGate.HiLink\FocusGate.HiLink.csproj", "{{A1B2C3D4-E5F6-7890-ABCD-EF1234567892}}"
 EndProject
 Project("{{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}}") = "FocusGate.Desktop", "src\FocusGate.Desktop\FocusGate.Desktop.csproj", "{{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}}"
 EndProject
@@ -24,10 +26,14 @@ Global
 		{{B5888757-316A-4789-A214-4A9CACE4D05D}}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{{B5888757-316A-4789-A214-4A9CACE4D05D}}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{{B5888757-316A-4789-A214-4A9CACE4D05D}}.Release|Any CPU.Build.0 = Release|Any CPU
-		{{FEA14F28-07F0-4EED-8101-324478A0944D}}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{{FEA14F28-07F0-4EED-8101-324478A0944D}}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{{FEA14F28-07F0-4EED-8101-324478A0944D}}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{{FEA14F28-07F0-4EED-8101-324478A0944D}}.Release|Any CPU.Build.0 = Release|Any CPU
+		{{A1B2C3D4-E5F6-7890-ABCD-EF1234567891}}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{{A1B2C3D4-E5F6-7890-ABCD-EF1234567891}}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{{A1B2C3D4-E5F6-7890-ABCD-EF1234567891}}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{{A1B2C3D4-E5F6-7890-ABCD-EF1234567891}}.Release|Any CPU.Build.0 = Release|Any CPU
+		{{A1B2C3D4-E5F6-7890-ABCD-EF1234567892}}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{{A1B2C3D4-E5F6-7890-ABCD-EF1234567892}}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{{A1B2C3D4-E5F6-7890-ABCD-EF1234567892}}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{{A1B2C3D4-E5F6-7890-ABCD-EF1234567892}}.Release|Any CPU.Build.0 = Release|Any CPU
 		{{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}}.Release|Any CPU.ActiveCfg = Release|Any CPU

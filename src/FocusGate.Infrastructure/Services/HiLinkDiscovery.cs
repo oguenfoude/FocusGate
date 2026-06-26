@@ -1,4 +1,7 @@
+using System.Net;
 using System.Net.Http;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Text;
 using System.Xml.Linq;
 using Microsoft.Extensions.Logging;
@@ -10,9 +13,62 @@ public class HiLinkDiscovery
     private readonly ILogger<HiLinkDiscovery> _log;
     private static readonly XNamespace Ns = "http://schemas.datacontract.org/2004/07/Huawei.Hilink.DataModel";
 
+    private static readonly string[] DefaultHiLinkIps = new[]
+    {
+        "192.168.8.1",
+        "192.168.200.1",
+        "192.168.1.1"
+    };
+
     public HiLinkDiscovery(ILogger<HiLinkDiscovery> log)
     {
         _log = log;
+    }
+
+    public static string[] DiscoverGatewayIps()
+    {
+        var gateways = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            foreach (var iface in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (iface.OperationalStatus != OperationalStatus.Up) continue;
+                if (iface.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
+                if (iface.NetworkInterfaceType == NetworkInterfaceType.Tunnel) continue;
+
+                var props = iface.GetIPProperties();
+                foreach (var gw in props.GatewayAddresses)
+                {
+                    var addr = gw.Address;
+                    if (IPAddress.IsLoopback(addr)) continue;
+                    if (addr.AddressFamily != AddressFamily.InterNetwork) continue;
+
+                    var ip = addr.ToString();
+                    if (!string.IsNullOrEmpty(ip) && ip != "0.0.0.0")
+                        gateways.Add(ip);
+                }
+
+                foreach (var unicast in props.UnicastAddresses)
+                {
+                    if (unicast.Address.AddressFamily != AddressFamily.InterNetwork) continue;
+                    var ip = unicast.Address.ToString();
+                    var parts = ip.Split('.');
+                    if (parts.Length == 4)
+                    {
+                        var subnet = $"{parts[0]}.{parts[1]}.{parts[2]}.1";
+                        if (subnet != ip)
+                            gateways.Add(subnet);
+                    }
+                }
+            }
+        }
+        catch { }
+
+        foreach (var ip in DefaultHiLinkIps)
+            gateways.Add(ip);
+
+        return gateways.ToArray();
     }
 
     public async Task<List<HiLinkDeviceInfo>> DiscoverAsync(string[] ips, int timeoutMs = 3000)

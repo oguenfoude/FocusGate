@@ -10,7 +10,7 @@ namespace FocusGate.Infrastructure;
 
 public static class DependencyInjection
 {
-    public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration config, string? dataDir = null)
+    public static IServiceCollection AddFocusGate(this IServiceCollection services, IConfiguration config, string? dataDir = null)
     {
         var dir = dataDir ?? FocusGate.Core.Services.PathService.DataDirectory;
         Directory.CreateDirectory(dir);
@@ -66,6 +66,8 @@ public static class DependencyInjection
         });
 
         services.AddHostedService(sp => sp.GetRequiredService<MongoSyncService>());
+        services.AddHostedService<ConsoleCommandHandler>();
+        services.AddHostedService<RestartService>();
 
         return services;
     }

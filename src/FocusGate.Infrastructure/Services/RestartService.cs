@@ -2,7 +2,7 @@ using System.IO.Pipes;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
-namespace FocusGate.Hardware.Services;
+namespace FocusGate.Infrastructure.Services;
 
 public class RestartService : BackgroundService
 {

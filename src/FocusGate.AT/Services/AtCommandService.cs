@@ -7,7 +7,7 @@ using FocusGate.Core.Enums;
 using FocusGate.Core.Interfaces;
 using Microsoft.Extensions.Logging;
 
-namespace FocusGate.Hardware.Services;
+namespace FocusGate.AT.Services;
 
 public partial class AtCommandService : IAtCommandService
 {

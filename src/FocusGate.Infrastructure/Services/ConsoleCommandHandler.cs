@@ -9,7 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
-namespace FocusGate.Hardware.Services;
+namespace FocusGate.Infrastructure.Services;
 
 public class ConsoleCommandHandler : BackgroundService
 {
@@ -361,7 +361,7 @@ public class ConsoleCommandHandler : BackgroundService
     {
         if (args.Length < 2) { Console.WriteLine("Usage: assign <userId> <modemId>"); return; }
         if (!long.TryParse(args[0], out var userId)) { Console.WriteLine("Invalid user ID."); return; }
-        if (!int.TryParse(args[1], out var modemId)) { Console.WriteLine("Invalid modem ID."); return; }
+        if (!int.TryParse(args[1], out var modemId)) { Console.WriteLine("Invalid modem ID"); return; }
 
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<FocusGateDbContext>();
@@ -389,7 +389,7 @@ public class ConsoleCommandHandler : BackgroundService
     {
         if (args.Length < 2) { Console.WriteLine("Usage: unassign <userId> <modemId>"); return; }
         if (!long.TryParse(args[0], out var userId)) { Console.WriteLine("Invalid user ID."); return; }
-        if (!int.TryParse(args[1], out var modemId)) { Console.WriteLine("Invalid modem ID."); return; }
+        if (!int.TryParse(args[1], out var modemId)) { Console.WriteLine("Invalid modem ID"); return; }
 
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<FocusGateDbContext>();
