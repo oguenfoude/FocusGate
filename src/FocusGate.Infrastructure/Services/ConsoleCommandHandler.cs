@@ -73,6 +73,7 @@ public class ConsoleCommandHandler : BackgroundService
                     case "unassign":    await UnassignModemAsync(args); break;
                     case "settle":       await SettleAsync(args); break;
                     case "report":       await ReportAsync(args); break;
+                    case "dump":         await DumpModemAsync(args); break;
                     case "exit":        _lifetime.StopApplication(); break;
                     default:            Console.WriteLine($"Unknown: {cmd}. Type 'help'."); break;
                 }
@@ -121,6 +122,7 @@ public class ConsoleCommandHandler : BackgroundService
         Console.WriteLine("  unassign <uid> <mid>      - Unassign modem");
         Console.WriteLine("  config                    - Show config");
         Console.WriteLine("  set-config <k> <v>        - Set config");
+        Console.WriteLine("  dump <ip>                 - Dump ALL API endpoints for one modem");
         Console.WriteLine("  exit                      - Exit");
 
     }
@@ -621,5 +623,213 @@ public class ConsoleCommandHandler : BackgroundService
     {
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(password));
         return Convert.ToHexString(bytes).ToLowerInvariant();
+    }
+
+    private async Task DumpModemAsync(string[] args)
+    {
+        if (args.Length < 1)
+        {
+            Console.WriteLine("Usage: dump <ip>");
+            Console.WriteLine("  Example: dump 192.168.57.1");
+            return;
+        }
+
+        var ip = args[0].Trim();
+        Console.WriteLine($"\n========================================");
+        Console.WriteLine($"  DUMPING HiLink modem at {ip}");
+        Console.WriteLine($"========================================\n");
+
+        using var http = new System.Net.Http.HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(10)
+        };
+
+        string? sessionCookie = null;
+        string? csrfToken = null;
+        var baseUrl = $"http://{ip}";
+        var results = new List<(string name, string raw)>();
+
+        async Task<(string name, string raw)> ProbeGet(string name, string path)
+        {
+            try
+            {
+                var url = $"{baseUrl}{path}";
+                var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, url);
+                if (!string.IsNullOrEmpty(sessionCookie))
+                    request.Headers.Add("Cookie", $"SessionID={sessionCookie}");
+                var resp = await http.SendAsync(request);
+                var xml = await resp.Content.ReadAsStringAsync();
+                return (name, xml);
+            }
+            catch (Exception ex)
+            {
+                return (name, $"ERROR: {ex.Message}");
+            }
+        }
+
+        async Task<(string name, string raw)> ProbePost(string name, string path, string body)
+        {
+            try
+            {
+                var url = $"{baseUrl}{path}";
+                var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, url)
+                {
+                    Content = new System.Net.Http.StringContent(body, Encoding.UTF8, "application/xml")
+                };
+                if (!string.IsNullOrEmpty(sessionCookie))
+                    request.Headers.Add("Cookie", $"SessionID={sessionCookie}");
+                if (!string.IsNullOrEmpty(csrfToken))
+                    request.Headers.Add("__RequestVerificationToken", csrfToken);
+                var resp = await http.SendAsync(request);
+                var xml = await resp.Content.ReadAsStringAsync();
+                return (name, xml);
+            }
+            catch (Exception ex)
+            {
+                return (name, $"ERROR: {ex.Message}");
+            }
+        }
+
+        void PrintResult(int num, string name, string raw)
+        {
+            var lines = raw.Split('\n');
+            var preview = lines.Length > 5 ? string.Join("\n", lines.Take(5)) + $"\n  ... ({lines.Length} lines total)" : raw;
+            Console.WriteLine($"[{num}] {name}");
+            foreach (var l in preview.Split('\n'))
+                Console.WriteLine($"    {l}");
+            Console.WriteLine();
+        }
+
+        // [1] SesTokInfo
+        Console.WriteLine("[1/11] Probing SesTokInfo...");
+        var (n1, r1) = await ProbeGet("SesTokInfo", "/api/webserver/SesTokInfo");
+        results.Add((n1, r1));
+        PrintResult(1, n1, r1);
+
+        // Extract session/CSRF
+        if (!r1.StartsWith("ERROR"))
+        {
+            try
+            {
+                var doc = System.Xml.Linq.XDocument.Parse(r1);
+                var root = doc.Root;
+                if (root != null)
+                {
+                    sessionCookie = root.Element(System.Xml.Linq.XNamespace.None + "SesInfo")?.Value
+                        ?? root.Element("SesInfo")?.Value;
+                    csrfToken = root.Element(System.Xml.Linq.XNamespace.None + "TokInfo")?.Value
+                        ?? root.Element("TokInfo")?.Value;
+                    Console.WriteLine($"    >> Session: {(sessionCookie?.Length > 20 ? sessionCookie[..20] + "..." : sessionCookie ?? "null")}");
+                    Console.WriteLine($"    >> CSRF:    {(csrfToken?.Length > 20 ? csrfToken[..20] + "..." : csrfToken ?? "null")}");
+                    Console.WriteLine();
+                }
+            }
+            catch { }
+        }
+
+        if (string.IsNullOrEmpty(sessionCookie))
+        {
+            Console.WriteLine("  FATAL: No session cookie. Cannot continue.");
+            return;
+        }
+
+        // [2] device/information
+        Console.WriteLine("[2/11] Probing /api/device/information...");
+        var (n2, r2) = await ProbeGet("Device Info", "/api/device/information");
+        results.Add((n2, r2));
+        PrintResult(2, n2, r2);
+
+        // [3] device/basic_information
+        Console.WriteLine("[3/11] Probing /api/device/basic_information...");
+        var (n3, r3) = await ProbeGet("Basic Info", "/api/device/basic_information");
+        results.Add((n3, r3));
+        PrintResult(3, n3, r3);
+
+        // [4] monitoring/status
+        Console.WriteLine("[4/11] Probing /api/monitoring/status...");
+        var (n4, r4) = await ProbeGet("Monitoring Status", "/api/monitoring/status");
+        results.Add((n4, r4));
+        PrintResult(4, n4, r4);
+
+        // [5] AT+CGSN
+        Console.WriteLine("[5/11] Sending AT+CGSN...");
+        var (n5, r5) = await ProbePost("AT+CGSN", "/api/terminal/command", "<request><Command>AT+CGSN</Command><Timeout>5000</Timeout></request>");
+        results.Add((n5, r5));
+        PrintResult(5, n5, r5);
+
+        // [6] AT+CIMI
+        Console.WriteLine("[6/11] Sending AT+CIMI...");
+        var (n6, r6) = await ProbePost("AT+CIMI", "/api/terminal/command", "<request><Command>AT+CIMI</Command><Timeout>5000</Timeout></request>");
+        results.Add((n6, r6));
+        PrintResult(6, n6, r6);
+
+        // [7] AT+CSQ
+        Console.WriteLine("[7/11] Sending AT+CSQ...");
+        var (n7, r7) = await ProbePost("AT+CSQ", "/api/terminal/command", "<request><Command>AT+CSQ</Command><Timeout>5000</Timeout></request>");
+        results.Add((n7, r7));
+        PrintResult(7, n7, r7);
+
+        // [8] AT+CPIN?
+        Console.WriteLine("[8/11] Sending AT+CPIN?...");
+        var (n8, r8) = await ProbePost("AT+CPIN?", "/api/terminal/command", "<request><Command>AT+CPIN?</Command><Timeout>5000</Timeout></request>");
+        results.Add((n8, r8));
+        PrintResult(8, n8, r8);
+
+        // [9] SMS list
+        Console.WriteLine("[9/11] Probing SMS list...");
+        var (n9, r9) = await ProbePost("SMS List", "/api/sms/sms-list",
+            "<request><PageIndex>1</PageIndex><ReadCount>10</ReadCount><BoxType>1</BoxType><SortType>0</SortType><Ascending>0</Ascending><UnreadPreferred>0</UnreadPreferred></request>");
+        results.Add((n9, r9));
+        PrintResult(9, n9, r9);
+
+        // [10] USSD balance
+        Console.WriteLine("[10/11] Sending USSD *222# (balance)...");
+        var (n10, r10) = await ProbePost("USSD *222#", "/api/ussd/send",
+            "<request><Code>*222#</Code><Timeout>15000</Timeout></request>");
+        results.Add((n10, r10));
+        PrintResult(10, n10, r10);
+
+        // [11] USSD phone
+        Console.WriteLine("[11/11] Sending USSD *101# (phone)...");
+        var (n11, r11) = await ProbePost("USSD *101#", "/api/ussd/send",
+            "<request><Code>*101#</Code><Timeout>15000</Timeout></request>");
+        results.Add((n11, r11));
+        PrintResult(11, n11, r11);
+
+        // Save to file
+        try
+        {
+            var dumpDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "FocusGate", "dumps");
+            Directory.CreateDirectory(dumpDir);
+            var fileName = $"dump_{ip.Replace(".", "-")}_{DateTime.UtcNow:yyyyMMdd_HHmmss}.txt";
+            var filePath = Path.Combine(dumpDir, fileName);
+
+            var sb = new StringBuilder();
+            sb.AppendLine($"FocusGate HiLink Dump");
+            sb.AppendLine($"IP: {ip}");
+            sb.AppendLine($"Time: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
+            sb.AppendLine($"Machine: {Environment.MachineName}");
+            sb.AppendLine(new string('=', 60));
+            sb.AppendLine();
+
+            int num = 1;
+            foreach (var (name, raw) in results)
+            {
+                sb.AppendLine($"[{num}] {name}");
+                sb.AppendLine(new string('-', 40));
+                sb.AppendLine(raw);
+                sb.AppendLine();
+                num++;
+            }
+
+            await File.WriteAllTextAsync(filePath, sb.ToString());
+            Console.WriteLine($"========================================");
+            Console.WriteLine($"  DUMP SAVED: {filePath}");
+            Console.WriteLine($"========================================\n");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"  (Could not save dump file: {ex.Message})\n");
+        }
     }
 }
