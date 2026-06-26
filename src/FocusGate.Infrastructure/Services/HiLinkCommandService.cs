@@ -78,7 +78,6 @@ public partial class HiLinkCommandService : IAtCommandService
 
             _isOpen = true;
             _log.LogInformation("HiLink {Ip}: Connected (HTTP)", ip);
-            await TryLoginAsync();
         }
         catch (HttpRequestException)
         {
@@ -114,7 +113,6 @@ public partial class HiLinkCommandService : IAtCommandService
 
                 _isOpen = true;
                 _log.LogInformation("HiLink {Ip}: Connected (HTTPS)", ip);
-                await TryLoginAsync();
             }
             catch (Exception ex)
             {
