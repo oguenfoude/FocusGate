@@ -1,4 +1,6 @@
 using System.Net.Http;
+using System.Net.Security;
+using System.Security.Authentication;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
@@ -29,6 +31,16 @@ public partial class HiLinkCommandService : IAtCommandService
 
     private static readonly XNamespace Ns = "http://schemas.datacontract.org/2004/07/Huawei.Hilink.DataModel";
 
+    private static string? GetElement(XElement parent, string name)
+    {
+        return parent.Element(Ns + name)?.Value ?? parent.Element(name)?.Value;
+    }
+
+    private static IEnumerable<XElement> GetElements(XElement parent, string name)
+    {
+        return parent.Elements(Ns + name).Concat(parent.Elements(name));
+    }
+
     public HiLinkCommandService(ILogger<HiLinkCommandService> log, IConfigProvider config)
     {
         _log = log;
@@ -38,7 +50,8 @@ public partial class HiLinkCommandService : IAtCommandService
 
     public async Task OpenAsync(string ip)
     {
-        _baseUrl = $"http://{ip.Trim()}";
+        ip = ip.Trim();
+        _baseUrl = $"http://{ip}";
 
         try
         {
@@ -47,8 +60,8 @@ public partial class HiLinkCommandService : IAtCommandService
             var doc = XDocument.Parse(xml);
             var root = doc.Root!;
 
-            var sesInfo = root.Element(Ns + "SesInfo")?.Value;
-            var tokInfo = root.Element(Ns + "TokInfo")?.Value;
+            var sesInfo = GetElement(root, "SesInfo");
+            var tokInfo = GetElement(root, "TokInfo");
 
             if (!string.IsNullOrEmpty(sesInfo))
             {
@@ -63,12 +76,48 @@ public partial class HiLinkCommandService : IAtCommandService
             }
 
             _isOpen = true;
-            _log.LogInformation("HiLink {Ip}: Connected", ip);
+            _log.LogInformation("HiLink {Ip}: Connected (HTTP)", ip);
         }
-        catch (HttpRequestException ex)
+        catch (HttpRequestException)
         {
-            _log.LogError(ex, "HiLink {Ip}: Connection failed", ip);
-            throw new InvalidOperationException($"HiLink connection failed at {ip}: {ex.Message}");
+            try
+            {
+                _log.LogInformation("HiLink {Ip}: HTTP failed, trying HTTPS...", ip);
+                var handler = new HttpClientHandler
+                {
+                    ServerCertificateCustomValidationCallback = (_, _, _, _) => true,
+                    SslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13
+                };
+                using var https = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
+                _baseUrl = $"https://{ip}";
+                var response = await https.GetAsync($"{_baseUrl}/api/webserver/SesTokInfo");
+                var xml = await response.Content.ReadAsStringAsync();
+                var doc = XDocument.Parse(xml);
+                var root = doc.Root!;
+
+                var sesInfo = GetElement(root, "SesInfo");
+                var tokInfo = GetElement(root, "TokInfo");
+
+                if (!string.IsNullOrEmpty(sesInfo))
+                {
+                    _sessionCookie = sesInfo;
+                    _log.LogInformation("HiLink {Ip}: Session cookie obtained (HTTPS)", ip);
+                }
+
+                if (!string.IsNullOrEmpty(tokInfo))
+                {
+                    _csrfToken = tokInfo;
+                    _log.LogInformation("HiLink {Ip}: CSRF token obtained (HTTPS)", ip);
+                }
+
+                _isOpen = true;
+                _log.LogInformation("HiLink {Ip}: Connected (HTTPS)", ip);
+            }
+            catch (Exception ex)
+            {
+                _log.LogError(ex, "HiLink {Ip}: Connection failed on both HTTP and HTTPS", ip);
+                throw new InvalidOperationException($"HiLink connection failed at {ip}: {ex.Message}");
+            }
         }
     }
 
@@ -94,8 +143,8 @@ public partial class HiLinkCommandService : IAtCommandService
         if (string.IsNullOrEmpty(xml)) return string.Empty;
 
         var doc = XDocument.Parse(xml);
-        _imei = doc.Root!.Element(Ns + "Imei")?.Value ?? string.Empty;
-        _imsi = doc.Root!.Element(Ns + "Imsi")?.Value ?? string.Empty;
+        _imei = GetElement(doc.Root!, "Imei") ?? string.Empty;
+        _imsi = GetElement(doc.Root!, "Imsi") ?? string.Empty;
         return _imei;
     }
 
@@ -112,7 +161,7 @@ public partial class HiLinkCommandService : IAtCommandService
         if (string.IsNullOrEmpty(xml)) return NetworkRegistration.Unknown;
 
         var doc = XDocument.Parse(xml);
-        var status = doc.Root!.Element(Ns + "ConnectionStatus")?.Value;
+        var status = GetElement(doc.Root!, "ConnectionStatus");
         if (int.TryParse(status, out var val))
         {
             return val switch
@@ -175,15 +224,16 @@ public partial class HiLinkCommandService : IAtCommandService
             if (string.IsNullOrEmpty(xml)) return messages;
 
             var doc = XDocument.Parse(xml);
-            var msgElements = doc.Root?.Element(Ns + "Messages")?.Elements(Ns + "Message");
-            if (msgElements == null) return messages;
+            var msgElements = GetElements(doc.Root!, "Messages").Elements().ToList();
+            var messageElements = msgElements.Count > 0 ? msgElements : GetElements(doc.Root!, "Message").ToList();
+            if (!messageElements.Any()) return messages;
 
-            foreach (var el in msgElements)
+            foreach (var el in messageElements)
             {
-                var phone = el.Element(Ns + "Phone")?.Value ?? "";
-                var content = el.Element(Ns + "Content")?.Value ?? "";
-                var dateStr = el.Element(Ns + "Date")?.Value ?? "";
-                var indexStr = el.Element(Ns + "Index")?.Value ?? "0";
+                var phone = GetElement(el, "Phone") ?? "";
+                var content = GetElement(el, "Content") ?? "";
+                var dateStr = GetElement(el, "Date") ?? "";
+                var indexStr = GetElement(el, "Index") ?? "0";
 
                 if (!int.TryParse(indexStr, out var idx)) idx = 0;
                 if (!DateTime.TryParse(dateStr, System.Globalization.CultureInfo.InvariantCulture,
@@ -237,10 +287,10 @@ public partial class HiLinkCommandService : IAtCommandService
             if (string.IsNullOrEmpty(xml)) return string.Empty;
 
             var doc = XDocument.Parse(xml);
-            var response = doc.Root?.Element(Ns + "Response")?.Value;
+            var response = GetElement(doc.Root!, "Response");
             if (!string.IsNullOrEmpty(response)) return response;
 
-            var content = doc.Root?.Element(Ns + "Content")?.Value;
+            var content = GetElement(doc.Root!, "Content");
             if (!string.IsNullOrEmpty(content)) return content;
 
             return xml;
