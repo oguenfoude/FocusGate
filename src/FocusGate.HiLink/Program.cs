@@ -10,6 +10,12 @@ using Microsoft.Extensions.Logging;
 using Serilog;
 using Serilog.Events;
 
+Console.CancelKeyPress += (_, e) =>
+{
+    e.Cancel = true;
+    Console.WriteLine("\n[!] Stopping FocusGate HiLink...");
+};
+
 using var appCts = new CancellationTokenSource();
 CancellationTokenSource? linkedCts = null;
 

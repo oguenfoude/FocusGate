@@ -36,20 +36,29 @@ public class HiLinkModemOrchestrator : BackgroundService
         var enabled = _config.Get("hilink.enabled", "true");
         if (!enabled.Equals("true", StringComparison.OrdinalIgnoreCase))
         {
-            _log.LogInformation("HiLink scanning disabled by config");
+            _log.LogWarning("HiLink scanning DISABLED by config (hilink.enabled=false)");
             return;
         }
 
-        _log.LogInformation("HiLink Orchestrator started (max {Max} modems)", MaxModems);
+        _log.LogInformation("HiLink Orchestrator ready (max {Max} modems)", MaxModems);
 
         while (!ct.IsCancellationRequested)
         {
-            try { await ScanAsync(ct); }
-            catch (Exception ex) { _log.LogError(ex, "Scan error"); }
+            try
+            {
+                _cycleCount++;
+                _log.LogInformation("--- Scan cycle #{Cycle} ---", _cycleCount);
+                await ScanAsync(ct);
+                _log.LogInformation("Active handlers: {Count}", _handlers.Count);
+            }
+            catch (OperationCanceledException) { break; }
+            catch (Exception ex) { _log.LogError(ex, "Scan cycle error"); }
 
-            await Task.Delay(TimeSpan.FromSeconds(30), ct);
-            _cycleCount++;
+            try { await Task.Delay(TimeSpan.FromSeconds(30), ct); }
+            catch (OperationCanceledException) { break; }
         }
+
+        _log.LogInformation("HiLink Orchestrator stopped");
     }
 
     public override async Task StopAsync(CancellationToken cancellationToken)
@@ -71,7 +80,11 @@ public class HiLinkModemOrchestrator : BackgroundService
 
     private async Task ScanAsync(CancellationToken ct)
     {
-        if (_handlers.Count >= MaxModems) return;
+        if (_handlers.Count >= MaxModems)
+        {
+            _log.LogDebug("Max modems reached ({Max}), skipping scan", MaxModems);
+            return;
+        }
 
         foreach (var kv in _handlers.Where(kv => !kv.Value.handler.IsAlive))
         {
@@ -90,22 +103,29 @@ public class HiLinkModemOrchestrator : BackgroundService
             toScan = ipsRaw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Where(ip => !_handlers.ContainsKey(ip))
                 .ToArray();
+            _log.LogInformation("Using config IPs: {Ips}", string.Join(", ", toScan));
         }
         else
         {
             var autoIps = HiLinkDiscovery.DiscoverGatewayIps();
             toScan = autoIps.Where(ip => !_handlers.ContainsKey(ip)).ToArray();
+            _log.LogInformation("Auto-detected {Count} gateway IPs: {Ips}", toScan.Length, string.Join(", ", toScan));
         }
 
-        if (toScan.Length == 0) return;
-
-        _log.LogInformation("Scanning {Count} network IPs for HiLink modems...", toScan.Length);
+        if (toScan.Length == 0)
+        {
+            _log.LogWarning("No IPs to scan");
+            return;
+        }
 
         using var scope = _services.CreateScope();
         var discoveryLog = scope.ServiceProvider.GetRequiredService<ILogger<HiLinkDiscovery>>();
         var discovery = new HiLinkDiscovery(discoveryLog);
         var probeTimeout = int.TryParse(_config.Get("hilink.probe_timeout_ms", "3000"), out var t) ? t : 3000;
+
+        _log.LogInformation("Probing {Count} IPs (timeout {Ms}ms each)...", toScan.Length, probeTimeout);
         var devices = await discovery.DiscoverAsync(toScan, probeTimeout);
+        _log.LogInformation("Found {Count} HiLink device(s)", devices.Count);
 
         foreach (var device in devices)
         {
@@ -123,11 +143,12 @@ public class HiLinkModemOrchestrator : BackgroundService
                 var hilinkLog = scope.ServiceProvider.GetRequiredService<ILogger<HiLinkCommandService>>();
                 var hilink = new HiLinkCommandService(hilinkLog, config);
 
+                _log.LogInformation("{Ip}: Connecting...", device.Ip);
                 await hilink.OpenAsync(device.Ip);
 
                 if (!await hilink.IsAliveAsync())
                 {
-                    _log.LogWarning("{Ip}: HiLink alive check failed", device.Ip);
+                    _log.LogWarning("{Ip}: Alive check failed", device.Ip);
                     try { hilink.Dispose(); } catch { }
                     continue;
                 }
@@ -152,7 +173,7 @@ public class HiLinkModemOrchestrator : BackgroundService
                 var model = device.Model;
                 var brand = DetectBrand(manufacturer, model);
 
-                _log.LogInformation("{Ip}: HiLink IMEI={IMEI} IMSI={IMSI} Brand={Brand} Model={Model}",
+                _log.LogInformation("{Ip}: HiLink OK | IMEI={IMEI} IMSI={IMSI} Brand={Brand} Model={Model}",
                     device.Ip, imei, imsi, brand, model);
 
                 await _db.EnqueueAsync(new()
@@ -177,6 +198,7 @@ public class HiLinkModemOrchestrator : BackgroundService
                 var handler = new ModemHandler(hilink, writeChannel, handlerLog, config, modem.Id, device.Ip, isHiLink: true);
 
                 _handlers[device.Ip] = (handler, imei);
+                _log.LogInformation("{Ip}: Handler started (total active: {Count})", device.Ip, _handlers.Count);
 
                 _ = Task.Run(async () =>
                 {
@@ -186,6 +208,7 @@ public class HiLinkModemOrchestrator : BackgroundService
                         {
                             _activeImeis.TryRemove(imei, out _);
                             _handlers.TryRemove(device.Ip, out _);
+                            _log.LogWarning("{Ip}: Handler StartAsync returned false", device.Ip);
                             try { handler.Dispose(); } catch { }
                         }
                     }

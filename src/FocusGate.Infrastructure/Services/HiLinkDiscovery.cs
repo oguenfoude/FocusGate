@@ -71,6 +71,35 @@ public class HiLinkDiscovery
         return gateways.ToArray();
     }
 
+    public static string[] GetAutoScanIps()
+    {
+        var gateways = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            foreach (var iface in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (iface.OperationalStatus != OperationalStatus.Up) continue;
+                if (iface.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
+                if (iface.NetworkInterfaceType == NetworkInterfaceType.Tunnel) continue;
+
+                var props = iface.GetIPProperties();
+                foreach (var gw in props.GatewayAddresses)
+                {
+                    var addr = gw.Address;
+                    if (IPAddress.IsLoopback(addr)) continue;
+                    if (addr.AddressFamily != AddressFamily.InterNetwork) continue;
+                    var ip = addr.ToString();
+                    if (!string.IsNullOrEmpty(ip) && ip != "0.0.0.0")
+                        gateways.Add(ip);
+                }
+            }
+        }
+        catch { }
+
+        return gateways.ToArray();
+    }
+
     public async Task<List<HiLinkDeviceInfo>> DiscoverAsync(string[] ips, int timeoutMs = 3000)
     {
         var found = new List<HiLinkDeviceInfo>();
