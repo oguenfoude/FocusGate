@@ -151,7 +151,12 @@ public class HiLinkModemOrchestrator : BackgroundService
                 var imei = await hilink.GetImeiAsync();
                 if (string.IsNullOrEmpty(imei))
                 {
-                    _log.LogWarning("{Ip}: No IMEI", device.Ip);
+                    imei = device.Imei;
+                    _log.LogInformation("{Ip}: Using discovery IMEI: {IMEI}", device.Ip, imei);
+                }
+                if (string.IsNullOrEmpty(imei))
+                {
+                    _log.LogWarning("{Ip}: No IMEI from service or discovery", device.Ip);
                     try { hilink.Dispose(); } catch { }
                     continue;
                 }

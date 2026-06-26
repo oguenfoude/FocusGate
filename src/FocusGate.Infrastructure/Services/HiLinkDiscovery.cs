@@ -159,13 +159,22 @@ public class HiLinkDiscovery
                     if (devRoot != null)
                     {
                         info.Imei = devRoot.Element(Ns + "Imei")?.Value
-                            ?? devRoot.Element("Imei")?.Value ?? "";
+                            ?? devRoot.Element("Imei")?.Value
+                            ?? devRoot.Element(Ns + "imei")?.Value
+                            ?? devRoot.Element("imei")?.Value ?? "";
                         info.Imsi = devRoot.Element(Ns + "Imsi")?.Value
-                            ?? devRoot.Element("Imsi")?.Value ?? "";
+                            ?? devRoot.Element("Imsi")?.Value
+                            ?? devRoot.Element(Ns + "imsi")?.Value
+                            ?? devRoot.Element("imsi")?.Value ?? "";
                         info.Model = devRoot.Element(Ns + "DeviceName")?.Value
-                            ?? devRoot.Element("DeviceName")?.Value ?? "";
+                            ?? devRoot.Element("DeviceName")?.Value
+                            ?? devRoot.Element(Ns + "devicename")?.Value
+                            ?? devRoot.Element("devicename")?.Value ?? "";
                         info.Manufacturer = devRoot.Element(Ns + "Manufacturer")?.Value
                             ?? devRoot.Element("Manufacturer")?.Value ?? "Huawei";
+
+                        if (string.IsNullOrEmpty(info.Imei))
+                            info.Imei = $"HILINK-{ip.Replace(".", "-")}";
                     }
                 }
                 catch (Exception ex)

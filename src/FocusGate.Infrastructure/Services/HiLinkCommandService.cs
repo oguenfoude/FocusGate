@@ -1,5 +1,6 @@
 using System.Net.Http;
 using System.Net.Security;
+using System.Security;
 using System.Security.Authentication;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -77,6 +78,7 @@ public partial class HiLinkCommandService : IAtCommandService
 
             _isOpen = true;
             _log.LogInformation("HiLink {Ip}: Connected (HTTP)", ip);
+            await TryLoginAsync();
         }
         catch (HttpRequestException)
         {
@@ -112,6 +114,7 @@ public partial class HiLinkCommandService : IAtCommandService
 
                 _isOpen = true;
                 _log.LogInformation("HiLink {Ip}: Connected (HTTPS)", ip);
+                await TryLoginAsync();
             }
             catch (Exception ex)
             {
@@ -136,15 +139,50 @@ public partial class HiLinkCommandService : IAtCommandService
         }
     }
 
+    private async Task<bool> TryLoginAsync()
+    {
+        var user = _config.Get("hilink.username", "admin");
+        var pass = _config.Get("hilink.password", "admin");
+
+        var body = $@"<request><Username>{SecurityElement.Escape(user)}</Username><Password>{SecurityElement.Escape(pass)}</Password></request>";
+
+        try
+        {
+            var xml = await SendPostAsync("/api/user/login", body);
+            if (string.IsNullOrEmpty(xml)) return false;
+
+            _log.LogDebug("[HiLink] Login response: {Xml}",
+                xml.Length > 200 ? xml[..200] : xml);
+
+            return xml.Contains("OK", StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex)
+        {
+            _log.LogDebug(ex, "[HiLink] Login attempt failed (non-critical)");
+            return false;
+        }
+    }
+
     public async Task<string> GetImeiAsync()
     {
         if (!string.IsNullOrEmpty(_imei)) return _imei;
         var xml = await SendGetAsync("/api/device/information");
         if (string.IsNullOrEmpty(xml)) return string.Empty;
 
+        _log.LogDebug("[HiLink] /api/device/information raw: {Xml}",
+            xml.Length > 300 ? xml[..300] : xml);
+
         var doc = XDocument.Parse(xml);
-        _imei = GetElement(doc.Root!, "Imei") ?? string.Empty;
-        _imsi = GetElement(doc.Root!, "Imsi") ?? string.Empty;
+        _imei = GetElement(doc.Root!, "Imei") ?? GetElement(doc.Root!, "imei") ?? string.Empty;
+        _imsi = GetElement(doc.Root!, "Imsi") ?? GetElement(doc.Root!, "imsi") ?? string.Empty;
+
+        if (string.IsNullOrEmpty(_imei))
+        {
+            _log.LogWarning("[HiLink] IMEI not found in XML, generating IP-based ID");
+            if (_baseUrl != null && Uri.TryCreate(_baseUrl, UriKind.Absolute, out var uri))
+                _imei = $"HILINK-{uri.Host.Replace(".", "-")}";
+        }
+
         return _imei;
     }
 
