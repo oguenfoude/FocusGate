@@ -85,6 +85,17 @@ try
     linkedCts = CancellationTokenSource.CreateLinkedTokenSource(appCts.Token);
     writeChannel.Start(linkedCts.Token);
 
+    Console.WriteLine();
+    Console.WriteLine("=============================================");
+    Console.WriteLine("  FocusGate HiLink Gateway");
+    Console.WriteLine("=============================================");
+    Console.WriteLine($"  Version  : 1.0");
+    Console.WriteLine($"  Machine  : {context.MachineId}");
+    Console.WriteLine($"  Database : {PathService.DatabasePath}");
+    Console.WriteLine($"  Logs     : {PathService.LogsDirectory}");
+    Console.WriteLine($"  Config   : {configPath}");
+    Console.WriteLine("=============================================");
+    Console.WriteLine();
     logger.LogInformation("FocusGate HiLink started | DB: {DbPath} | Machine: {Machine}",
         PathService.DatabasePath, context.MachineId);
 
