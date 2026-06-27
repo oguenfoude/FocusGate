@@ -75,13 +75,11 @@ public partial class HiLinkCommandService : IAtCommandService
             if (!string.IsNullOrEmpty(sesInfo))
             {
                 _sessionCookie = sesInfo;
-                _log.LogInformation("HiLink {Ip}: Session cookie obtained", ip);
             }
 
             if (!string.IsNullOrEmpty(tokInfo))
             {
                 _csrfToken = tokInfo;
-                _log.LogInformation("HiLink {Ip}: CSRF token obtained", ip);
             }
 
             _isOpen = true;
@@ -93,7 +91,7 @@ public partial class HiLinkCommandService : IAtCommandService
         {
             try
             {
-                _log.LogInformation("HiLink {Ip}: HTTP failed, trying HTTPS...", ip);
+                _log.LogDebug("HiLink {Ip}: HTTP failed, trying HTTPS...", ip);
                 var handler = new HttpClientHandler
                 {
                     ServerCertificateCustomValidationCallback = (_, _, _, _) => true,
@@ -112,13 +110,11 @@ public partial class HiLinkCommandService : IAtCommandService
                 if (!string.IsNullOrEmpty(sesInfo))
                 {
                     _sessionCookie = sesInfo;
-                    _log.LogInformation("HiLink {Ip}: Session cookie obtained (HTTPS)", ip);
                 }
 
                 if (!string.IsNullOrEmpty(tokInfo))
                 {
                     _csrfToken = tokInfo;
-                    _log.LogInformation("HiLink {Ip}: CSRF token obtained (HTTPS)", ip);
                 }
 
                 _isOpen = true;
@@ -143,7 +139,6 @@ public partial class HiLinkCommandService : IAtCommandService
             var response = await _http.SendAsync(request);
             UpdateCsrfFromResponse(response);
             _ = await response.Content.ReadAsStringAsync();
-            _log.LogDebug("[HiLink] CSRF token refreshed via GET {Path}", path);
         }
         catch (Exception ex)
         {
@@ -178,9 +173,6 @@ public partial class HiLinkCommandService : IAtCommandService
             var xml = await SendPostAsync("/api/user/login", body);
             if (string.IsNullOrEmpty(xml)) return false;
 
-            _log.LogDebug("[HiLink] Login response: {Xml}",
-                xml.Length > 200 ? xml[..200] : xml);
-
             return xml.Contains("OK", StringComparison.OrdinalIgnoreCase);
         }
         catch (Exception ex)
@@ -194,13 +186,10 @@ public partial class HiLinkCommandService : IAtCommandService
     {
         if (!string.IsNullOrEmpty(_imei)) return _imei;
 
-        var xml = await SendGetAsync("/api/device/information");
-        if (!string.IsNullOrEmpty(xml))
-        {
-            _log.LogDebug("[HiLink] /api/device/information raw: {Xml}",
-                xml.Length > 300 ? xml[..300] : xml);
-
-            var doc = XDocument.Parse(xml);
+            var xml = await SendGetAsync("/api/device/information");
+            if (!string.IsNullOrEmpty(xml))
+            {
+                var doc = XDocument.Parse(xml);
             _imei = GetElement(doc.Root!, "Imei") ?? GetElement(doc.Root!, "imei") ?? string.Empty;
             _imsi = GetElement(doc.Root!, "Imsi") ?? GetElement(doc.Root!, "imsi") ?? string.Empty;
         }
@@ -255,7 +244,6 @@ public partial class HiLinkCommandService : IAtCommandService
     {
         var phoneCode = _config.Get("modem.ussd.phone_code", "*101#");
         var resp = await SendUssdAsync(phoneCode, 15000);
-        _log.LogInformation("[HiLink] Phone USSD raw: {Raw}", resp);
 
         if (string.IsNullOrEmpty(resp)) return string.Empty;
 
@@ -269,7 +257,6 @@ public partial class HiLinkCommandService : IAtCommandService
     {
         var balanceCode = _config.Get("modem.ussd.balance_code", "*222#");
         var resp = await SendUssdAsync(balanceCode, 15000);
-        _log.LogInformation("[HiLink] Balance USSD raw: {Raw}", resp);
 
         if (string.IsNullOrEmpty(resp)) return null;
 
@@ -361,7 +348,6 @@ public partial class HiLinkCommandService : IAtCommandService
                 });
             }
 
-            _log.LogInformation("[HiLink] Read {Count} SMS from inbox", messages.Count);
         }
         catch (Exception ex)
         {
@@ -379,7 +365,6 @@ public partial class HiLinkCommandService : IAtCommandService
             {
                 var body = $@"<request><Index>{msg.Index}</Index></request>";
                 await SendPostAsync("/api/sms/delete-sms", body);
-                _log.LogInformation("[HiLink] Deleted SMS index {Index}", msg.Index);
             }
         }
         catch (Exception ex)
@@ -406,9 +391,6 @@ public partial class HiLinkCommandService : IAtCommandService
                 return string.Empty;
             }
 
-            _log.LogInformation("[HiLink] USSD {Code}: send response: {Xml}",
-                code, xml.Length > 200 ? xml[..200] : xml);
-
             var sendDoc = XDocument.Parse(xml);
             var sendError = GetElement(sendDoc.Root!, "code");
             if (sendError != null && sendDoc.Root!.Name.LocalName == "error")
@@ -430,13 +412,8 @@ public partial class HiLinkCommandService : IAtCommandService
                 var getResult = await SendUssdRawGetAsync("/api/ussd/get");
                 if (string.IsNullOrEmpty(getResult))
                 {
-                    _log.LogInformation("[HiLink] USSD {Code} poll #{Count}: empty response", code, pollCount);
                     continue;
                 }
-
-                if (pollCount <= 3)
-                    _log.LogInformation("[HiLink] USSD {Code} poll #{Count}: {Xml}",
-                        code, pollCount, getResult.Length > 300 ? getResult[..300] : getResult);
 
                 var getDoc = XDocument.Parse(getResult);
                 var rootName = getDoc.Root!.Name.LocalName;
@@ -445,8 +422,6 @@ public partial class HiLinkCommandService : IAtCommandService
                     var getError = GetElement(getDoc.Root!, "code");
                     if (getError == "111019")
                     {
-                        if (pollCount <= 3)
-                            _log.LogInformation("[HiLink] USSD {Code} poll #{Count}: 111019 (waiting)", code, pollCount);
                         continue;
                     }
 
@@ -459,8 +434,6 @@ public partial class HiLinkCommandService : IAtCommandService
                     ?? GetElement(getDoc.Root!, "content");
                 if (!string.IsNullOrEmpty(content))
                 {
-                    _log.LogInformation("[HiLink] USSD {Code} got result after {Count} polls: {Content}",
-                        code, pollCount, content);
                     await SendUssdRawGetAsync("/api/ussd/release");
                     return content;
                 }
@@ -527,7 +500,6 @@ public partial class HiLinkCommandService : IAtCommandService
 
     public async Task<string> SendCommandAsync(string command, int timeoutMs = 5000)
     {
-        _log.LogDebug("[HiLink] SendCommand (no-op): {Cmd}", command);
         return "OK";
     }
 
@@ -575,7 +547,6 @@ public partial class HiLinkCommandService : IAtCommandService
             var newToken = values.FirstOrDefault();
             if (!string.IsNullOrEmpty(newToken) && newToken != _csrfToken)
             {
-                _log.LogDebug("[HiLink] CSRF token refreshed from response header");
                 _csrfToken = newToken;
             }
         }

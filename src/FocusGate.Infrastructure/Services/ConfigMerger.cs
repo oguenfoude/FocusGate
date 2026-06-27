@@ -33,8 +33,6 @@ public static class ConfigMerger
         ["app.version"] = "1.0.0"
     };
 
-    private const string MigratedUri = "mongodb+srv://user:password@cluster.example.net/?appName=Cluster0";
-
     public static void EnsureConfig(string configPath)
     {
         var existing = new Dictionary<string, string>();
@@ -53,15 +51,6 @@ public static class ConfigMerger
             if (!existing.ContainsKey(kvp.Key))
             {
                 existing[kvp.Key] = kvp.Value;
-                changed = true;
-            }
-        }
-
-        if (existing.TryGetValue("mongodb.uri", out var currentUri))
-        {
-            if (currentUri.Contains("ac-8knjxta-shard") || currentUri.Contains("admin:admin") || currentUri.StartsWith("mongodb://", StringComparison.OrdinalIgnoreCase))
-            {
-                existing["mongodb.uri"] = MigratedUri;
                 changed = true;
             }
         }

@@ -7,7 +7,7 @@ public class BalanceHistory
     public long     Id              { get; set; }
     public long?    SimCardId       { get; set; }
     public int?     ModemId         { get; set; }
-    public long     UserId          { get; set; }
+    public long?    UserId          { get; set; }
     public decimal  Balance         { get; set; }
     public decimal? PreviousBalance { get; set; }
     public BalanceSource Source     { get; set; } = BalanceSource.USSD;
@@ -18,5 +18,5 @@ public class BalanceHistory
 
     public SimCard? SimCard { get; set; }
     public Modem?   Modem   { get; set; }
-    public User     User    { get; set; } = null!;
+    public User?    User    { get; set; }
 }

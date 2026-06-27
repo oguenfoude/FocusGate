@@ -210,10 +210,8 @@ public partial class AtCommandService : IAtCommandService
     {
         var phoneCode = _config.Get("modem.ussd.phone_code", "*101#");
         var resp = await SendUssdAsync(phoneCode, 10000);
-        _logger.LogInformation("[USSD] Phone raw response: {Raw}", resp.ReplaceLineEndings(" "));
 
         var decoded = DecodeUssdResponse(resp);
-        _logger.LogInformation("[USSD] Phone decoded: {Decoded}", decoded ?? "(null)");
 
         if (!string.IsNullOrEmpty(decoded))
         {
@@ -241,10 +239,8 @@ public partial class AtCommandService : IAtCommandService
     {
         var balanceCode = _config.Get("modem.ussd.balance_code", "*222#");
         var resp = await SendUssdAsync(balanceCode, 10000);
-        _logger.LogInformation("[USSD] Balance raw response: {Raw}", resp.ReplaceLineEndings(" "));
 
         var decoded = DecodeUssdResponse(resp);
-        _logger.LogInformation("[USSD] Balance decoded: {Decoded}", decoded ?? "(null)");
 
         if (string.IsNullOrEmpty(decoded)) return null;
 
@@ -329,7 +325,6 @@ public partial class AtCommandService : IAtCommandService
         try
         {
             var resp = await SendCommandAsync("AT+CMGL=\"ALL\"");
-            _logger.LogInformation("[CMGL] Response: {Resp}", resp.ReplaceLineEndings(" | "));
 
             if (string.IsNullOrWhiteSpace(resp) || resp.Contains("+CMS ERROR") || resp.Contains("+CME ERROR"))
                 return messages;
@@ -718,7 +713,6 @@ public partial class AtCommandService : IAtCommandService
 
                 if (indices.Count > 0)
                 {
-                    _logger.LogInformation("[CMGD] Storage={Storage} Deleting {Count} SMS", storage, indices.Count);
                     foreach (var idx in indices)
                     {
                         try { await SendCommandAsync($"AT+CMGD={idx}"); }
@@ -748,7 +742,6 @@ public partial class AtCommandService : IAtCommandService
             {
                 _serialPort.ReadTimeout = 2000;
                 _serialPort.DiscardInBuffer();
-                _logger.LogInformation("[USSD] Sending: AT+CUSD=1,\"{Code}\",15 timeout={Timeout}ms", code, timeoutMs);
                 _serialPort.WriteLine($"AT+CUSD=1,\"{code}\",15");
 
                 var fullResponse = new StringBuilder();
@@ -773,12 +766,10 @@ public partial class AtCommandService : IAtCommandService
                                 if (!gotOk && (text.Contains("OK") || text.Contains("ERROR")))
                                 {
                                     gotOk = true;
-                                    _logger.LogInformation("[USSD] Got OK/Error, now waiting for +CUSD URC...");
                                 }
 
                                 if (text.Contains("+CUSD:"))
                                 {
-                                    _logger.LogInformation("[USSD] Got +CUSD response");
                                     break;
                                 }
 
@@ -794,7 +785,6 @@ public partial class AtCommandService : IAtCommandService
                 }
 
                 var response = fullResponse.ToString().Trim();
-                _logger.LogInformation("[USSD] Raw response ({Length} chars): {Response}", response.Length, response.ReplaceLineEndings(" "));
                 return response;
             }
             finally

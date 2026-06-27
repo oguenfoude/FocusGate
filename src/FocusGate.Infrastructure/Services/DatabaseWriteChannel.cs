@@ -29,7 +29,8 @@ public class DatabaseWriteChannel
         InsertSms,
         UpdateOrphanedModems,
         CreateWithdrawalRequest,
-        ProcessWithdrawal
+        ProcessWithdrawal,
+        UpdateSimBalanceFromSms
     }
 
     public DatabaseWriteChannel(IServiceProvider services, ILogger<DatabaseWriteChannel> logger)
@@ -86,12 +87,21 @@ public class DatabaseWriteChannel
 
     private async Task ProcessQueueAsync(CancellationToken ct)
     {
+        Action<FocusGateDbContext>? machineSetter = null;
+        try
+        {
+            using var setupScope = _services.CreateScope();
+            machineSetter = setupScope.ServiceProvider.GetRequiredService<Action<FocusGateDbContext>>();
+        }
+        catch { }
+
         await foreach (var op in _channel.Reader.ReadAllAsync(ct))
         {
             try
             {
                 using var scope = _services.CreateScope();
                 var db = scope.ServiceProvider.GetRequiredService<FocusGateDbContext>();
+                machineSetter?.Invoke(db);
 
                 bool success = false;
                 switch (op.Type)
@@ -107,6 +117,7 @@ public class DatabaseWriteChannel
                     case Op.UpdateOrphanedModems: await HandleUpdateOrphanedModemsAsync(db, op.Data!, ct); success = true; break;
                     case Op.CreateWithdrawalRequest: success = await HandleCreateWithdrawalRequestAsync(db, op.Data!, ct); break;
                     case Op.ProcessWithdrawal: success = await HandleProcessWithdrawalAsync(db, op.Data!, ct); break;
+                    case Op.UpdateSimBalanceFromSms: success = await HandleUpdateSimBalanceFromSmsAsync(db, op.Data!, ct); break;
                 }
                 op.Completed?.TrySetResult(success);
             }
@@ -176,8 +187,6 @@ public class DatabaseWriteChannel
             .ExecuteUpdateAsync(s => s
                 .SetProperty(m => m.Status, status)
                 .SetProperty(m => m.UpdatedAt, DateTime.UtcNow), ct);
-
-        _logger.LogInformation("Modem {Id} -> {Status}", modemId, status);
     }
 
     private async Task HandleUpdateModemComPortAsync(FocusGateDbContext db, object data, CancellationToken ct)
@@ -296,30 +305,73 @@ public class DatabaseWriteChannel
                 {
                     SimCardId = sim.Id,
                     ModemId = modemId,
-                    UserId = userId,
+            UserId = userId.Value,
                     Balance = newBalance,
                     PreviousBalance = oldBalance,
                     Source = BalanceSource.USSD,
                     RecordedAt = DateTime.UtcNow
                 });
                 await db.SaveChangesAsync(ct);
-                _logger.LogInformation("Balance changed: Modem={Id} {Old:F2} DZD → {New:F2} DZD", modemId, oldBalance, newBalance);
-            }
-            else
-            {
-                _logger.LogInformation("Balance confirmed: Modem={Id} {Balance:F2} DZD (no change)", modemId, newBalance);
             }
             return true;
         }
         return false;
     }
 
-    private static async Task<long> ResolveUserIdForModemAsync(FocusGateDbContext db, int modemId, CancellationToken ct)
+    private async Task<bool> HandleUpdateSimBalanceFromSmsAsync(FocusGateDbContext db, object data, CancellationToken ct)
+    {
+        var d = Deserialize(data);
+        var modemId = d["ModemId"].GetInt32();
+        var newBalance = d["Balance"].GetDecimal();
+
+        var sim = await db.SimCards.FirstOrDefaultAsync(s => s.ModemId == modemId && s.IsActive, ct);
+        if (sim == null) return false;
+
+        var oldSimBalance = sim.Balance;
+        sim.Balance = newBalance;
+        sim.VerifiedAt = DateTime.UtcNow;
+        sim.LastSeen = DateTime.UtcNow;
+
+        await db.SaveChangesAsync(ct);
+
+        var userId = await ResolveUserIdForModemAsync(db, modemId, ct);
+
+        if (oldSimBalance != newBalance)
+        {
+            db.BalanceHistories.Add(new BalanceHistory
+            {
+                SimCardId = sim.Id,
+                ModemId = modemId,
+                UserId = userId,
+                Balance = newBalance,
+                PreviousBalance = oldSimBalance,
+                Source = BalanceSource.SMS,
+                RecordedAt = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync(ct);
+        }
+
+        if (userId > 0 && newBalance > oldSimBalance)
+        {
+            var delta = newBalance - oldSimBalance;
+            CreditUserBalance(db, userId, delta, sim.Id);
+            await db.SaveChangesAsync(ct);
+            _logger.LogInformation("Balance confirmed via *222#: Modem={Id} Old={Old:F2} → New={New:F2}, User credited +{Delta:F2} DZD", modemId, oldSimBalance, newBalance, delta);
+        }
+        else
+        {
+            _logger.LogDebug("Balance confirmed via *222#: Modem={Id} Balance={Balance:F2} DZD", modemId, newBalance);
+        }
+
+        return true;
+    }
+
+    private static async Task<long?> ResolveUserIdForModemAsync(FocusGateDbContext db, int modemId, CancellationToken ct)
     {
         var um = await db.UserModems
             .Where(um => um.ModemId == modemId && um.RemovedAt == null)
             .FirstOrDefaultAsync(ct);
-        return um?.UserId ?? 1;
+        return um?.UserId;
     }
 
     private async Task<bool> HandleInsertSmsAsync(FocusGateDbContext db, SmsRecord sms, CancellationToken ct)
@@ -345,99 +397,25 @@ public class DatabaseWriteChannel
         db.SmsRecords.Add(sms);
         await db.SaveChangesAsync(ct);
 
-        _logger.LogInformation("SMS stored: SimCardId={SimId} Sender={Sender}",
-            sms.SimCardId, sms.SenderNumber);
-
-        if (sms.SenderNumber != "MCIRMN" && sms.SenderNumber != "Mobilis" && !sms.SenderNumber.Contains("77111")) return true;
+        if (sms.SenderNumber != "Mobilis" && sms.SenderNumber != "77111") return true;
 
         var sim = await db.SimCards.FindAsync(new object[] { sms.SimCardId }, ct);
         if (sim == null) return true;
 
-        var userId = await ResolveUserIdForModemAsync(db, sim.ModemId, ct);
+        sim.VerifiedAt = DateTime.UtcNow;
+        sim.LastSeen = DateTime.UtcNow;
+        await db.SaveChangesAsync(ct);
 
-        if (sms.Content.Contains("Solde"))
+        if (sms.Content.Contains("Solde", StringComparison.OrdinalIgnoreCase))
         {
             var balance = ExtractBalanceFromContent(sms.Content);
             if (balance.HasValue)
             {
-                var oldBalance = sim.Balance;
-                sim.Balance = balance.Value;
-                sim.VerifiedAt = DateTime.UtcNow;
-                sim.LastSeen = DateTime.UtcNow;
-                await db.SaveChangesAsync(ct);
-
-                if (oldBalance != balance.Value)
-                {
-                    db.BalanceHistories.Add(new BalanceHistory
-                    {
-                        SimCardId = sms.SimCardId,
-                        ModemId = sim.ModemId,
-                        UserId = userId,
-                        Balance = balance.Value,
-                        PreviousBalance = oldBalance,
-                        Source = BalanceSource.SMS,
-                        RecordedAt = DateTime.UtcNow
-                    });
-                    await db.SaveChangesAsync(ct);
-                    _logger.LogInformation("Balance from SMS: Modem={Id} {Old:F2} DZD → {New:F2} DZD", sim.ModemId, oldBalance, balance.Value);
-                }
-                else
-                {
-                    _logger.LogInformation("Balance confirmed from SMS: Modem={Id} {Balance:F2} DZD (no change)", sim.ModemId, balance.Value);
-                }
+                await HandleUpdateSimBalanceFromSmsAsync(db,
+                    new { ModemId = sim.ModemId, Balance = balance.Value }, ct);
             }
         }
 
-        if (sms.Content.Contains("montant de"))
-        {
-            var amount = ExtractCreditAmount(sms.Content);
-            db.BalanceHistories.Add(new BalanceHistory
-            {
-                SimCardId = sms.SimCardId,
-                ModemId = sim.ModemId,
-                UserId = userId,
-                Balance = sim.Balance,
-                PreviousBalance = null,
-                Source = BalanceSource.SMS,
-                RecordedAt = DateTime.UtcNow
-            });
-            await db.SaveChangesAsync(ct);
-
-            if (userId > 0 && amount > 0)
-            {
-                CreditUserBalance(db, userId, amount, sms.SimCardId);
-                await db.SaveChangesAsync(ct);
-            }
-
-            _logger.LogInformation("Credit transfer: Modem={Id} Amount={Amount} DZD", sim.ModemId, amount);
-        }
-
-        if (sms.Content.Contains("recharg"))
-        {
-            var amount = ExtractRechargeAmount(sms.Content);
-            if (amount > 0)
-            {
-                var oldBalance = sim.Balance;
-                sim.Balance += amount;
-                sim.VerifiedAt = DateTime.UtcNow;
-                sim.LastSeen = DateTime.UtcNow;
-                await db.SaveChangesAsync(ct);
-
-                db.BalanceHistories.Add(new BalanceHistory
-                {
-                    SimCardId = sms.SimCardId,
-                    ModemId = sim.ModemId,
-                    UserId = userId,
-                    Balance = sim.Balance,
-                    PreviousBalance = oldBalance,
-                    Source = BalanceSource.SMS,
-                    RecordedAt = DateTime.UtcNow
-                });
-                await db.SaveChangesAsync(ct);
-
-                _logger.LogInformation("Recharge from SMS: Modem={Id} +{Amount:F2} DZD → Balance {New:F2} DZD", sim.ModemId, amount, sim.Balance);
-            }
-        }
         return true;
     }
 
@@ -496,9 +474,7 @@ public class DatabaseWriteChannel
 
     private static decimal? ExtractBalanceFromContent(string content)
     {
-        var soldeIdx = content.IndexOf("Solde", StringComparison.Ordinal);
-        if (soldeIdx < 0)
-            soldeIdx = content.IndexOf("solde", StringComparison.Ordinal);
+        var soldeIdx = content.IndexOf("Solde", StringComparison.OrdinalIgnoreCase);
         if (soldeIdx < 0) return null;
 
         var afterSolde = content[(soldeIdx + 5)..];
@@ -623,6 +599,17 @@ public class DatabaseWriteChannel
                 RecordedAt = DateTime.UtcNow
             });
 
+            db.UserBalanceHistories.Add(new UserBalanceHistory
+            {
+                UserId = user.Id,
+                Amount = -request.Amount,
+                BalanceAfter = user.Balance,
+                Type = 1,
+                SimCardId = null,
+                Note = $"Withdrawal approved{(string.IsNullOrEmpty(adminNote) ? "" : ": " + adminNote)}",
+                RecordedAt = DateTime.UtcNow
+            });
+
             _logger.LogInformation("Withdrawal approved: Request={RequestId} User={UserId} Amount={Amount} DZD", requestId, user.Id, request.Amount);
         }
         else
@@ -639,11 +626,11 @@ public class DatabaseWriteChannel
         return true;
     }
 
-    private static void CreditUserBalance(FocusGateDbContext db, long userId, decimal amount, long? simCardId)
+    private static void CreditUserBalance(FocusGateDbContext db, long? userId, decimal amount, long? simCardId)
     {
-        if (amount <= 0) return;
+        if (amount <= 0 || !userId.HasValue) return;
 
-        var user = db.Users.FirstOrDefault(u => u.Id == userId);
+        var user = db.Users.FirstOrDefault(u => u.Id == userId.Value);
         if (user == null) return;
 
         var oldBalance = user.Balance;
@@ -651,7 +638,7 @@ public class DatabaseWriteChannel
 
         db.UserBalanceHistories.Add(new UserBalanceHistory
         {
-            UserId = userId,
+            UserId = userId.Value,
             Amount = amount,
             BalanceAfter = user.Balance,
             Type = 0,

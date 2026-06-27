@@ -1,4 +1,5 @@
 using System.IO;
+using FocusGate.Core.DTOs;
 using FocusGate.Core.Enums;
 using FocusGate.Core.Interfaces;
 using FocusGate.Core.Models;
@@ -53,7 +54,7 @@ public class ModemHandler : IDisposable
             if (!_isHiLink)
             {
                 var pinResp = await _at.SendCommandAsync("AT+CPIN?");
-                _log.LogInformation("Modem {Id}: CPIN? -> {Resp}", _modemId, pinResp.ReplaceLineEndings(" "));
+                _log.LogDebug("Modem {Id}: CPIN? -> {Resp}", _modemId, pinResp.ReplaceLineEndings(" "));
                 if (pinResp.Contains("SIM PIN") || pinResp.Contains("SIM PUK"))
                 {
                     _log.LogWarning("Modem {Id}: SIM is PIN/PUK locked, cannot proceed", _modemId);
@@ -61,10 +62,10 @@ public class ModemHandler : IDisposable
                 }
 
                 var manufacturer = await _at.SendCommandAsync("AT+CGMI");
-                _log.LogInformation("Modem {Id}: Manufacturer -> {Resp}", _modemId, manufacturer.ReplaceLineEndings(" "));
+                _log.LogDebug("Modem {Id}: Manufacturer -> {Resp}", _modemId, manufacturer.ReplaceLineEndings(" "));
 
                 var model = await _at.SendCommandAsync("AT+CGMM");
-                _log.LogInformation("Modem {Id}: Model -> {Resp}", _modemId, model.ReplaceLineEndings(" "));
+                _log.LogDebug("Modem {Id}: Model -> {Resp}", _modemId, model.ReplaceLineEndings(" "));
 
                 var zteResp = await _at.SendCommandAsync("AT+ZCDRUN=2");
                 if (!zteResp.Contains("ERROR"))
@@ -88,28 +89,28 @@ public class ModemHandler : IDisposable
                 await Task.Delay(5000, ct);
             }
 
-            _log.LogInformation("Modem {Id}: Waiting 5s for network...", _modemId);
+            _log.LogDebug("Modem {Id}: Waiting 5s for network...", _modemId);
             await Task.Delay(5000, ct);
 
             if (!_isHiLink)
             {
                 var csqResp = await _at.SendCommandAsync("AT+CSQ");
-                _log.LogInformation("Modem {Id}: Signal -> {Resp}", _modemId, csqResp.ReplaceLineEndings(" "));
+                _log.LogDebug("Modem {Id}: Signal -> {Resp}", _modemId, csqResp.ReplaceLineEndings(" "));
 
                 var cmgf = await _at.SendCommandAsync("AT+CMGF=1");
-                _log.LogInformation("Modem {Id}: CMGF -> {Resp}", _modemId, cmgf.ReplaceLineEndings(" "));
+                _log.LogDebug("Modem {Id}: CMGF -> {Resp}", _modemId, cmgf.ReplaceLineEndings(" "));
                 var charset = await _at.TrySetCharsetAsync("IRA");
                 if (!charset)
                 {
-                    _log.LogInformation("Modem {Id}: IRA not supported, trying GSM...", _modemId);
+                    _log.LogDebug("Modem {Id}: IRA not supported, trying GSM...", _modemId);
                     charset = await _at.TrySetCharsetAsync("GSM");
                     if (!charset)
                     {
-                        _log.LogInformation("Modem {Id}: GSM not supported, trying UCS2...", _modemId);
+                        _log.LogDebug("Modem {Id}: GSM not supported, trying UCS2...", _modemId);
                         charset = await _at.TrySetCharsetAsync("UCS2");
                     }
                 }
-                _log.LogInformation("Modem {Id}: CSCS={Result}", _modemId, charset);
+                _log.LogDebug("Modem {Id}: CSCS={Result}", _modemId, charset);
             }
 
             var (existingImsi, existingPhone) = await _db.GetActiveSimInfoAsync(_modemId);
@@ -121,15 +122,16 @@ public class ModemHandler : IDisposable
             if (!_isHiLink)
             {
                 var cpms = await _at.SendCommandAsync("AT+CPMS?");
-                _log.LogInformation("Modem {Id}: CPMS? -> {Resp}", _modemId, cpms.ReplaceLineEndings(" "));
+                _log.LogDebug("Modem {Id}: CPMS? -> {Resp}", _modemId, cpms.ReplaceLineEndings(" "));
                 cpms = await _at.SendCommandAsync("AT+CPMS=\"SM\",\"SM\",\"SM\"");
-                _log.LogInformation("Modem {Id}: CPMS=SM -> {Resp}", _modemId, cpms.ReplaceLineEndings(" "));
+                _log.LogDebug("Modem {Id}: CPMS=SM -> {Resp}", _modemId, cpms.ReplaceLineEndings(" "));
                 var cnmi = await _at.SendCommandAsync("AT+CNMI=2,1,0,0,0");
-                _log.LogInformation("Modem {Id}: CNMI -> {Resp}", _modemId, cnmi.ReplaceLineEndings(" "));
+                _log.LogDebug("Modem {Id}: CNMI -> {Resp}", _modemId, cnmi.ReplaceLineEndings(" "));
             }
 
             var messages = await _at.ReadAllSmsAsync();
-            _log.LogInformation("Modem {Id}: {Count} SMS on SIM", _modemId, messages.Count);
+            _log.LogDebug("Modem {Id}: {Count} SMS on SIM", _modemId, messages.Count);
+            var startupBalanceTrigger = false;
             if (messages.Count > 0)
             {
                 var tcsList = new List<Task<bool>>();
@@ -149,6 +151,8 @@ public class ModemHandler : IDisposable
                         },
                         Completed = tcs
                     });
+                    if (IsMobilisBalanceTrigger(msg))
+                        startupBalanceTrigger = true;
                 }
                 var results = await Task.WhenAll(tcsList);
                 var savedCount = results.Count(r => r);
@@ -169,7 +173,13 @@ public class ModemHandler : IDisposable
 
             if (status == ModemStatus.Online)
             {
-                _ = Task.Run(async () => await TryGetPhoneAndBalanceAsync(loopToken), loopToken);
+                _ = Task.Run(async () =>
+                {
+                    if (startupBalanceTrigger)
+                        await RunBalanceCheckFromSmsAsync(loopToken);
+                    else
+                        await TryGetPhoneAndBalanceAsync(loopToken);
+                }, loopToken);
             }
 
             _networkRetryLoop = NetworkRetryLoopAsync(loopToken);
@@ -209,14 +219,48 @@ public class ModemHandler : IDisposable
             catch (OperationCanceledException) { break; }
 
             if (_disposed) break;
+
+            bool needsBalanceCheck = false;
             try
             {
                 await _atLock.WaitAsync(ct);
-                try { await PollSmsAsync(); }
+                try { needsBalanceCheck = await PollSmsAsync(); }
                 finally { _atLock.Release(); }
             }
             catch (OperationCanceledException) { break; }
             catch (Exception ex) { _log.LogError(ex, "Modem {Id}: Poll loop error", _modemId); }
+
+            if (needsBalanceCheck && !_disposed)
+            {
+                try
+                {
+                    await _atLock.WaitAsync(ct);
+                    try { await RunBalanceCheckFromSmsAsync(ct); }
+                    finally { _atLock.Release(); }
+                }
+                catch (OperationCanceledException) { break; }
+                catch (Exception ex) { _log.LogError(ex, "Modem {Id}: SMS-triggered balance check error", _modemId); }
+            }
+        }
+    }
+
+    private async Task RunBalanceCheckFromSmsAsync(CancellationToken ct)
+    {
+        _log.LogInformation("Modem {Id}: Recharge/transfer SMS detected — running *222# to confirm real balance...", _modemId);
+        var balance = await _at.GetBalanceAsync();
+        if (balance.HasValue)
+        {
+            _log.LogInformation("Modem {Id}: Balance confirmed: {Balance:F2} DZD", _modemId, balance.Value);
+            await _db.EnqueueAsync(new()
+            {
+                Type = DatabaseWriteChannel.Op.UpdateSimBalanceFromSms,
+                Data = new { ModemId = _modemId, Balance = balance.Value }
+            });
+        }
+        else
+        {
+            _log.LogWarning("Modem {Id}: *222# returned no balance after recharge/transfer SMS", _modemId);
+            _ussdUnavailableSince = DateTime.UtcNow;
         }
     }
 
@@ -261,8 +305,7 @@ public class ModemHandler : IDisposable
 
     private async Task WatchdogAsync()
     {
-        _log.LogInformation("Modem {Id}: Watchdog starting...", _modemId);
-        if (_at == null || !_at.IsOpen) { _log.LogInformation("Modem {Id}: Watchdog - port closed", _modemId); return; }
+        if (_at == null || !_at.IsOpen) { return; }
 
         if (_isHiLink)
         {
@@ -278,7 +321,6 @@ public class ModemHandler : IDisposable
         try
         {
             var resp = await _at.SendCommandAsync("AT");
-            _log.LogInformation("Modem {Id}: Watchdog - {Resp}", _modemId, resp.ReplaceLineEndings(" "));
             if (!resp.Contains("OK"))
             {
                 _log.LogWarning("Modem {Id}: Watchdog AT failed -> disconnecting for re-probe", _modemId);
@@ -290,16 +332,16 @@ public class ModemHandler : IDisposable
         catch (Exception ex) { _log.LogError(ex, "Modem {Id}: Watchdog error -> disconnecting", _modemId); await DisconnectAsync(); }
     }
 
-    private async Task PollSmsAsync()
+    private async Task<bool> PollSmsAsync()
     {
-        if (_at == null || !_at.IsOpen) { _log.LogInformation("Modem {Id}: Poll - port closed", _modemId); return; }
+        if (_at == null || !_at.IsOpen) return false;
+        var balanceTriggerNeeded = false;
         try
         {
             var messages = await _at.ReadAllSmsAsync();
             var count = messages.Count;
-            _log.LogInformation("Modem {Id}: Poll - {Count} SMS found", _modemId, count);
 
-            if (count <= 0) return;
+            if (count <= 0) return false;
 
             var savedCount = 0;
             var skippedCount = 0;
@@ -322,7 +364,11 @@ public class ModemHandler : IDisposable
                     });
                     var wasSaved = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
                     if (wasSaved)
+                    {
                         savedCount++;
+                        if (!balanceTriggerNeeded && IsMobilisBalanceTrigger(msg))
+                            balanceTriggerNeeded = true;
+                    }
                     else
                         skippedCount++;
                 }
@@ -334,13 +380,21 @@ public class ModemHandler : IDisposable
 
             if (savedCount > 0 || skippedCount > 0)
             {
-                _log.LogInformation("Modem {Id}: Poll - {SavedCount} SMS saved to DB, {SkippedCount} skipped (duplicates)", _modemId, savedCount, skippedCount);
+                _log.LogInformation("Modem {Id}: Poll - {SavedCount} SMS saved, {SkippedCount} skipped", _modemId, savedCount, skippedCount);
                 await _at.DeleteAllSmsAsync();
             }
         }
         catch (IOException) { await DisconnectAsync(); }
         catch (InvalidOperationException) { await DisconnectAsync(); }
         catch (Exception ex) { _log.LogError(ex, "Modem {Id}: Poll error", _modemId); }
+        return balanceTriggerNeeded;
+    }
+
+    private static bool IsMobilisBalanceTrigger(RawSmsMessage msg)
+    {
+        if (msg.Sender != "Mobilis" && msg.Sender != "77111") return false;
+        return msg.Content.Contains("recharg", StringComparison.OrdinalIgnoreCase)
+            || msg.Content.Contains("montant de", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task TryGetPhoneAndBalanceAsync(CancellationToken ct)
@@ -356,7 +410,7 @@ public class ModemHandler : IDisposable
                 var existingPhone = (await _db.GetActiveSimInfoAsync(_modemId)).PhoneNumber;
                 if (existingPhone == 0)
                 {
-                    _log.LogInformation("Modem {Id}: Running USSD *101# for phone number...", _modemId);
+                    _log.LogDebug("Modem {Id}: Running USSD *101# for phone number...", _modemId);
                     var phone = await _at.GetPhoneNumberViaUssdAsync();
                     if (!string.IsNullOrEmpty(phone))
                     {
@@ -369,7 +423,7 @@ public class ModemHandler : IDisposable
                     }
                 }
 
-                _log.LogInformation("Modem {Id}: Running USSD *222# for balance...", _modemId);
+                _log.LogDebug("Modem {Id}: Running USSD *222# for balance...", _modemId);
                 var balance = await _at.GetBalanceAsync();
                 if (balance.HasValue)
                 {

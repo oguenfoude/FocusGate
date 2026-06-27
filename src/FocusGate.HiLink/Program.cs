@@ -32,6 +32,7 @@ if (!createdNew)
     }
     catch { }
     await Task.Delay(2000);
+    return;
 }
 try
 {

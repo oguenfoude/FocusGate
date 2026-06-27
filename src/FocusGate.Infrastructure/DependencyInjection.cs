@@ -37,21 +37,38 @@ public static class DependencyInjection
             return (Action<FocusGateDbContext>)(ctx => ctx.MachineId = id);
         });
 
-        var mongoUri = config["mongodb.uri"]
-            ?? Environment.GetEnvironmentVariable("MONGODB_URI")
-            ?? "mongodb+srv://user:password@cluster.example.net/?appName=Cluster0";
+        var flatConfig = ReadFlatConfig(configPath);
 
-        if (!mongoUri.Contains("connectTimeoutMS"))
+        var mongoUri = flatConfig.GetValueOrDefault("mongodb.uri")
+            ?? Environment.GetEnvironmentVariable("MONGODB_URI")
+            ?? "";
+
+        if (string.IsNullOrEmpty(mongoUri))
         {
-            var separator = mongoUri.Contains('?') ? '&' : '?';
-            mongoUri += $"{separator}connectTimeoutMS=5000&serverSelectionTimeoutMS=5000";
+            Console.WriteLine("[!] MongoDB URI not found in config — cloud sync disabled");
         }
-        var mongoDb = config["mongodb.database"] ?? "focusgate";
-        var syncInterval = int.TryParse(config["sync.interval_seconds"], out var si) ? si : 30;
+        else if (mongoUri.Contains("user:password"))
+        {
+            Console.WriteLine("[!] MongoDB URI is placeholder — run 'setmongo <uri>' to set real URI");
+        }
+        else
+        {
+            if (!mongoUri.Contains("connectTimeoutMS"))
+            {
+                var separator = mongoUri.Contains('?') ? '&' : '?';
+                mongoUri += $"{separator}connectTimeoutMS=5000&serverSelectionTimeoutMS=5000";
+            }
+        }
+
+        var mongoDb = flatConfig.GetValueOrDefault("mongodb.database") ?? config["mongodb:database"] ?? "focusgate";
+        var syncStr = flatConfig.GetValueOrDefault("sync.interval_seconds") ?? config["sync:interval_seconds"];
+        var syncInterval = int.TryParse(syncStr, out var si) ? si : 30;
 
         services.AddSingleton(sp =>
         {
             var logger = sp.GetRequiredService<ILogger<FocusGateMongoClient>>();
+            if (string.IsNullOrEmpty(mongoUri) || mongoUri.Contains("user:password"))
+                return new FocusGateMongoClient(null, mongoDb, logger);
             return new FocusGateMongoClient(mongoUri, mongoDb, logger);
         });
 
@@ -70,5 +87,22 @@ public static class DependencyInjection
         services.AddHostedService<RestartService>();
 
         return services;
+    }
+
+    private static Dictionary<string, string> ReadFlatConfig(string configPath)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            if (File.Exists(configPath))
+            {
+                var json = File.ReadAllText(configPath);
+                var doc = System.Text.Json.JsonDocument.Parse(json);
+                foreach (var prop in doc.RootElement.EnumerateObject())
+                    result[prop.Name] = prop.Value.GetString() ?? "";
+            }
+        }
+        catch { }
+        return result;
     }
 }

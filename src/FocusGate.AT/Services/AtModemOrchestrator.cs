@@ -91,8 +91,6 @@ public class AtModemOrchestrator : BackgroundService
         var toProbe = ports.Where(p => !_handlers.ContainsKey(p) && !_failedPorts.ContainsKey(p) && _handlers.Count < MaxModems).ToList();
         if (toProbe.Count == 0) return;
 
-        _log.LogInformation("Probing {Count} port(s) in parallel...", toProbe.Count);
-
         var probes = toProbe.Select(p => (Port: p, Task: ProbeAsync(p, ct))).ToList();
         var probeTimeout = Task.Delay(8000, ct);
         await Task.WhenAny(Task.WhenAll(probes.Select(x => x.Task)), probeTimeout);
@@ -111,7 +109,6 @@ public class AtModemOrchestrator : BackgroundService
 
             if (!_activeImeis.TryAdd(imei, 0))
             {
-                _log.LogInformation("{Port}: Duplicate IMEI {IMEI}", port, imei);
                 try { handler.Dispose(); } catch { }
                 continue;
             }
@@ -173,7 +170,7 @@ public class AtModemOrchestrator : BackgroundService
 
             var brand = DetectBrand(manufacturer, model);
 
-            _log.LogInformation("{Port}: IMEI={IMEI} IMSI={IMSI} Brand={Brand} Mfg={Mfg} Model={Model}",
+            _log.LogDebug("{Port}: IMEI={IMEI} IMSI={IMSI} Brand={Brand} Mfg={Mfg} Model={Model}",
                 port, imei, imsi, brand, manufacturer, model);
 
             await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.InsertModem, Data = new { IMEI = imei, IMSI = imsi, ComPort = port, Manufacturer = manufacturer, Model = model, Brand = (int)brand } });

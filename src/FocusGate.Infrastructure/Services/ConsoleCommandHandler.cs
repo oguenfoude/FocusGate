@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using FocusGate.Core.Enums;
 using FocusGate.Core.Models;
+using FocusGate.Core.Services;
 using FocusGate.Infrastructure.Data;
 using FocusGate.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
@@ -67,13 +68,13 @@ public class ConsoleCommandHandler : BackgroundService
                     case "sim":         await ShowSimAsync(args); break;
                     case "config":      await ShowConfigAsync(); break;
                     case "set-config":  await SetConfigAsync(args); break;
+                    case "setmongo":    await SetMongoAsync(args); break;
                     case "users":       await ListUsersAsync(); break;
                     case "adduser":     await AddUserAsync(args); break;
                     case "assign":      await AssignModemAsync(args); break;
                     case "unassign":    await UnassignModemAsync(args); break;
                     case "settle":       await SettleAsync(args); break;
                     case "report":       await ReportAsync(args); break;
-                    case "dump":         await DumpModemAsync(args); break;
                     case "exit":        _lifetime.StopApplication(); break;
                     default:            Console.WriteLine($"Unknown: {cmd}. Type 'help'."); break;
                 }
@@ -122,7 +123,7 @@ public class ConsoleCommandHandler : BackgroundService
         Console.WriteLine("  unassign <uid> <mid>      - Unassign modem");
         Console.WriteLine("  config                    - Show config");
         Console.WriteLine("  set-config <k> <v>        - Set config");
-        Console.WriteLine("  dump <ip>                 - Dump ALL API endpoints for one modem");
+        Console.WriteLine("  setmongo <uri>            - Set MongoDB URI and restart");
         Console.WriteLine("  exit                      - Exit");
 
     }
@@ -151,9 +152,9 @@ public class ConsoleCommandHandler : BackgroundService
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<FocusGateDbContext>();
 
-        var modems = await db.Modems.ToListAsync();
-        var totalSms = await db.SmsRecords.CountAsync();
-        var totalBalance = modems.Count > 0 ? (await db.SimCards.Where(s => s.IsActive).SumAsync(s => (decimal?)s.Balance)) ?? 0 : 0;
+        var modems = await db.Modems.AsNoTracking().ToListAsync();
+        var totalSms = await db.SmsRecords.AsNoTracking().CountAsync();
+        var totalBalance = modems.Count > 0 ? (await db.SimCards.AsNoTracking().Where(s => s.IsActive).SumAsync(s => (decimal?)s.Balance)) ?? 0 : 0;
 
         var online = modems.Count(m => m.Status == ModemStatus.Online);
         var offline = modems.Count(m => m.Status == ModemStatus.Offline);
@@ -174,9 +175,22 @@ public class ConsoleCommandHandler : BackgroundService
         {
             Console.WriteLine($"  {"ID",-4} {"IMEI",-16} {"Status",-10} {"Port",-8} {"Phone",-14} {"Balance",-12}");
             Console.WriteLine("  " + new string('-', 66));
+
+            var activeSimDict = await db.SimCards.AsNoTracking()
+                .Where(s => s.IsActive)
+                .GroupBy(s => s.ModemId)
+                .Select(g => g.FirstOrDefault())
+                .ToListAsync();
+
+            var activeSims = new Dictionary<int, SimCard>();
+            foreach (var s in activeSimDict)
+            {
+                if (s != null) activeSims[s.ModemId] = s;
+            }
+
             foreach (var m in modems)
             {
-                var sim = await db.SimCards.FirstOrDefaultAsync(s => s.ModemId == m.Id && s.IsActive);
+                var sim = activeSims.TryGetValue(m.Id, out var s) ? s : null;
                 var phone = sim?.PhoneNumber > 0 ? sim.PhoneNumber.ToString() : "-";
                 var bal = sim?.Balance ?? 0;
                 var balStr = bal.ToString("F2");
@@ -193,12 +207,18 @@ public class ConsoleCommandHandler : BackgroundService
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<FocusGateDbContext>();
 
-        var modems = await db.Modems.ToListAsync();
+        var modems = await db.Modems.AsNoTracking().ToListAsync();
+
+        var activeSims = await db.SimCards.AsNoTracking()
+            .Where(s => s.IsActive)
+            .ToListAsync();
+        var simDict = activeSims.GroupBy(s => s.ModemId).ToDictionary(g => g.Key, g => g.First());
+
         Console.WriteLine($"{"ID",-4} {"IMEI",-16} {"Status",-10} {"Port",-8} {"Balance",-12}");
         Console.WriteLine(new string('-', 52));
         foreach (var m in modems)
         {
-            var sim = await db.SimCards.FirstOrDefaultAsync(s => s.ModemId == m.Id && s.IsActive);
+            var sim = simDict.TryGetValue(m.Id, out var s) ? s : null;
             Console.WriteLine($"{m.Id,-4} {m.IMEI,-16} {m.Status,-10} {(m.ComPort ?? "-"),-8} {(sim?.Balance ?? 0),-12:F2}");
         }
     }
@@ -211,13 +231,13 @@ public class ConsoleCommandHandler : BackgroundService
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<FocusGateDbContext>();
 
-        var modem = await db.Modems.FindAsync(id);
+        var modem = await db.Modems.AsNoTracking().FirstOrDefaultAsync(m => m.Id == id);
         if (modem == null) { Console.WriteLine($"Modem {id} not found"); return; }
 
-        var sim = await db.SimCards.FirstOrDefaultAsync(s => s.ModemId == id && s.IsActive);
-        var simIds = await db.SimCards.Where(s => s.ModemId == id).Select(s => s.Id).ToListAsync();
-        var smsCount = await db.SmsRecords.CountAsync(s => simIds.Contains(s.SimCardId));
-        var allSims = await db.SimCards.Where(s => s.ModemId == id).OrderByDescending(s => s.FirstSeen).ToListAsync();
+        var sim = await db.SimCards.AsNoTracking().FirstOrDefaultAsync(s => s.ModemId == id && s.IsActive);
+        var simIds = await db.SimCards.AsNoTracking().Where(s => s.ModemId == id).Select(s => s.Id).ToListAsync();
+        var smsCount = await db.SmsRecords.AsNoTracking().CountAsync(s => simIds.Contains(s.SimCardId));
+        var allSims = await db.SimCards.AsNoTracking().Where(s => s.ModemId == id).OrderByDescending(s => s.FirstSeen).ToListAsync();
 
         Console.WriteLine();
         Console.WriteLine($"=== Modem {modem.Id} ===");
@@ -258,6 +278,7 @@ public class ConsoleCommandHandler : BackgroundService
         var db = scope.ServiceProvider.GetRequiredService<FocusGateDbContext>();
 
         var query = db.SmsRecords
+            .AsNoTracking()
             .Include(s => s.SimCard);
 
         var sms = await query.OrderByDescending(s => s.ReceivedAt).Take(20).ToListAsync();
@@ -278,10 +299,10 @@ public class ConsoleCommandHandler : BackgroundService
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<FocusGateDbContext>();
 
-        var modem = await db.Modems.FindAsync(modemId);
+        var modem = await db.Modems.AsNoTracking().FirstOrDefaultAsync(m => m.Id == modemId);
         if (modem == null) { Console.WriteLine($"Modem {modemId} not found"); return; }
 
-        var sims = await db.SimCards.Where(s => s.ModemId == modemId).OrderByDescending(s => s.FirstSeen).ToListAsync();
+        var sims = await db.SimCards.AsNoTracking().Where(s => s.ModemId == modemId).OrderByDescending(s => s.FirstSeen).ToListAsync();
         Console.WriteLine($"SIM History for Modem {modemId} (IMEI: {modem.IMEI}):");
         Console.WriteLine($"{"IMSI",-16} {"Phone",-14} {"Balance",-10} {"First Seen",-12} {"Last Seen",-12} {"Status",-10}");
         Console.WriteLine(new string('-', 76));
@@ -294,31 +315,14 @@ public class ConsoleCommandHandler : BackgroundService
         if (sims.Count == 0) Console.WriteLine("No SIM history.");
     }
 
-    private string GetConfigPath()
-    {
-        var dir = AppContext.BaseDirectory;
-        while (dir != null)
-        {
-            var candidate = Path.Combine(dir, "data", "config.json");
-            if (File.Exists(candidate)) return candidate;
-            candidate = Path.Combine(dir, "FocusGate.sln");
-            if (File.Exists(candidate))
-            {
-                var dataDir = Path.Combine(dir, "data");
-                if (!Directory.Exists(dataDir)) Directory.CreateDirectory(dataDir);
-                return Path.Combine(dataDir, "config.json");
-            }
-            dir = Directory.GetParent(dir)?.FullName;
-        }
-        return Path.Combine(AppContext.BaseDirectory, "data", "config.json");
-    }
+    private string GetConfigPath() => PathService.ConfigPath;
 
     private async Task ListUsersAsync()
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<FocusGateDbContext>();
 
-        var users = await db.Users.Include(u => u.UserModems).ToListAsync();
+        var users = await db.Users.AsNoTracking().Include(u => u.UserModems).ToListAsync();
         Console.WriteLine($"{"ID",-4} {"Username",-16} {"Display",-20} {"Role",-7} {"Active",-7} {"Modems"}");
         Console.WriteLine(new string('-', 62));
         foreach (var u in users)
@@ -436,6 +440,42 @@ public class ConsoleCommandHandler : BackgroundService
         Console.WriteLine($"Set: {args[0]} = {args[1]}");
     }
 
+    private async Task SetMongoAsync(string[] args)
+    {
+        if (args.Length < 1)
+        {
+            Console.WriteLine("Usage: setmongo <mongodb+srv://...>");
+            Console.WriteLine("  Sets the MongoDB URI in config.json");
+            return;
+        }
+
+        var uri = args[0];
+        if (!uri.StartsWith("mongodb://") && !uri.StartsWith("mongodb+srv://"))
+        {
+            Console.WriteLine("URI must start with mongodb:// or mongodb+srv://");
+            return;
+        }
+
+        var path = GetConfigPath();
+        Dictionary<string, string> dict;
+        if (File.Exists(path))
+        {
+            var json = await File.ReadAllTextAsync(path);
+            dict = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? new();
+        }
+        else
+        {
+            dict = new();
+        }
+        dict["mongodb.uri"] = uri;
+        var updated = System.Text.Json.JsonSerializer.Serialize(dict, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        await File.WriteAllTextAsync(path, updated);
+
+        var masked = uri.Length > 30 ? uri[..30] + "..." : uri;
+        Console.WriteLine($"MongoDB URI set: {masked}");
+        Console.WriteLine("Restart the app to apply. Type 'exit' then run FocusGate.HiLink.exe again.");
+    }
+
     private async Task SettleAsync(string[] args)
     {
         if (args.Length < 2)
@@ -530,6 +570,7 @@ public class ConsoleCommandHandler : BackgroundService
         Console.WriteLine($"\n=== Balance History (last {days} days) ===\n");
 
         var query = db.BalanceHistories
+            .AsNoTracking()
             .Include(b => b.SimCard)
             .Where(b => b.RecordedAt >= since);
 
@@ -613,299 +654,15 @@ public class ConsoleCommandHandler : BackgroundService
         Console.WriteLine();
     }
 
-    private static async Task<long> ResolveUserIdForModemAsync(FocusGateDbContext db, int modemId)
+    private static async Task<long?> ResolveUserIdForModemAsync(FocusGateDbContext db, int modemId)
     {
         var um = await db.UserModems.FirstOrDefaultAsync(x => x.ModemId == modemId && x.RemovedAt == null);
-        return um?.UserId ?? 1;
+        return um?.UserId;
     }
 
     private static string HashPassword(string password)
     {
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(password));
         return Convert.ToHexString(bytes).ToLowerInvariant();
-    }
-
-    private async Task DumpModemAsync(string[] args)
-    {
-        if (args.Length < 1)
-        {
-            Console.WriteLine("Usage: dump <ip>");
-            Console.WriteLine("  Example: dump 192.168.57.1");
-            return;
-        }
-
-        var ip = args[0].Trim();
-        Console.WriteLine($"\n========================================");
-        Console.WriteLine($"  DUMPING HiLink modem at {ip}");
-        Console.WriteLine($"========================================\n");
-
-        using var http = new System.Net.Http.HttpClient
-        {
-            Timeout = TimeSpan.FromSeconds(10)
-        };
-
-        string? sessionCookie = null;
-        string? csrfToken = null;
-        var baseUrl = $"http://{ip}";
-        var results = new List<(string name, string raw)>();
-
-        async Task<(string name, string raw)> ProbeGet(string name, string path)
-        {
-            try
-            {
-                var url = $"{baseUrl}{path}";
-                var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, url);
-                if (!string.IsNullOrEmpty(sessionCookie))
-                {
-                    var cv = sessionCookie.StartsWith("SessionID=", StringComparison.OrdinalIgnoreCase)
-                        ? sessionCookie["SessionID=".Length..]
-                        : sessionCookie;
-                    request.Headers.Add("Cookie", $"SessionID={cv}");
-                }
-                request.Headers.Add("X-Requested-With", "XMLHttpRequest");
-                var resp = await http.SendAsync(request);
-                if (resp.Headers.TryGetValues("__RequestVerificationToken", out var tokens))
-                {
-                    var newToken = tokens.FirstOrDefault();
-                    if (!string.IsNullOrEmpty(newToken))
-                    {
-                        csrfToken = newToken;
-                        Console.WriteLine($"    >> CSRF refreshed from response header");
-                    }
-                }
-                var xml = await resp.Content.ReadAsStringAsync();
-                return (name, xml);
-            }
-            catch (Exception ex)
-            {
-                return (name, $"ERROR: {ex.Message}");
-            }
-        }
-
-        async Task<(string name, string raw)> ProbePost(string name, string path, string body)
-        {
-            try
-            {
-                var url = $"{baseUrl}{path}";
-                var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, url)
-                {
-                    Content = new System.Net.Http.StringContent(body, Encoding.UTF8, "application/xml")
-                };
-                if (!string.IsNullOrEmpty(sessionCookie))
-                {
-                    var cv = sessionCookie.StartsWith("SessionID=", StringComparison.OrdinalIgnoreCase)
-                        ? sessionCookie["SessionID=".Length..]
-                        : sessionCookie;
-                    request.Headers.Add("Cookie", $"SessionID={cv}");
-                }
-                if (!string.IsNullOrEmpty(csrfToken))
-                    request.Headers.Add("__RequestVerificationToken", csrfToken);
-                request.Headers.Add("X-Requested-With", "XMLHttpRequest");
-                var resp = await http.SendAsync(request);
-                if (resp.Headers.TryGetValues("__RequestVerificationToken", out var tokens))
-                {
-                    var newToken = tokens.FirstOrDefault();
-                    if (!string.IsNullOrEmpty(newToken))
-                        csrfToken = newToken;
-                }
-                var xml = await resp.Content.ReadAsStringAsync();
-                return (name, xml);
-            }
-            catch (Exception ex)
-            {
-                return (name, $"ERROR: {ex.Message}");
-            }
-        }
-
-        async Task<(string name, string raw)> ProbePostForm(string name, string path, string body)
-        {
-            try
-            {
-                var url = $"{baseUrl}{path}";
-                var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, url)
-                {
-                    Content = new System.Net.Http.StringContent(body, Encoding.UTF8)
-                };
-                request.Content.Headers.TryAddWithoutValidation("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8");
-                if (!string.IsNullOrEmpty(sessionCookie))
-                {
-                    var cv = sessionCookie.StartsWith("SessionID=", StringComparison.OrdinalIgnoreCase)
-                        ? sessionCookie["SessionID=".Length..]
-                        : sessionCookie;
-                    request.Headers.Add("Cookie", $"SessionID={cv}");
-                }
-                if (!string.IsNullOrEmpty(csrfToken))
-                    request.Headers.Add("__RequestVerificationToken", csrfToken);
-                request.Headers.Add("X-Requested-With", "XMLHttpRequest");
-                request.Headers.Add("Referer", $"{baseUrl}/html/ussd.html");
-                var resp = await http.SendAsync(request);
-                if (resp.Headers.TryGetValues("__RequestVerificationToken", out var tokens))
-                {
-                    var newToken = tokens.FirstOrDefault();
-                    if (!string.IsNullOrEmpty(newToken))
-                        csrfToken = newToken;
-                }
-                var xml = await resp.Content.ReadAsStringAsync();
-                return (name, xml);
-            }
-            catch (Exception ex)
-            {
-                return (name, $"ERROR: {ex.Message}");
-            }
-        }
-
-        void PrintResult(int num, string name, string raw)
-        {
-            var lines = raw.Split('\n');
-            var preview = lines.Length > 5 ? string.Join("\n", lines.Take(5)) + $"\n  ... ({lines.Length} lines total)" : raw;
-            Console.WriteLine($"[{num}] {name}");
-            foreach (var l in preview.Split('\n'))
-                Console.WriteLine($"    {l}");
-            Console.WriteLine();
-        }
-
-        // [1] SesTokInfo
-        Console.WriteLine("[1/11] Probing SesTokInfo...");
-        var (n1, r1) = await ProbeGet("SesTokInfo", "/api/webserver/SesTokInfo");
-        results.Add((n1, r1));
-        PrintResult(1, n1, r1);
-
-        // Extract session/CSRF
-        if (!r1.StartsWith("ERROR"))
-        {
-            try
-            {
-                var doc = System.Xml.Linq.XDocument.Parse(r1);
-                var root = doc.Root;
-                if (root != null)
-                {
-                    sessionCookie = root.Element(System.Xml.Linq.XNamespace.None + "SesInfo")?.Value
-                        ?? root.Element("SesInfo")?.Value;
-                    csrfToken = root.Element(System.Xml.Linq.XNamespace.None + "TokInfo")?.Value
-                        ?? root.Element("TokInfo")?.Value;
-                    Console.WriteLine($"    >> Session: {(sessionCookie?.Length > 20 ? sessionCookie[..20] + "..." : sessionCookie ?? "null")}");
-                    Console.WriteLine($"    >> CSRF:    {(csrfToken?.Length > 20 ? csrfToken[..20] + "..." : csrfToken ?? "null")}");
-                    Console.WriteLine();
-                }
-            }
-            catch { }
-        }
-
-        if (string.IsNullOrEmpty(sessionCookie))
-        {
-            Console.WriteLine("  FATAL: No session cookie. Cannot continue.");
-            return;
-        }
-
-        // [2] device/information
-        Console.WriteLine("[2/11] Probing /api/device/information...");
-        var (n2, r2) = await ProbeGet("Device Info", "/api/device/information");
-        results.Add((n2, r2));
-        PrintResult(2, n2, r2);
-
-        // [3] device/basic_information
-        Console.WriteLine("[3/11] Probing /api/device/basic_information...");
-        var (n3, r3) = await ProbeGet("Basic Info", "/api/device/basic_information");
-        results.Add((n3, r3));
-        PrintResult(3, n3, r3);
-
-        // [4] monitoring/status
-        Console.WriteLine("[4/11] Probing /api/monitoring/status...");
-        var (n4, r4) = await ProbeGet("Monitoring Status", "/api/monitoring/status");
-        results.Add((n4, r4));
-        PrintResult(4, n4, r4);
-
-        // [5] AT+CGSN
-        Console.WriteLine("[5/11] Sending AT+CGSN...");
-        var (n5, r5) = await ProbePost("AT+CGSN", "/api/terminal/command", "<request><Command>AT+CGSN</Command><Timeout>5000</Timeout></request>");
-        results.Add((n5, r5));
-        PrintResult(5, n5, r5);
-
-        // [6] AT+CIMI
-        Console.WriteLine("[6/11] Sending AT+CIMI...");
-        var (n6, r6) = await ProbePost("AT+CIMI", "/api/terminal/command", "<request><Command>AT+CIMI</Command><Timeout>5000</Timeout></request>");
-        results.Add((n6, r6));
-        PrintResult(6, n6, r6);
-
-        // [7] AT+CSQ
-        Console.WriteLine("[7/11] Sending AT+CSQ...");
-        var (n7, r7) = await ProbePost("AT+CSQ", "/api/terminal/command", "<request><Command>AT+CSQ</Command><Timeout>5000</Timeout></request>");
-        results.Add((n7, r7));
-        PrintResult(7, n7, r7);
-
-        // [8] AT+CPIN?
-        Console.WriteLine("[8/11] Sending AT+CPIN?...");
-        var (n8, r8) = await ProbePost("AT+CPIN?", "/api/terminal/command", "<request><Command>AT+CPIN?</Command><Timeout>5000</Timeout></request>");
-        results.Add((n8, r8));
-        PrintResult(8, n8, r8);
-
-        // [9] SMS list
-        Console.WriteLine("[9/11] Probing SMS list...");
-        var (n9, r9) = await ProbePost("SMS List", "/api/sms/sms-list",
-            "<request><PageIndex>1</PageIndex><ReadCount>10</ReadCount><BoxType>1</BoxType><SortType>0</SortType><Ascending>0</Ascending><UnreadPreferred>0</UnreadPreferred></request>");
-        results.Add((n9, r9));
-        PrintResult(9, n9, r9);
-
-        // [10] USSD status check
-        Console.WriteLine("[10/13] USSD status...");
-        var (n10, r10) = await ProbeGet("USSD Status", "/api/ussd/status");
-        results.Add((n10, r10));
-        PrintResult(10, n10, r10);
-
-        // [11] USSD balance
-        Console.WriteLine("[11/13] Sending USSD *222# (balance)...");
-        var (n11, r11) = await ProbePostForm("USSD *222#", "/api/ussd/send",
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><request><content>*222#</content><codeType>CodeType</codeType><timeout></timeout></request>");
-        results.Add((n11, r11));
-        PrintResult(11, n11, r11);
-
-        // [12] USSD phone
-        Console.WriteLine("[12/13] Sending USSD *101# (phone)...");
-        var (n12, r12) = await ProbePostForm("USSD *101#", "/api/ussd/send",
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><request><content>*101#</content><codeType>CodeType</codeType><timeout></timeout></request>");
-        results.Add((n12, r12));
-        PrintResult(12, n12, r12);
-
-        // [13] USSD get (poll result)
-        Console.WriteLine("[13/13] USSD get result...");
-        var (n13, r13) = await ProbeGet("USSD Get", "/api/ussd/get");
-        results.Add((n13, r13));
-        PrintResult(13, n13, r13);
-
-        // Save to file
-        try
-        {
-            var dumpDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "FocusGate", "dumps");
-            Directory.CreateDirectory(dumpDir);
-            var fileName = $"dump_{ip.Replace(".", "-")}_{DateTime.UtcNow:yyyyMMdd_HHmmss}.txt";
-            var filePath = Path.Combine(dumpDir, fileName);
-
-            var sb = new StringBuilder();
-            sb.AppendLine($"FocusGate HiLink Dump");
-            sb.AppendLine($"IP: {ip}");
-            sb.AppendLine($"Time: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
-            sb.AppendLine($"Machine: {Environment.MachineName}");
-            sb.AppendLine(new string('=', 60));
-            sb.AppendLine();
-
-            int num = 1;
-            foreach (var (name, raw) in results)
-            {
-                sb.AppendLine($"[{num}] {name}");
-                sb.AppendLine(new string('-', 40));
-                sb.AppendLine(raw);
-                sb.AppendLine();
-                num++;
-            }
-
-            await File.WriteAllTextAsync(filePath, sb.ToString());
-            Console.WriteLine($"========================================");
-            Console.WriteLine($"  DUMP SAVED: {filePath}");
-            Console.WriteLine($"========================================\n");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"  (Could not save dump file: {ex.Message})\n");
-        }
     }
 }

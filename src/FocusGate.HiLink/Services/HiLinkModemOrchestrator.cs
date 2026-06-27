@@ -20,7 +20,6 @@ public class HiLinkModemOrchestrator : BackgroundService
     private readonly IConfigProvider _config;
     private readonly ConcurrentDictionary<string, (ModemHandler handler, string imei)> _handlers = new();
     private readonly ConcurrentDictionary<string, byte> _activeImeis = new();
-    private int _cycleCount;
 
     public HiLinkModemOrchestrator(IServiceProvider services, DatabaseWriteChannel db,
         ILogger<HiLinkModemOrchestrator> log, IConfigProvider config)
@@ -46,10 +45,7 @@ public class HiLinkModemOrchestrator : BackgroundService
         {
             try
             {
-                _cycleCount++;
-                _log.LogInformation("--- Scan cycle #{Cycle} ---", _cycleCount);
                 await ScanAsync(ct);
-                _log.LogInformation("Active handlers: {Count}", _handlers.Count);
             }
             catch (OperationCanceledException) { break; }
             catch (Exception ex) { _log.LogError(ex, "Scan cycle error"); }
@@ -89,11 +85,7 @@ public class HiLinkModemOrchestrator : BackgroundService
             try { handler.Dispose(); } catch { }
         }
 
-        if (_handlers.Count >= MaxModems)
-        {
-            _log.LogDebug("Max modems reached ({Max}), skipping scan", MaxModems);
-            return;
-        }
+        if (_handlers.Count >= MaxModems) return;
 
         var ipsRaw = _config.Get("hilink.scan_ips", "");
         string[] allIps;
@@ -111,9 +103,6 @@ public class HiLinkModemOrchestrator : BackgroundService
 
         var toScan = allIps.Where(ip => !_handlers.ContainsKey(ip)).ToArray();
 
-        _log.LogInformation("Scanning {ToScan} of {Total} IPs (active handlers: {Active})",
-            toScan.Length, allIps.Length, _handlers.Count);
-
         if (toScan.Length == 0) return;
 
         using var scope = _services.CreateScope();
@@ -128,7 +117,6 @@ public class HiLinkModemOrchestrator : BackgroundService
 
             if (!string.IsNullOrEmpty(device.Imei) && _activeImeis.ContainsKey(device.Imei))
             {
-                _log.LogInformation("{Ip}: Duplicate IMEI {IMEI}, skipping", device.Ip, device.Imei);
                 continue;
             }
 
@@ -138,7 +126,6 @@ public class HiLinkModemOrchestrator : BackgroundService
                 var hilinkLog = scope.ServiceProvider.GetRequiredService<ILogger<HiLinkCommandService>>();
                 var hilink = new HiLinkCommandService(hilinkLog, config);
 
-                _log.LogInformation("{Ip}: Connecting...", device.Ip);
                 await hilink.OpenAsync(device.Ip);
 
                 if (!await hilink.IsAliveAsync())
@@ -152,7 +139,6 @@ public class HiLinkModemOrchestrator : BackgroundService
                 if (string.IsNullOrEmpty(imei))
                 {
                     imei = device.Imei;
-                    _log.LogInformation("{Ip}: Using discovery IMEI: {IMEI}", device.Ip, imei);
                 }
                 if (string.IsNullOrEmpty(imei) || imei.StartsWith("HILINK-", StringComparison.OrdinalIgnoreCase))
                 {
@@ -163,7 +149,6 @@ public class HiLinkModemOrchestrator : BackgroundService
 
                 if (!_activeImeis.TryAdd(imei, 0))
                 {
-                    _log.LogInformation("{Ip}: Duplicate IMEI {IMEI}", device.Ip, imei);
                     try { hilink.Dispose(); } catch { }
                     continue;
                 }
@@ -191,7 +176,7 @@ public class HiLinkModemOrchestrator : BackgroundService
                     if (modem != null) break;
                 }
 
-                if (modem == null) { _log.LogWarning("{Ip}: Modem not found after insert", device.Ip); try { hilink.Dispose(); } catch { } continue; }
+                if (modem == null) { _log.LogWarning("{Ip}: Modem not found after insert — freeing IMEI {IMEI}", device.Ip, imei); _activeImeis.TryRemove(imei, out _); try { hilink.Dispose(); } catch { } continue; }
 
                 var handlerLog = scope.ServiceProvider.GetRequiredService<ILogger<ModemHandler>>();
                 var writeChannel = scope.ServiceProvider.GetRequiredService<DatabaseWriteChannel>();
@@ -212,10 +197,11 @@ public class HiLinkModemOrchestrator : BackgroundService
                             try { handler.Dispose(); } catch { }
                         }
                     }
-                    catch
+                    catch (Exception ex)
                     {
                         _activeImeis.TryRemove(imei, out _);
                         _handlers.TryRemove(device.Ip, out _);
+                        _log.LogWarning(ex, "{Ip}: Handler failed", device.Ip);
                         try { handler.Dispose(); } catch { }
                     }
                 }, ct);

@@ -104,13 +104,13 @@ public class HiLinkDiscovery
 
                 if (string.IsNullOrWhiteSpace(xml))
                 {
-                    _log.LogWarning("{Ip}: Empty response ({Scheme})", ip, scheme);
+                    _log.LogDebug("{Ip}: Empty response ({Scheme})", ip, scheme);
                     continue;
                 }
 
                 if (xml.TrimStart().StartsWith("<!DOCTYPE") || xml.TrimStart().StartsWith("<html"))
                 {
-                    _log.LogWarning("{Ip}: Got HTML login page ({Scheme}) — not HiLink API", ip, scheme);
+                    _log.LogDebug("{Ip}: Got HTML login page ({Scheme}) — not HiLink API", ip, scheme);
                     continue;
                 }
 
@@ -121,14 +121,14 @@ public class HiLinkDiscovery
                 }
                 catch
                 {
-                    _log.LogWarning("{Ip}: Invalid XML ({Scheme}, first 80 chars: {Preview})", ip, scheme, xml.Length > 80 ? xml[..80] : xml);
+                    _log.LogDebug("{Ip}: Invalid XML ({Scheme}, first 80 chars: {Preview})", ip, scheme, xml.Length > 80 ? xml[..80] : xml);
                     continue;
                 }
 
                 var root = doc.Root;
                 if (root == null)
                 {
-                    _log.LogWarning("{Ip}: Empty XML root ({Scheme})", ip, scheme);
+                    _log.LogDebug("{Ip}: Empty XML root ({Scheme})", ip, scheme);
                     continue;
                 }
 
@@ -136,7 +136,7 @@ public class HiLinkDiscovery
                     ?? root.Element("SesInfo")?.Value;
                 if (string.IsNullOrEmpty(sesInfo))
                 {
-                    _log.LogWarning("{Ip}: Got XML but no SesInfo (root element: {Root}) — not a standard HiLink modem", ip, root.Name.LocalName);
+                    _log.LogDebug("{Ip}: Got XML but no SesInfo (root element: {Root}) — not a standard HiLink modem", ip, root.Name.LocalName);
                     continue;
                 }
 
@@ -202,7 +202,7 @@ public class HiLinkDiscovery
             }
             catch (HttpRequestException ex) when (attempt == 1)
             {
-                _log.LogWarning("{Ip}: Connection failed ({Scheme}: {Error}), will try HTTPS", ip, scheme, ex.Message);
+                _log.LogDebug("{Ip}: Connection failed ({Scheme}: {Error}), will try HTTPS", ip, scheme, ex.Message);
                 await Task.Delay(100);
             }
             catch (HttpRequestException ex)
@@ -212,7 +212,7 @@ public class HiLinkDiscovery
             }
             catch (TaskCanceledException) when (attempt == 1)
             {
-                _log.LogWarning("{Ip}: Timeout ({Scheme}), will try HTTPS", ip, scheme);
+                _log.LogDebug("{Ip}: Timeout ({Scheme}), will try HTTPS", ip, scheme);
                 await Task.Delay(100);
             }
             catch (TaskCanceledException)
