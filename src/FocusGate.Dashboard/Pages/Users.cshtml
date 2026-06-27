@@ -1,0 +1,159 @@
+@page
+@model FocusGate.Dashboard.Pages.UsersModel
+@{
+    ViewData["Title"] = "Users";
+}
+
+<!-- Header -->
+<div class="flex items-center justify-between mb-5">
+    <div>
+        <p class="text-sm text-gray-400">@Model.Users.Count user(s)</p>
+    </div>
+    <div class="flex items-center gap-3">
+        <div class="relative">
+            <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-300 text-xs"></i>
+            <input type="text" id="searchInput" placeholder="Search users..."
+                   class="input pl-9 w-48" onkeyup="filterTable()" />
+        </div>
+        <label class="flex items-center gap-2 text-xs text-gray-500 cursor-pointer select-none">
+            <input type="checkbox" id="showArchived"
+                   hx-get="/Users" hx-trigger="change" hx-target="#userTable"
+                   hx-vals="js:{showArchived: document.getElementById('showArchived').checked}"
+                   class="rounded border-gray-300 text-brand-500 focus:ring-brand-500 w-3.5 h-3.5" />
+            Archived
+        </label>
+        <button @@click="document.getElementById('addUserModal').classList.remove('hidden')"
+                class="btn btn-primary">
+            <i class="fas fa-plus text-xs"></i> Add User
+        </button>
+    </div>
+</div>
+
+<!-- Table -->
+<div id="userTable" class="card overflow-hidden">
+    <div class="overflow-x-auto">
+        <table class="w-full text-sm" id="userDataTable">
+            <thead>
+                <tr class="border-b border-gray-100">
+                    <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">User</th>
+                    <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Role</th>
+                    <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Balance</th>
+                    <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Modems</th>
+                    <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Status</th>
+                    <th class="px-4 py-3 text-right text-[11px] font-semibold text-gray-400 uppercase tracking-wider w-20">Actions</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-50">
+                @foreach (var u in Model.Users)
+                {
+                    <tr class="table-row @(u.IsArchived ? "opacity-50" : "")">
+                        <td class="px-4 py-3">
+                            <a href="/UserDetail?id=@u.Id" class="flex items-center gap-2.5 group">
+                                <div class="w-8 h-8 bg-brand-50 text-brand-600 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0
+                                    group-hover:bg-brand-100 transition-colors">
+                                    @u.Username[0]
+                                </div>
+                                <div>
+                                    <p class="text-sm font-medium text-gray-900 group-hover:text-brand-600 transition-colors">@u.Username</p>
+                                    <p class="text-[11px] text-gray-400">@u.DisplayName</p>
+                                </div>
+                            </a>
+                        </td>
+                        <td class="px-4 py-3">
+                            <span class="badge @(u.Role == "Admin" ? "badge-purple" : "badge-gray")">@u.Role</span>
+                        </td>
+                        <td class="px-4 py-3">
+                            <span class="font-semibold text-sm @(u.Balance > 0 ? "text-brand-600" : "text-gray-300")">@u.Balance.ToString("N2") DA</span>
+                        </td>
+                        <td class="px-4 py-3 text-gray-500 text-xs">@u.ModemCount assigned</td>
+                        <td class="px-4 py-3">
+                            @if (u.IsArchived)
+                            {
+                                <span class="badge badge-gray">Archived</span>
+                            }
+                            else
+                            {
+                                <span class="badge badge-success">Active</span>
+                            }
+                        </td>
+                        <td class="px-4 py-3 text-right">
+                            <div class="flex items-center justify-end gap-1.5">
+                                <a href="/UserDetail?id=@u.Id" class="p-1.5 text-gray-300 hover:text-gray-500 rounded transition-colors" title="View">
+                                    <i class="fas fa-eye text-xs"></i>
+                                </a>
+                                @if (u.IsArchived)
+                                {
+                                    <button hx-post="/Users?handler=Restore&userId=@u.Id"
+                                            hx-confirm="Restore this user?"
+                                            hx-target="closest tr"
+                                            hx-swap="outerHTML"
+                                            class="p-1.5 text-brand-400 hover:text-brand-600 rounded transition-colors" title="Restore">
+                                        <i class="fas fa-undo text-xs"></i>
+                                    </button>
+                                }
+                                else
+                                {
+                                    <button hx-post="/Users?handler=Archive&userId=@u.Id"
+                                            hx-confirm="Archive this user?"
+                                            hx-target="closest tr"
+                                            hx-swap="outerHTML"
+                                            class="p-1.5 text-red-300 hover:text-red-500 rounded transition-colors" title="Archive">
+                                        <i class="fas fa-archive text-xs"></i>
+                                    </button>
+                                }
+                            </div>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Add User Modal -->
+<div id="addUserModal" class="hidden fixed inset-0 z-50 modal-overlay flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm" @@click.away="document.getElementById('addUserModal').classList.add('hidden')">
+        <div class="px-5 py-4 border-b border-gray-100">
+            <h3 class="text-base font-semibold text-gray-900">Add User</h3>
+        </div>
+        <form hx-post="/Users?handler=AddUser"
+              hx-target="#userTable"
+              hx-swap="innerHTML"
+              class="p-5 space-y-4">
+            <div>
+                <label class="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Username *</label>
+                <input type="text" name="username" required class="input" placeholder="e.g. john" />
+            </div>
+            <div>
+                <label class="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Password *</label>
+                <input type="password" name="password" required class="input" placeholder="Min 4 characters" />
+            </div>
+            <div>
+                <label class="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Display Name</label>
+                <input type="text" name="displayName" class="input" placeholder="Optional" />
+            </div>
+            <div>
+                <label class="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Role *</label>
+                <select name="role" required class="input">
+                    <option value="User">User</option>
+                    <option value="Admin">Admin</option>
+                </select>
+            </div>
+            <div class="flex gap-3 pt-2">
+                <button type="submit" class="btn btn-primary flex-1">Create User</button>
+                <button type="button" onclick="document.getElementById('addUserModal').classList.add('hidden')" class="btn btn-outline">Cancel</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+    function filterTable() {
+        var input = document.getElementById('searchInput').value.toLowerCase();
+        var rows = document.querySelectorAll('#userDataTable tbody tr');
+        rows.forEach(function(row) {
+            var text = row.textContent.toLowerCase();
+            row.style.display = text.includes(input) ? '' : 'none';
+        });
+    }
+</script>

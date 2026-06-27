@@ -298,6 +298,23 @@ public class ModemHandler : IDisposable
         if (_disposed) return;
         _disposed = true;
         _loopCts.Cancel();
+        try
+        {
+            var task = Task.Run(async () =>
+            {
+                if (_watchdogLoop != null) try { await _watchdogLoop; } catch { }
+                if (_pollLoop != null) try { await _pollLoop; } catch { }
+                if (_networkRetryLoop != null) try { await _networkRetryLoop; } catch { }
+                try
+                {
+                    await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.UpdateModemStatus, Data = new { ModemId = _modemId, Status = ModemStatus.Offline } });
+                    await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.UpdateModemComPort, Data = new { ModemId = _modemId, ComPort = (string?)null } });
+                }
+                catch { }
+            });
+            task.Wait(TimeSpan.FromSeconds(3));
+        }
+        catch { }
         _loopCts.Dispose();
         _atLock.Dispose();
         _at?.Dispose();

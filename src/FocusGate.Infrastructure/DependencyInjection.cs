@@ -89,6 +89,36 @@ public static class DependencyInjection
         return services;
     }
 
+    public static IServiceCollection AddFocusGateDashboard(this IServiceCollection services, IConfiguration config, string? dataDir = null)
+    {
+        var dir = dataDir ?? FocusGate.Core.Services.PathService.DataDirectory;
+        Directory.CreateDirectory(dir);
+
+        var dbPath = Path.Combine(dir, "focusgate.db");
+        var connectionString = $"Data Source={dbPath}";
+
+        var machineId = config["machine.id"] ?? "";
+
+        services.AddSingleton<MachineInfoService>();
+        services.AddSingleton<DatabaseWriteChannel>();
+        var configPath = Path.Combine(dir, "config.json");
+        services.AddSingleton<IConfigProvider>(new JsonConfigProvider(configPath));
+
+        services.AddDbContext<FocusGateDbContext>(options =>
+        {
+            options.UseSqlite(connectionString);
+        });
+
+        services.AddSingleton(sp =>
+        {
+            var machine = sp.GetRequiredService<MachineInfoService>();
+            var id = string.IsNullOrEmpty(machineId) ? machine.MachineId : machineId;
+            return (Action<FocusGateDbContext>)(ctx => ctx.MachineId = id);
+        });
+
+        return services;
+    }
+
     private static Dictionary<string, string> ReadFlatConfig(string configPath)
     {
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);

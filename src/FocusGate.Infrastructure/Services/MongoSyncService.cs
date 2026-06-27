@@ -103,6 +103,23 @@ public class MongoSyncService : BackgroundService
         }
     }
 
+    public override async Task StopAsync(CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("MongoSync stopping — performing final sync...");
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<FocusGateDbContext>();
+            await PushToMongoAsync(db, cancellationToken);
+            _logger.LogInformation("Final sync complete");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("Final sync failed: {Error}", ex.Message);
+        }
+        await base.StopAsync(cancellationToken);
+    }
+
     private async Task FullSyncAsync(CancellationToken ct)
     {
         _logger.LogInformation("Starting full sync for machine {Machine}...", _machineId);

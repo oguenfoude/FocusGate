@@ -1,0 +1,108 @@
+@page
+@model FocusGate.Dashboard.Pages.WithdrawalsModel
+@{
+    ViewData["Title"] = "Withdrawals";
+}
+
+<!-- Header -->
+<div class="flex items-center justify-between mb-5">
+    <div>
+        <p class="text-sm text-gray-400">@Model.Requests.Count request(s)</p>
+    </div>
+    <select id="statusFilter"
+            hx-get="/Withdrawals" hx-trigger="change" hx-target="#withdrawalTable"
+            hx-vals="js:{status: document.getElementById('statusFilter').value}"
+            class="input w-40">
+        <option value="">All Status</option>
+        <option value="Pending">Pending</option>
+        <option value="Approved">Approved</option>
+        <option value="Rejected">Rejected</option>
+    </select>
+</div>
+
+<!-- Table -->
+<div id="withdrawalTable" class="card overflow-hidden">
+    <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+            <thead>
+                <tr class="border-b border-gray-100">
+                    <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">User</th>
+                    <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Amount</th>
+                    <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Status</th>
+                    <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Requested</th>
+                    <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Note</th>
+                    <th class="px-4 py-3 text-right text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Actions</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-50">
+                @if (Model.Requests.Any())
+                {
+                    @foreach (var r in Model.Requests)
+                    {
+                        <tr class="table-row">
+                            <td class="px-4 py-3">
+                                <a href="/UserDetail?id=@r.UserId" class="flex items-center gap-2 group">
+                                    <div class="w-7 h-7 bg-brand-50 text-brand-600 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 group-hover:bg-brand-100 transition-colors">
+                                        @r.Username[0]
+                                    </div>
+                                    <span class="text-sm font-medium text-gray-900 group-hover:text-brand-600 transition-colors">@r.Username</span>
+                                </a>
+                            </td>
+                            <td class="px-4 py-3 font-semibold text-sm">@r.Amount.ToString("N2") DA</td>
+                            <td class="px-4 py-3">
+                                @if (r.Status == "Pending")
+                                {
+                                    <span class="badge badge-warning">Pending</span>
+                                }
+                                else if (r.Status == "Approved")
+                                {
+                                    <span class="badge badge-success">Approved</span>
+                                }
+                                else
+                                {
+                                    <span class="badge badge-danger">Rejected</span>
+                                }
+                            </td>
+                            <td class="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">@r.RequestedAt.ToLocalTime().ToString("MMM dd, HH:mm")</td>
+                            <td class="px-4 py-3 text-gray-400 text-xs max-w-[200px] truncate">@(r.Note ?? "-")</td>
+                            <td class="px-4 py-3 text-right">
+                                @if (r.Status == "Pending")
+                                {
+                                    <div class="flex items-center justify-end gap-1.5">
+                                        <button hx-post="/Withdrawals?handler=Approve&id=@r.Id"
+                                                hx-confirm="Approve this withdrawal? Balance will be deducted."
+                                                hx-target="closest tr"
+                                                hx-swap="outerHTML"
+                                                class="btn btn-primary btn-sm">
+                                            <i class="fas fa-check text-[10px]"></i> Approve
+                                        </button>
+                                        <button hx-post="/Withdrawals?handler=Reject&id=@r.Id"
+                                                hx-confirm="Reject this withdrawal?"
+                                                hx-target="closest tr"
+                                                hx-swap="outerHTML"
+                                                class="btn btn-danger btn-sm">
+                                            <i class="fas fa-times text-[10px]"></i> Reject
+                                        </button>
+                                    </div>
+                                }
+                                else
+                                {
+                                    <span class="text-[11px] text-gray-300">@(r.ProcessedAt?.ToLocalTime().ToString("MMM dd, HH:mm") ?? "")</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                }
+                else
+                {
+                    <tr>
+                        <td colspan="6" class="px-5 py-12 text-center">
+                            <i class="fas fa-money-bill-wave text-gray-200 text-3xl mb-2"></i>
+                            <p class="text-sm text-gray-400">No withdrawal requests</p>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>

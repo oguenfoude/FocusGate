@@ -10,10 +10,14 @@ using Microsoft.Extensions.Logging;
 using Serilog;
 using Serilog.Events;
 
+System.Diagnostics.Process? dashboardProcess = null;
+
 Console.CancelKeyPress += (_, e) =>
 {
     e.Cancel = true;
-    Console.WriteLine("\n[!] Stopping FocusGate HiLink...");
+    Console.WriteLine();
+    Console.WriteLine("[*] Shutting down gracefully...");
+    e.Cancel = false;
 };
 
 using var appCts = new CancellationTokenSource();
@@ -93,24 +97,38 @@ try
     writeChannel.Start(linkedCts.Token);
 
     Console.WriteLine();
-    Console.WriteLine("=============================================");
-    Console.WriteLine("  FocusGate HiLink Gateway");
-    Console.WriteLine("=============================================");
-    Console.WriteLine($"  Version  : 1.0");
+    Console.WriteLine("  ┌─────────────────────────────────────────┐");
+    Console.WriteLine("  │       FocusGate HiLink Gateway           │");
+    Console.WriteLine("  └─────────────────────────────────────────┘");
+    Console.WriteLine();
     Console.WriteLine($"  Machine  : {context.MachineId}");
     Console.WriteLine($"  Database : {PathService.DatabasePath}");
-    Console.WriteLine($"  Logs     : {PathService.LogsDirectory}");
     Console.WriteLine($"  Config   : {configPath}");
-    Console.WriteLine("=============================================");
     Console.WriteLine();
+    Console.WriteLine("  Commands: help, status, modems, exit");
+    Console.WriteLine();
+
+    dashboardProcess = StartDashboard();
+    if (dashboardProcess != null)
+        Console.WriteLine("  Dashboard: http://localhost:5080");
+
     logger.LogInformation("FocusGate HiLink started | DB: {DbPath} | Machine: {Machine}",
         PathService.DatabasePath, context.MachineId);
 
     var lifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
     lifetime.ApplicationStopping.Register(() =>
     {
-        _ = writeChannel.CompleteAsync();
-        linkedCts.Cancel();
+        try { writeChannel.CompleteAsync().GetAwaiter().GetResult(); }
+        catch { }
+        linkedCts?.Cancel();
+    });
+
+    lifetime.ApplicationStopped.Register(() =>
+    {
+        if (dashboardProcess != null && !dashboardProcess.HasExited)
+        {
+            try { dashboardProcess.Kill(); } catch { }
+        }
     });
 }
 catch (Exception ex)
@@ -125,6 +143,11 @@ linkedCts?.Dispose();
 }
 finally
 {
+    if (dashboardProcess != null && !dashboardProcess.HasExited)
+    {
+        try { dashboardProcess.Kill(); } catch { }
+        dashboardProcess.Dispose();
+    }
     mutex.ReleaseMutex();
     mutex.Dispose();
 }
@@ -152,6 +175,28 @@ static void ShowErrorDialog(string title, string message)
         MessageBoxW(IntPtr.Zero, message, title, 0x10);
     }
     catch { }
+}
+
+static System.Diagnostics.Process? StartDashboard()
+{
+    try
+    {
+        var exeDir = AppContext.BaseDirectory;
+        var dashboardExe = Path.Combine(exeDir, "FocusGate.Dashboard.exe");
+        if (!File.Exists(dashboardExe)) return null;
+
+        var existing = System.Diagnostics.Process.GetProcessesByName("FocusGate.Dashboard");
+        if (existing.Length > 0) return null;
+
+        return System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = dashboardExe,
+            WorkingDirectory = exeDir,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        });
+    }
+    catch { return null; }
 }
 
 [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]

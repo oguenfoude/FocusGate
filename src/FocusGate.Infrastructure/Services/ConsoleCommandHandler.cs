@@ -154,7 +154,7 @@ public class ConsoleCommandHandler : BackgroundService
 
         var modems = await db.Modems.AsNoTracking().ToListAsync();
         var totalSms = await db.SmsRecords.AsNoTracking().CountAsync();
-        var totalBalance = modems.Count > 0 ? (await db.SimCards.AsNoTracking().Where(s => s.IsActive).SumAsync(s => (decimal?)s.Balance)) ?? 0 : 0;
+        var totalBalance = modems.Count > 0 ? (await db.SimCards.AsNoTracking().Where(s => s.IsActive).Select(s => s.Balance).ToListAsync()).Sum() : 0;
 
         var online = modems.Count(m => m.Status == ModemStatus.Online);
         var offline = modems.Count(m => m.Status == ModemStatus.Offline);

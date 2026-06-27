@@ -1,0 +1,165 @@
+@page
+@model FocusGate.Dashboard.Pages.IndexModel
+@{
+    ViewData["Title"] = "Dashboard";
+}
+
+<!-- Summary Cards -->
+<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5 mb-6">
+    <!-- Modems -->
+    <div class="card stat-card">
+        <div class="card-body">
+            <div class="flex items-start justify-between">
+                <div>
+                    <p class="text-xs font-medium text-gray-400 uppercase tracking-wider">Modems</p>
+                    <p class="text-3xl font-bold text-gray-900 mt-2">@Model.ModemsOnline<span class="text-lg text-gray-300 font-normal">/@Model.ModemsTotal</span></p>
+                    <div class="flex items-center gap-1.5 mt-2">
+                        <span class="pulse-dot relative" style="width:6px;height:6px;"></span>
+                        <span class="text-xs text-brand-600 font-medium">@Model.ModemsOnline online</span>
+                    </div>
+                </div>
+                <div class="w-11 h-11 bg-brand-50 rounded-xl flex items-center justify-center flex-shrink-0">
+                    <i class="fas fa-tower-broadcast text-brand-500"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- SIM Balance -->
+    <div class="card stat-card">
+        <div class="card-body">
+            <div class="flex items-start justify-between">
+                <div>
+                    <p class="text-xs font-medium text-gray-400 uppercase tracking-wider">SIM Balance</p>
+                    <p class="text-3xl font-bold text-gray-900 mt-2">@Model.TotalSimBalance.ToString("N0")</p>
+                    <p class="text-xs text-gray-400 mt-2">@Model.SimCount SIMs &middot; DZD</p>
+                </div>
+                <div class="w-11 h-11 bg-blue-50 rounded-xl flex items-center justify-center flex-shrink-0">
+                    <i class="fas fa-wallet text-blue-500"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- User Wallets -->
+    <div class="card stat-card">
+        <div class="card-body">
+            <div class="flex items-start justify-between">
+                <div>
+                    <p class="text-xs font-medium text-gray-400 uppercase tracking-wider">User Wallets</p>
+                    <p class="text-3xl font-bold text-gray-900 mt-2">@Model.TotalUserBalance.ToString("N0")</p>
+                    <p class="text-xs text-gray-400 mt-2">@Model.UserCount users &middot; DZD</p>
+                </div>
+                <div class="w-11 h-11 bg-purple-50 rounded-xl flex items-center justify-center flex-shrink-0">
+                    <i class="fas fa-users text-purple-500"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Pending Withdrawals -->
+    <div class="card stat-card">
+        <div class="card-body">
+            <div class="flex items-start justify-between">
+                <div>
+                    <p class="text-xs font-medium text-gray-400 uppercase tracking-wider">Pending</p>
+                    <p class="text-3xl font-bold @(Model.PendingWithdrawals > 0 ? "text-amber-500" : "text-gray-900") mt-2">@Model.PendingWithdrawals</p>
+                    <p class="text-xs text-gray-400 mt-2">withdrawal requests</p>
+                </div>
+                <div class="w-11 h-11 bg-amber-50 rounded-xl flex items-center justify-center flex-shrink-0">
+                    <i class="fas fa-clock text-amber-500"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Quick Actions -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+    <a href="/Modems" class="card group cursor-pointer hover:border-brand-300 transition-colors">
+        <div class="card-body flex items-center gap-4 py-4">
+            <div class="w-10 h-10 bg-brand-50 rounded-lg flex items-center justify-center group-hover:bg-brand-100 transition-colors">
+                <i class="fas fa-signal text-brand-500 text-sm"></i>
+            </div>
+            <div>
+                <p class="text-sm font-semibold text-gray-900">View Modems</p>
+                <p class="text-xs text-gray-400">@Model.ModemsTotal devices connected</p>
+            </div>
+            <i class="fas fa-chevron-right text-gray-300 ml-auto group-hover:text-brand-400 transition-colors text-xs"></i>
+        </div>
+    </a>
+    <a href="/Users" class="card group cursor-pointer hover:border-purple-300 transition-colors">
+        <div class="card-body flex items-center gap-4 py-4">
+            <div class="w-10 h-10 bg-purple-50 rounded-lg flex items-center justify-center group-hover:bg-purple-100 transition-colors">
+                <i class="fas fa-user-plus text-purple-500 text-sm"></i>
+            </div>
+            <div>
+                <p class="text-sm font-semibold text-gray-900">Manage Users</p>
+                <p class="text-xs text-gray-400">@Model.UserCount active users</p>
+            </div>
+            <i class="fas fa-chevron-right text-gray-300 ml-auto group-hover:text-purple-400 transition-colors text-xs"></i>
+        </div>
+    </a>
+    <a href="/Withdrawals" class="card group cursor-pointer hover:border-amber-300 transition-colors">
+        <div class="card-body flex items-center gap-4 py-4">
+            <div class="w-10 h-10 bg-amber-50 rounded-lg flex items-center justify-center group-hover:bg-amber-100 transition-colors">
+                <i class="fas fa-money-bill-wave text-amber-500 text-sm"></i>
+            </div>
+            <div>
+                <p class="text-sm font-semibold text-gray-900">Withdrawals</p>
+                <p class="text-xs text-gray-400">@Model.PendingWithdrawals pending requests</p>
+            </div>
+            <i class="fas fa-chevron-right text-gray-300 ml-auto group-hover:text-amber-400 transition-colors text-xs"></i>
+        </div>
+    </a>
+</div>
+
+<!-- Recent SMS -->
+<div class="card">
+    <div class="card-header flex items-center justify-between">
+        <h3 class="text-sm font-semibold text-gray-900">Recent SMS</h3>
+        <span class="text-xs text-gray-400">@Model.RecentSms.Count messages</span>
+    </div>
+    <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+            <thead>
+                <tr class="border-b border-gray-100">
+                    <th class="px-5 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Time</th>
+                    <th class="px-5 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Sender</th>
+                    <th class="px-5 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Content</th>
+                    <th class="px-5 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Modem</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-50">
+                @if (Model.RecentSms.Any())
+                {
+                    @foreach (var sms in Model.RecentSms)
+                    {
+                        <tr class="table-row">
+                            <td class="px-5 py-3 text-gray-400 text-xs whitespace-nowrap">@sms.ReceivedAt.ToLocalTime().ToString("MMM dd, HH:mm")</td>
+                            <td class="px-5 py-3">
+                                <div class="flex items-center gap-2.5">
+                                    <div class="w-7 h-7 bg-gray-100 rounded-full flex items-center justify-center text-[10px] font-bold text-gray-500 flex-shrink-0">
+                                        @(sms.SenderNumber.Length >= 2 ? sms.SenderNumber[^2..] : sms.SenderNumber)
+                                    </div>
+                                    <span class="font-medium text-xs">@sms.SenderNumber</span>
+                                </div>
+                            </td>
+                            <td class="px-5 py-3 text-gray-500 max-w-xs truncate text-xs">@sms.Content</td>
+                            <td class="px-5 py-3 text-gray-400 font-mono text-[11px]">@(sms.ModemImei?[^4..] ?? "N/A")</td>
+                        </tr>
+                    }
+                }
+                else
+                {
+                    <tr>
+                        <td colspan="4" class="px-5 py-12 text-center">
+                            <i class="fas fa-inbox text-gray-300 text-2xl mb-2"></i>
+                            <p class="text-sm text-gray-400">No SMS received yet</p>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>

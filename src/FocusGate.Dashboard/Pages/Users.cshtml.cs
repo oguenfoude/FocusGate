@@ -1,0 +1,123 @@
+using System.Security.Cryptography;
+using System.Text;
+using FocusGate.Core.Enums;
+using FocusGate.Core.Models;
+using FocusGate.Infrastructure.Data;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.RazorPages;
+using Microsoft.EntityFrameworkCore;
+
+namespace FocusGate.Dashboard.Pages;
+
+public class UsersModel : PageModel
+{
+    private readonly FocusGateDbContext _db;
+
+    public List<UserRow> Users { get; set; } = new();
+
+    public UsersModel(FocusGateDbContext db)
+    {
+        _db = db;
+    }
+
+    public async Task OnGetAsync(bool showArchived = false)
+    {
+        var query = _db.Users
+            .Include(u => u.UserModems.Where(um => um.RemovedAt == null))
+            .AsNoTracking();
+
+        if (!showArchived)
+            query = query.Where(u => u.ArchivedAt == null);
+
+        var users = await query.OrderBy(u => u.Id).ToListAsync();
+
+        Users = users.Select(u => new UserRow
+        {
+            Id = u.Id,
+            Username = u.Username,
+            DisplayName = u.DisplayName,
+            Role = u.Role.ToString(),
+            Balance = u.Balance,
+            ModemCount = u.UserModems.Count(um => um.RemovedAt == null),
+            IsArchived = u.ArchivedAt != null
+        }).ToList();
+    }
+
+    public async Task<IActionResult> OnPostArchiveAsync(long userId)
+    {
+        var user = await _db.Users.FindAsync(userId);
+        if (user != null)
+        {
+            user.ArchivedAt = DateTime.UtcNow;
+            user.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+        }
+        Response.Headers["HX-Redirect"] = "/Users";
+        return new EmptyResult();
+    }
+
+    public async Task<IActionResult> OnPostRestoreAsync(long userId)
+    {
+        var user = await _db.Users.FindAsync(userId);
+        if (user != null)
+        {
+            user.ArchivedAt = null;
+            user.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+        }
+        Response.Headers["HX-Redirect"] = "/Users";
+        return new EmptyResult();
+    }
+
+    public async Task<IActionResult> OnPostAddUserAsync(string username, string password, string? displayName, string role)
+    {
+        if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
+        {
+            Response.Headers["HX-Redirect"] = "/Users";
+            return new EmptyResult();
+        }
+
+        var exists = await _db.Users.AnyAsync(u => u.Username == username);
+        if (exists)
+        {
+            Response.Headers["HX-Redirect"] = "/Users";
+            return new EmptyResult();
+        }
+
+        var user = new User
+        {
+            Username = username,
+            Password = HashPassword(password),
+            DisplayName = displayName ?? username,
+            Role = role == "Admin" ? UserRole.Admin : UserRole.User,
+            IsActive = true,
+            Balance = 0,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+
+        _db.Users.Add(user);
+        await _db.SaveChangesAsync();
+
+        Response.Headers["HX-Redirect"] = "/Users";
+        return new EmptyResult();
+    }
+
+    private static string HashPassword(string password)
+    {
+        using var sha256 = SHA256.Create();
+        var bytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(password));
+        return Convert.ToHexString(bytes).ToLower();
+    }
+
+    public class UserRow
+    {
+        public long Id { get; set; }
+        public string Username { get; set; } = "";
+        public string DisplayName { get; set; } = "";
+        public string Role { get; set; } = "";
+        public decimal Balance { get; set; }
+        public int ModemCount { get; set; }
+        public bool IsArchived { get; set; }
+    }
+}

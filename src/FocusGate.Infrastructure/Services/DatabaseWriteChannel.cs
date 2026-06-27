@@ -305,7 +305,7 @@ public class DatabaseWriteChannel
                 {
                     SimCardId = sim.Id,
                     ModemId = modemId,
-            UserId = userId.Value,
+                    UserId = userId,
                     Balance = newBalance,
                     PreviousBalance = oldBalance,
                     Source = BalanceSource.USSD,

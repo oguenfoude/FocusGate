@@ -1,0 +1,113 @@
+@page
+@model FocusGate.Dashboard.Pages.ModemsModel
+@{
+    ViewData["Title"] = "Modems";
+}
+
+<!-- Header -->
+<div class="flex items-center justify-between mb-5">
+    <div>
+        <p class="text-sm text-gray-400">@Model.Modems.Count modem(s) found</p>
+    </div>
+    <div class="flex items-center gap-3">
+        <div class="relative">
+            <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-300 text-xs"></i>
+            <input type="text" id="searchInput" placeholder="Search IMEI, phone..."
+                   class="input pl-9 w-56" onkeyup="filterTable()" />
+        </div>
+        <select id="statusFilter" hx-get="/Modems" hx-trigger="change" hx-target="#modemTable"
+                hx-vals="js:{status: document.getElementById('statusFilter').value}"
+                class="input w-36">
+            <option value="">All Status</option>
+            <option value="online">Online</option>
+            <option value="offline">Offline</option>
+        </select>
+    </div>
+</div>
+
+<!-- Table -->
+<div id="modemTable" class="card overflow-hidden">
+    <div class="overflow-x-auto">
+        <table class="w-full text-sm" id="modemDataTable">
+            <thead>
+                <tr class="border-b border-gray-100">
+                    <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Status</th>
+                    <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">IMEI</th>
+                    <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Phone</th>
+                    <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Balance</th>
+                    <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">User</th>
+                    <th class="px-4 py-3 text-right text-[11px] font-semibold text-gray-400 uppercase tracking-wider w-10"></th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-50">
+                @foreach (var m in Model.Modems)
+                {
+                    <tr class="table-row cursor-pointer" onclick="window.location='/ModemDetail?id=@m.Id'">
+                        <td class="px-4 py-3">
+                            @if (m.IsOnline)
+                            {
+                                <span class="badge badge-success">
+                                    <span class="pulse-dot relative" style="width:5px;height:5px;"></span>
+                                    Online
+                                </span>
+                            }
+                            else
+                            {
+                                <span class="badge badge-danger">Offline</span>
+                            }
+                        </td>
+                        <td class="px-4 py-3 font-mono text-[11px] text-gray-600">@m.IMEI</td>
+                        <td class="px-4 py-3 font-medium text-xs">@m.PhoneNumber</td>
+                        <td class="px-4 py-3">
+                            <span class="font-semibold text-xs @(m.Balance > 0 ? "text-brand-600" : "text-gray-300")">@m.Balance.ToString("N2") DA</span>
+                        </td>
+                        <td class="px-4 py-3 text-xs">
+                            @if (m.UserName != null)
+                            {
+                                <span class="badge badge-info">@m.UserName</span>
+                            }
+                            else
+                            {
+                                <span class="text-gray-300">Unassigned</span>
+                            }
+                        </td>
+                        <td class="px-4 py-3 text-right" onclick="event.stopPropagation()">
+                            <div x-data="{ open: false }" class="relative">
+                                <button @@click="open = !open" class="text-gray-300 hover:text-gray-500 p-1">
+                                    <i class="fas fa-ellipsis-v text-xs"></i>
+                                </button>
+                                <div x-show="open" @@click.away="open = false" x-cloak x-transition
+                                     class="absolute right-0 mt-1 w-40 bg-white border border-gray-200 rounded-lg shadow-lg z-10 py-1">
+                                    <a href="/ModemDetail?id=@m.Id" class="flex items-center gap-2 px-3 py-2 text-xs text-gray-600 hover:bg-gray-50">
+                                        <i class="fas fa-eye w-4 text-center"></i> View Details
+                                    </a>
+                                    @if (m.UserId.HasValue)
+                                    {
+                                        <button hx-post="/Modems?handler=Unassign&modemId=@m.Id"
+                                                hx-confirm="Unassign this modem?"
+                                                hx-target="closest tr"
+                                                hx-swap="outerHTML"
+                                                class="flex items-center gap-2 w-full text-left px-3 py-2 text-xs text-red-500 hover:bg-red-50">
+                                            <i class="fas fa-user-minus w-4 text-center"></i> Unassign
+                                        </button>
+                                    }
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    function filterTable() {
+        var input = document.getElementById('searchInput').value.toLowerCase();
+        var rows = document.querySelectorAll('#modemDataTable tbody tr');
+        rows.forEach(function(row) {
+            var text = row.textContent.toLowerCase();
+            row.style.display = text.includes(input) ? '' : 'none';
+        });
+    }
+</script>
