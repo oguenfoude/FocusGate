@@ -31,8 +31,8 @@ public class IndexModel : PageModel
         SimCount = await _db.SimCards.CountAsync(s => s.IsActive);
         TotalSimBalance = (await _db.SimCards.Where(s => s.IsActive).Select(s => s.Balance).ToListAsync()).Sum();
 
-        UserCount = await _db.Users.CountAsync(u => u.ArchivedAt == null);
-        TotalUserBalance = (await _db.Users.Where(u => u.ArchivedAt == null).Select(u => u.Balance).ToListAsync()).Sum();
+        UserCount = await _db.Users.CountAsync(u => u.ArchivedAt == null && u.Role != FocusGate.Core.Enums.UserRole.Admin);
+        TotalUserBalance = (await _db.Users.Where(u => u.ArchivedAt == null && u.Role != FocusGate.Core.Enums.UserRole.Admin).Select(u => u.Balance).ToListAsync()).Sum();
 
         PendingWithdrawals = await _db.WithdrawalRequests.CountAsync(w => w.Status == Core.Enums.WithdrawalStatus.Pending);
 

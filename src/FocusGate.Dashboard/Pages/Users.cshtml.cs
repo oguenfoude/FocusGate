@@ -30,6 +30,7 @@ public class UsersModel : PageModel
             query = _db.Users
                 .IgnoreQueryFilters()
                 .Include(u => u.UserModems.Where(um => um.RemovedAt == null))
+                .Where(u => u.Role != UserRole.Admin)
                 .AsNoTracking();
         }
         else
@@ -37,7 +38,7 @@ public class UsersModel : PageModel
             query = _db.Users
                 .Include(u => u.UserModems.Where(um => um.RemovedAt == null))
                 .AsNoTracking()
-                .Where(u => u.ArchivedAt == null);
+                .Where(u => u.ArchivedAt == null && u.Role != UserRole.Admin);
         }
 
         var users = await query.OrderBy(u => u.Id).ToListAsync();
