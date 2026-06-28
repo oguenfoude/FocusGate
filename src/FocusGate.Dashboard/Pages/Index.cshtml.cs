@@ -51,7 +51,7 @@ public class IndexModel : PageModel
 
         HighBalanceModems = await _db.Modems
             .Include(m => m.SimCards.Where(s => s.IsActive))
-            .Where(m => m.SimCards.Any(s => s.IsActive && s.Balance >= 45000))
+            .Where(m => m.SimCards.Any(s => s.IsActive && s.Balance >= 1000))
             .Select(m => new HighBalanceModemRow
             {
                 Id = m.Id,
