@@ -1,19 +1,19 @@
 @page
 @model FocusGate.Dashboard.Pages.ModemDetailModel
 @{
-    ViewData["Title"] = "Modem Detail";
+    ViewData["Title"] = L["ModemDetail.Title"];
 }
 
 <!-- Back link -->
 <a href="/Modems" class="inline-flex items-center gap-1.5 text-xs text-gray-400 hover:text-brand-500 mb-4 transition-colors">
-    <i class="fas fa-arrow-left"></i> Back to Modems
+    <i class="fas fa-arrow-left"></i> @L["ModemDetail.Back"]
 </a>
 
 @if (Model.Modem == null)
 {
     <div class="card p-12 text-center">
         <i class="fas fa-exclamation-triangle text-gray-300 text-3xl mb-3"></i>
-        <p class="text-gray-400">Modem not found</p>
+        <p class="text-gray-400">@L["ModemDetail.NotFound"]</p>
     </div>
 }
 else
@@ -29,11 +29,11 @@ else
                     <h3 class="text-lg font-bold text-gray-900">@(Model.Sim != null ? Model.Sim.PhoneNumber : Model.Modem.IMEI)</h3>
                     @if (Model.Modem.Status == FocusGate.Core.Enums.ModemStatus.Online)
                     {
-                        <span class="badge badge-success"><span class="pulse-dot relative" style="width:5px;height:5px;"></span> Online</span>
+                        <span class="badge badge-success"><span class="pulse-dot relative" style="width:5px;height:5px;"></span> @L["Common.Online"]</span>
                     }
                     else
                     {
-                        <span class="badge badge-danger">@Model.Modem.Status</span>
+                        <span class="badge badge-danger">@L["Common.Offline"]</span>
                     }
                 </div>
                 <p class="text-xs text-gray-400 mt-1">@Model.Modem.Brand @Model.Modem.Model &middot; @(Model.Modem.ComPort ?? "N/A") &middot; @Model.Modem.MachineId?[..8]</p>
@@ -53,15 +53,15 @@ else
         <div class="flex gap-0 border-b border-gray-200 mb-5">
             <button @@click="tab = 'info'" :class="tab === 'info' ? 'border-brand-500 text-brand-600' : 'border-transparent text-gray-400 hover:text-gray-600'"
                     class="px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px">
-                <i class="fas fa-info-circle mr-1.5"></i> Info
+                <i class="fas fa-info-circle mr-1.5"></i> @L["ModemDetail.InfoTab"]
             </button>
             <button @@click="tab = 'balance'" :class="tab === 'balance' ? 'border-brand-500 text-brand-600' : 'border-transparent text-gray-400 hover:text-gray-600'"
                     class="px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px">
-                <i class="fas fa-chart-line mr-1.5"></i> Balance History
+                <i class="fas fa-chart-line mr-1.5"></i> @L["ModemDetail.BalanceTab"]
             </button>
             <button @@click="tab = 'sms'" :class="tab === 'sms' ? 'border-brand-500 text-brand-600' : 'border-transparent text-gray-400 hover:text-gray-600'"
                     class="px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px">
-                <i class="fas fa-comment mr-1.5"></i> SMS
+                <i class="fas fa-comment mr-1.5"></i> @L["ModemDetail.SmsTab"]
                 <span class="ml-1 text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full">@Model.SmsCount</span>
             </button>
         </div>
@@ -71,7 +71,7 @@ else
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
                 <!-- Modem Info -->
                 <div class="card">
-                    <div class="card-header"><h4 class="text-sm font-semibold text-gray-900">Modem Information</h4></div>
+                    <div class="card-header"><h4 class="text-sm font-semibold text-gray-900">@L["ModemDetail.InfoTitle"]</h4></div>
                     <div class="card-body">
                         <dl class="grid grid-cols-2 gap-4 text-sm">
                             <div>
@@ -83,15 +83,15 @@ else
                                 <dd class="text-sm font-medium mt-1">@(Model.Modem.ComPort ?? "N/A")</dd>
                             </div>
                             <div>
-                                <dt class="text-[11px] text-gray-400 uppercase tracking-wider font-medium">Brand / Model</dt>
+                                <dt class="text-[11px] text-gray-400 uppercase tracking-wider font-medium">@L["Modems.Device"]</dt>
                                 <dd class="text-sm font-medium mt-1">@Model.Modem.Brand @Model.Modem.Model</dd>
                             </div>
                             <div>
-                                <dt class="text-[11px] text-gray-400 uppercase tracking-wider font-medium">Created</dt>
+                                <dt class="text-[11px] text-gray-400 uppercase tracking-wider font-medium">@L["Common.Created"]</dt>
                                 <dd class="text-sm font-medium mt-1">@Model.Modem.CreatedAt.ToLocalTime().ToString("MMM dd, yyyy HH:mm")</dd>
                             </div>
                             <div class="col-span-2">
-                                <dt class="text-[11px] text-gray-400 uppercase tracking-wider font-medium">Machine ID</dt>
+                                <dt class="text-[11px] text-gray-400 uppercase tracking-wider font-medium">@L["ModemDetail.MachineId"]</dt>
                                 <dd class="font-mono text-xs mt-1 text-gray-500 truncate" title="@Model.Modem.MachineId">@Model.Modem.MachineId</dd>
                             </div>
                         </dl>
@@ -102,37 +102,37 @@ else
                 @if (Model.Sim != null)
                 {
                     <div class="card">
-                        <div class="card-header"><h4 class="text-sm font-semibold text-gray-900">SIM Card</h4></div>
+                        <div class="card-header"><h4 class="text-sm font-semibold text-gray-900">@L["ModemDetail.SimCard"]</h4></div>
                         <div class="card-body">
                             <dl class="space-y-3 text-sm">
                                 <div class="flex justify-between">
-                                    <dt class="text-gray-400">IMSI</dt>
+                                    <dt class="text-gray-400">@L["ModemDetail.Imsi"]</dt>
                                     <dd class="font-mono font-medium">@Model.Sim.IMSI</dd>
                                 </div>
                                 <div class="flex justify-between">
-                                    <dt class="text-gray-400">Phone</dt>
+                                    <dt class="text-gray-400">@L["ModemDetail.Phone"]</dt>
                                     <dd class="font-medium">@Model.Sim.PhoneNumber</dd>
                                 </div>
                                 <div class="flex justify-between items-center">
-                                    <dt class="text-gray-400">Balance</dt>
+                                    <dt class="text-gray-400">@L["Common.Balance"]</dt>
                                     <dd class="text-lg font-bold text-brand-600">@Model.Sim.Balance.ToString("N2") DA</dd>
                                 </div>
                                 <div class="flex justify-between">
-                                    <dt class="text-gray-400">Status</dt>
-                                    <dd><span class="badge @(Model.Sim.IsActive ? "badge-success" : "badge-gray")">@(Model.Sim.IsActive ? "Active" : "Inactive")</span></dd>
+                                    <dt class="text-gray-400">@L["Common.Status"]</dt>
+                                    <dd><span class="badge @(Model.Sim.IsActive ? "badge-success" : "badge-gray")">@(Model.Sim.IsActive ? L["Users.Active"] : L["Users.Archived"])</span></dd>
                                 </div>
                                 <div class="flex justify-between">
-                                    <dt class="text-gray-400">First Seen</dt>
+                                    <dt class="text-gray-400">@L["ModemDetail.FirstSeen"]</dt>
                                     <dd class="text-xs">@Model.Sim.FirstSeen.ToLocalTime().ToString("MMM dd, yyyy")</dd>
                                 </div>
                                 <div class="flex justify-between">
-                                    <dt class="text-gray-400">Last Seen</dt>
+                                    <dt class="text-gray-400">@L["Modems.LastSeen"]</dt>
                                     <dd class="text-xs">@Model.Sim.LastSeen.ToLocalTime().ToString("MMM dd, HH:mm")</dd>
                                 </div>
                             </dl>
 
                             <div class="mt-4 pt-4 border-t border-gray-100">
-                                <p class="text-[11px] text-gray-400 uppercase tracking-wider font-medium mb-2">Assigned User</p>
+                                <p class="text-[11px] text-gray-400 uppercase tracking-wider font-medium mb-2">@L["ModemDetail.AssignedUser"]</p>
                                 @if (Model.AssignedUser != null)
                                 {
                                     <div class="flex items-center justify-between">
@@ -150,7 +150,7 @@ else
                                 }
                                 else
                                 {
-                                    <p class="text-xs text-gray-300">No user assigned</p>
+                                    <p class="text-xs text-gray-300">@L["ModemDetail.NoUserAssigned"]</p>
                                 }
                             </div>
                         </div>
@@ -204,7 +204,7 @@ else
                     {
                         <div class="py-12 text-center">
                             <i class="fas fa-chart-line text-gray-200 text-3xl mb-2"></i>
-                            <p class="text-sm text-gray-400">No balance history</p>
+                            <p class="text-sm text-gray-400">@L["Common.NoData"]</p>
                         </div>
                     }
                 </div>
@@ -215,7 +215,7 @@ else
         <div x-show="tab === 'sms'" x-transition>
             <div class="card">
                 <div class="card-header flex items-center justify-between">
-                    <h4 class="text-sm font-semibold text-gray-900">SMS Messages</h4>
+                    <h4 class="text-sm font-semibold text-gray-900">@L["ModemDetail.SmsMessages"]</h4>
                     <span class="text-[11px] text-gray-400">@Model.SmsCount total</span>
                 </div>
                 <div class="max-h-[500px] overflow-y-auto">
@@ -246,14 +246,14 @@ else
                     {
                         <div class="py-12 text-center">
                             <i class="fas fa-comment text-gray-200 text-3xl mb-2"></i>
-                            <p class="text-sm text-gray-400">No SMS records</p>
+                            <p class="text-sm text-gray-400">@L["ModemDetail.NoSms"]</p>
                         </div>
                     }
                 </div>
                 @if (Model.SmsCount > 20)
                 {
                     <div class="px-5 py-2.5 border-t border-gray-100 text-center">
-                        <span class="text-[11px] text-gray-400">Showing 20 of @Model.SmsCount</span>
+                        <span class="text-[11px] text-gray-400">@L["ModemDetail.Showing"] 20 @L["ModemDetail.Of"] @Model.SmsCount</span>
                     </div>
                 }
             </div>
