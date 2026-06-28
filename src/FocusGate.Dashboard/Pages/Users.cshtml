@@ -1,46 +1,51 @@
 @page
 @model FocusGate.Dashboard.Pages.UsersModel
 @{
-    ViewData["Title"] = "Users";
+    ViewData["Title"] = L["Users.Title"];
 }
 
 <!-- Header -->
 <div class="flex items-center justify-between mb-5">
     <div>
-        <p class="text-sm text-gray-400">@Model.Users.Count user(s)</p>
+        <p class="text-sm text-gray-400">@Model.Users.Count @L["Nav.Users"]</p>
     </div>
     <div class="flex items-center gap-3">
         <div class="relative">
             <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-300 text-xs"></i>
-            <input type="text" id="searchInput" placeholder="Search users..."
+            <input type="text" id="searchInput" placeholder="@L["Common.Search"]"
                    class="input pl-9 w-48" onkeyup="filterTable()" />
         </div>
         <label class="flex items-center gap-2 text-xs text-gray-500 cursor-pointer select-none">
             <input type="checkbox" id="showArchived"
-                   hx-get="/Users" hx-trigger="change" hx-target="#userTable"
+                   hx-get="/Users" hx-trigger="change" hx-target="#userTable" hx-select="#userTable" hx-swap="outerHTML"
                    hx-vals="js:{showArchived: document.getElementById('showArchived').checked}"
                    class="rounded border-gray-300 text-brand-500 focus:ring-brand-500 w-3.5 h-3.5" />
-            Archived
+            @L["Users.ShowArchived"]
         </label>
         <button @@click="document.getElementById('addUserModal').classList.remove('hidden')"
                 class="btn btn-primary">
-            <i class="fas fa-plus text-xs"></i> Add User
+            <i class="fas fa-plus text-xs"></i> @L["Users.AddUser"]
         </button>
     </div>
 </div>
 
 <!-- Table -->
-<div id="userTable" class="card overflow-hidden">
+<div id="userTable" class="card overflow-hidden" 
+     hx-get="/Users" 
+     hx-trigger="every 5s" 
+     hx-select="#userTable" 
+     hx-swap="outerHTML" 
+     hx-vals="js:{showArchived: document.getElementById('showArchived') ? document.getElementById('showArchived').checked : false}">
     <div class="overflow-x-auto">
         <table class="w-full text-sm" id="userDataTable">
             <thead>
                 <tr class="border-b border-gray-100">
-                    <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">User</th>
-                    <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Role</th>
-                    <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Balance</th>
-                    <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Modems</th>
-                    <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Status</th>
-                    <th class="px-4 py-3 text-right text-[11px] font-semibold text-gray-400 uppercase tracking-wider w-20">Actions</th>
+                    <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">@L["Common.User"]</th>
+                    <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">@L["Common.Role"]</th>
+                    <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">@L["Common.Balance"]</th>
+                    <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">@L["Users.Modems"]</th>
+                    <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">@L["Common.Status"]</th>
+                    <th class="px-4 py-3 text-right text-[11px] font-semibold text-gray-400 uppercase tracking-wider w-20">@L["Common.Actions"]</th>
                 </tr>
             </thead>
             <tbody class="divide-y divide-gray-50">
@@ -65,15 +70,15 @@
                         <td class="px-4 py-3">
                             <span class="font-semibold text-sm @(u.Balance > 0 ? "text-brand-600" : "text-gray-300")">@u.Balance.ToString("N2") DA</span>
                         </td>
-                        <td class="px-4 py-3 text-gray-500 text-xs">@u.ModemCount assigned</td>
+                        <td class="px-4 py-3 text-gray-500 text-xs">@u.ModemCount @L["Modems.Assigned"]</td>
                         <td class="px-4 py-3">
                             @if (u.IsArchived)
                             {
-                                <span class="badge badge-gray">Archived</span>
+                                <span class="badge badge-gray">@L["Users.Archived"]</span>
                             }
                             else
                             {
-                                <span class="badge badge-success">Active</span>
+                                <span class="badge badge-success">@L["Users.Active"]</span>
                             }
                         </td>
                         <td class="px-4 py-3 text-right">
@@ -85,19 +90,17 @@
                                 {
                                     <button hx-post="/Users?handler=Restore&userId=@u.Id"
                                             hx-confirm="Restore this user?"
-                                            hx-target="closest tr"
-                                            hx-swap="outerHTML"
-                                            class="p-1.5 text-brand-400 hover:text-brand-600 rounded transition-colors" title="Restore">
+                                            hx-swap="none"
+                                            class="p-1.5 text-brand-400 hover:text-brand-600 rounded transition-colors" title="@L["Users.Restore"]">
                                         <i class="fas fa-undo text-xs"></i>
                                     </button>
                                 }
-                                else
+                                else if (u.Role != "Admin")
                                 {
                                     <button hx-post="/Users?handler=Archive&userId=@u.Id"
                                             hx-confirm="Archive this user?"
-                                            hx-target="closest tr"
-                                            hx-swap="outerHTML"
-                                            class="p-1.5 text-red-300 hover:text-red-500 rounded transition-colors" title="Archive">
+                                            hx-swap="none"
+                                            class="p-1.5 text-red-300 hover:text-red-500 rounded transition-colors" title="@L["Users.Archive"]">
                                         <i class="fas fa-archive text-xs"></i>
                                     </button>
                                 }
@@ -112,36 +115,25 @@
 
 <!-- Add User Modal -->
 <div id="addUserModal" class="hidden fixed inset-0 z-50 modal-overlay flex items-center justify-center p-4">
-    <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm" @@click.away="document.getElementById('addUserModal').classList.add('hidden')">
+    <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm">
         <div class="px-5 py-4 border-b border-gray-100">
-            <h3 class="text-base font-semibold text-gray-900">Add User</h3>
+            <h3 class="text-base font-semibold text-gray-900">@L["Users.AddUser"]</h3>
         </div>
         <form hx-post="/Users?handler=AddUser"
-              hx-target="#userTable"
-              hx-swap="innerHTML"
+              hx-swap="none"
+              hx-on::after-request="if(event.detail.successful){ document.getElementById('addUserModal').classList.add('hidden'); this.reset(); }"
               class="p-5 space-y-4">
             <div>
-                <label class="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Username *</label>
-                <input type="text" name="username" required class="input" placeholder="e.g. john" />
+                <label class="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">@L["Common.Username"] *</label>
+                <input type="text" name="username" required autocomplete="off" class="input" placeholder="e.g. john" />
             </div>
             <div>
-                <label class="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Password *</label>
-                <input type="password" name="password" required class="input" placeholder="Min 4 characters" />
-            </div>
-            <div>
-                <label class="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Display Name</label>
-                <input type="text" name="displayName" class="input" placeholder="Optional" />
-            </div>
-            <div>
-                <label class="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Role *</label>
-                <select name="role" required class="input">
-                    <option value="User">User</option>
-                    <option value="Admin">Admin</option>
-                </select>
+                <label class="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">@L["Common.Password"] *</label>
+                <input type="password" name="password" required autocomplete="new-password" class="input" placeholder="Enter password" />
             </div>
             <div class="flex gap-3 pt-2">
-                <button type="submit" class="btn btn-primary flex-1">Create User</button>
-                <button type="button" onclick="document.getElementById('addUserModal').classList.add('hidden')" class="btn btn-outline">Cancel</button>
+                <button type="submit" class="btn btn-primary flex-1">@L["Users.CreateUser"]</button>
+                <button type="button" onclick="document.getElementById('addUserModal').classList.add('hidden')" class="btn btn-outline">@L["Common.Cancel"]</button>
             </div>
         </form>
     </div>
@@ -157,3 +149,4 @@
         });
     }
 </script>
+

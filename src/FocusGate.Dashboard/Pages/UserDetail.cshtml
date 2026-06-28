@@ -78,14 +78,13 @@ else
                                             <i class="fas fa-signal text-xs"></i>
                                         </div>
                                         <div class="min-w-0">
-                                            <p class="text-sm font-medium font-mono text-gray-900 truncate">@m.Imei</p>
-                                            <p class="text-[11px] text-gray-400">@m.PhoneNumber &middot; @m.Balance.ToString("N2") DA</p>
+                                            <p class="text-sm font-medium text-gray-900 truncate">@m.PhoneNumber</p>
+                                            <p class="text-[11px] font-mono text-gray-400">IMEI: @m.Imei &middot; @m.Balance.ToString("N2") DA</p>
                                         </div>
                                     </a>
                                     <button hx-post="/UserDetail?handler=UnassignModem&modemId=@m.ModemId&userId=@Model.User.Id"
                                             hx-confirm="Unassign this modem?"
-                                            hx-target="body"
-                                            hx-swap="innerHTML"
+                                            hx-swap="none"
                                             class="p-2 text-red-300 hover:text-red-500 rounded-lg hover:bg-red-50 transition-colors">
                                         <i class="fas fa-times text-xs"></i>
                                     </button>
@@ -105,14 +104,14 @@ else
                     <div class="pt-4 border-t border-gray-100">
                         <p class="text-[11px] text-gray-400 uppercase tracking-wider font-medium mb-2">Assign New Modem</p>
                         <form hx-post="/UserDetail?handler=AssignModem&userId=@Model.User.Id"
-                              hx-target="body"
-                              hx-swap="innerHTML"
+                              hx-swap="none"
+                              hx-on::after-request="if(event.detail.successful){ this.reset(); }"
                               class="flex gap-2">
                             <select name="modemId" required class="input flex-1">
                                 <option value="">Select modem...</option>
                                 @foreach (var m in Model.AvailableModems)
                                 {
-                                    <option value="@m.Id">@m.Imei - @m.PhoneNumber</option>
+                                    <option value="@m.Id">@m.PhoneNumber (IMEI: @m.Imei)</option>
                                 }
                             </select>
                             <button type="submit" class="btn btn-primary">Assign</button>
@@ -196,8 +195,8 @@ else
                 <h3 class="text-base font-semibold text-gray-900">Withdrawal Request</h3>
             </div>
             <form hx-post="/UserDetail?handler=CreateWithdrawal&userId=@Model.User.Id"
-                  hx-target="body"
-                  hx-swap="innerHTML"
+                  hx-swap="none"
+                  hx-on::after-request="if(event.detail.successful){ document.getElementById('withdrawalModal').classList.add('hidden'); this.reset(); }"
                   class="p-5 space-y-4">
                 <div>
                     <label class="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Amount (DZD) *</label>
@@ -216,3 +215,4 @@ else
         </div>
     </div>
 }
+

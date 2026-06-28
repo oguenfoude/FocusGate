@@ -1,5 +1,11 @@
+@{
+    var requestCulture = Context.Features.Get<IRequestCultureFeature>();
+    var currentCulture = requestCulture?.RequestCulture.Culture.TwoLetterISOLanguageName ?? "en";
+    var isRtl = currentCulture == "ar";
+    var returnUrl = Context.Request.Path + Context.Request.QueryString;
+}
 <!DOCTYPE html>
-<html lang="en">
+<html lang="@currentCulture" dir="@(isRtl ? "rtl" : "ltr")">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -26,6 +32,7 @@
         .sidebar-link:hover { background: rgba(255,255,255,0.08); }
         .sidebar-link.active { background: rgba(16,185,129,0.15); color: #34d399; }
         .sidebar-link.active::before { content:''; position:absolute; left:0; top:6px; bottom:6px; width:3px; border-radius:0 3px 3px 0; background:#10b981; }
+        [dir="rtl"] .sidebar-link.active::before { left:auto; right:0; border-radius:3px 0 0 3px; }
         .card { background:#fff; border-radius:12px; border:1px solid #e5e7eb; box-shadow:0 1px 3px rgba(0,0,0,0.04); }
         .card-header { padding:16px 20px; border-bottom:1px solid #f3f4f6; }
         .card-body { padding:20px; }
@@ -62,16 +69,18 @@
         ::-webkit-scrollbar-track { background:transparent; }
         ::-webkit-scrollbar-thumb { background:#d1d5db; border-radius:3px; }
         ::-webkit-scrollbar-thumb:hover { background:#9ca3af; }
+        /* Arabic font support */
+        [lang="ar"] { font-family: 'Segoe UI', 'Tahoma', sans-serif; }
     </style>
 </head>
 <body class="bg-gray-50 text-gray-900 min-h-screen flex" x-data="{ sidebarOpen: true }">
     <!-- Sidebar -->
-    <aside class="w-64 bg-sidebar text-white flex flex-col min-h-screen fixed z-30 transition-all duration-200"
-           :class="sidebarOpen ? 'translate-x-0' : '-translate-x-64'">
+    <aside class="w-64 bg-sidebar text-white flex flex-col min-h-screen fixed z-30 transition-all duration-200 @(isRtl ? "right-0" : "left-0")"
+           :class="sidebarOpen ? 'translate-x-0' : '@(isRtl ? "translate-x-64" : "-translate-x-64")'">
         <!-- Logo -->
         <div class="px-5 py-5 border-b border-sidebar-border">
             <div class="flex items-center gap-3">
-                <div class="w-9 h-9 bg-brand-500 rounded-lg flex items-center justify-center">
+                <div class="w-9 h-9 bg-brand-500 rounded-lg flex items-center justify-center flex-shrink-0">
                     <i class="fas fa-tower-broadcast text-white text-sm"></i>
                 </div>
                 <div>
@@ -90,24 +99,36 @@
                 var isUser = page.StartsWith("/User");
                 var isWithdrawal = page == "/Withdrawals";
             }
-
             <a href="/" class="sidebar-link relative flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium @(isHome ? "active" : "text-slate-300")">
                 <i class="fas fa-chart-pie w-5 text-center text-[13px]"></i>
-                Dashboard
+                @L["Nav.Dashboard"]
             </a>
             <a href="/Modems" class="sidebar-link relative flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium @(isModem ? "active" : "text-slate-300")">
                 <i class="fas fa-signal w-5 text-center text-[13px]"></i>
-                Modems
+                @L["Nav.Modems"]
             </a>
             <a href="/Users" class="sidebar-link relative flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium @(isUser ? "active" : "text-slate-300")">
                 <i class="fas fa-users w-5 text-center text-[13px]"></i>
-                Users
+                @L["Nav.Users"]
             </a>
             <a href="/Withdrawals" class="sidebar-link relative flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium @(isWithdrawal ? "active" : "text-slate-300")">
                 <i class="fas fa-money-bill-wave w-5 text-center text-[13px]"></i>
-                Withdrawals
+                @L["Nav.Withdrawals"]
             </a>
         </nav>
+
+        <!-- Language Switcher -->
+        <div class="px-3 py-4 border-t border-sidebar-border">
+            <p class="text-[10px] text-slate-500 uppercase tracking-wider mb-2 px-1">Language</p>
+            <div class="flex gap-1.5">
+                <a href="/SetLanguage?culture=en&returnUrl=@Uri.EscapeDataString(returnUrl)"
+                   class="flex-1 text-center py-1.5 rounded-lg text-xs font-medium transition-colors @(currentCulture == "en" ? "bg-brand-500 text-white" : "text-slate-400 hover:bg-sidebar-light")">EN</a>
+                <a href="/SetLanguage?culture=fr&returnUrl=@Uri.EscapeDataString(returnUrl)"
+                   class="flex-1 text-center py-1.5 rounded-lg text-xs font-medium transition-colors @(currentCulture == "fr" ? "bg-brand-500 text-white" : "text-slate-400 hover:bg-sidebar-light")">FR</a>
+                <a href="/SetLanguage?culture=ar&returnUrl=@Uri.EscapeDataString(returnUrl)"
+                   class="flex-1 text-center py-1.5 rounded-lg text-xs font-medium transition-colors @(currentCulture == "ar" ? "bg-brand-500 text-white" : "text-slate-400 hover:bg-sidebar-light")">عر</a>
+            </div>
+        </div>
 
         <!-- Footer -->
         <div class="px-5 py-4 border-t border-sidebar-border">
@@ -119,7 +140,7 @@
     </aside>
 
     <!-- Main Content -->
-    <div class="flex-1 ml-64 min-h-screen">
+    <div class="flex-1 min-h-screen @(isRtl ? "mr-64" : "ml-64")">
         <!-- Top Header -->
         <header class="bg-white border-b border-gray-200 px-6 py-3 sticky top-0 z-20">
             <div class="flex items-center justify-between">
@@ -145,8 +166,16 @@
 
         <!-- Page Content -->
         <div class="p-6 page-enter">
+            @Html.AntiForgeryToken()
             @RenderBody()
         </div>
     </div>
+    <script>
+        document.body.addEventListener('htmx:configRequest', function(evt) {
+            var token = document.querySelector('input[name="__RequestVerificationToken"]');
+            if (token) evt.detail.headers['RequestVerificationToken'] = token.value;
+        });
+    </script>
 </body>
 </html>
+

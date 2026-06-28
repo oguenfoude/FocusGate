@@ -1,7 +1,31 @@
 @page
 @model FocusGate.Dashboard.Pages.IndexModel
 @{
-    ViewData["Title"] = "Dashboard";
+    ViewData["Title"] = L["Dashboard.Title"];
+}
+
+<div id="dashboardContent" hx-get="/" hx-trigger="every 5s" hx-select="#dashboardContent" hx-swap="outerHTML">
+
+<!-- High Balance Warnings -->
+@if (Model.HighBalanceModems.Any())
+{
+    <div class="mb-6 space-y-3">
+        @foreach (var modem in Model.HighBalanceModems)
+        {
+            <a href="/ModemDetail?id=@modem.Id" class="block">
+                <div class="bg-red-50 border border-red-200 text-red-800 rounded-lg p-4 flex items-center justify-between hover:bg-red-100 transition-colors shadow-sm">
+                    <div class="flex items-center gap-3">
+                        <i class="fas fa-exclamation-triangle text-red-500 text-xl"></i>
+                        <div>
+                            <h4 class="text-sm font-bold">@L["Dashboard.HighBalanceWarning"]</h4>
+                            <p class="text-xs text-red-600 mt-0.5">SIM <span class="font-bold">@modem.PhoneNumber</span> — <span class="font-bold">@modem.Balance.ToString("N0") DA</span></p>
+                        </div>
+                    </div>
+                    <i class="fas fa-chevron-right text-red-400"></i>
+                </div>
+            </a>
+        }
+    </div>
 }
 
 <!-- Summary Cards -->
@@ -11,11 +35,11 @@
         <div class="card-body">
             <div class="flex items-start justify-between">
                 <div>
-                    <p class="text-xs font-medium text-gray-400 uppercase tracking-wider">Modems</p>
+                    <p class="text-xs font-medium text-gray-400 uppercase tracking-wider">@L["Nav.Modems"]</p>
                     <p class="text-3xl font-bold text-gray-900 mt-2">@Model.ModemsOnline<span class="text-lg text-gray-300 font-normal">/@Model.ModemsTotal</span></p>
                     <div class="flex items-center gap-1.5 mt-2">
                         <span class="pulse-dot relative" style="width:6px;height:6px;"></span>
-                        <span class="text-xs text-brand-600 font-medium">@Model.ModemsOnline online</span>
+                        <span class="text-xs text-brand-600 font-medium">@Model.ModemsOnline @L["Common.Online"]</span>
                     </div>
                 </div>
                 <div class="w-11 h-11 bg-brand-50 rounded-xl flex items-center justify-center flex-shrink-0">
@@ -30,9 +54,9 @@
         <div class="card-body">
             <div class="flex items-start justify-between">
                 <div>
-                    <p class="text-xs font-medium text-gray-400 uppercase tracking-wider">SIM Balance</p>
+                    <p class="text-xs font-medium text-gray-400 uppercase tracking-wider">@L["Dashboard.TotalBalance"]</p>
                     <p class="text-3xl font-bold text-gray-900 mt-2">@Model.TotalSimBalance.ToString("N0")</p>
-                    <p class="text-xs text-gray-400 mt-2">@Model.SimCount SIMs &middot; DZD</p>
+                    <p class="text-xs text-gray-400 mt-2">@Model.SimCount @L["Dashboard.SIMs"] &middot; DZD</p>
                 </div>
                 <div class="w-11 h-11 bg-blue-50 rounded-xl flex items-center justify-center flex-shrink-0">
                     <i class="fas fa-wallet text-blue-500"></i>
@@ -46,9 +70,9 @@
         <div class="card-body">
             <div class="flex items-start justify-between">
                 <div>
-                    <p class="text-xs font-medium text-gray-400 uppercase tracking-wider">User Wallets</p>
+                    <p class="text-xs font-medium text-gray-400 uppercase tracking-wider">@L["Dashboard.UserWallets"]</p>
                     <p class="text-3xl font-bold text-gray-900 mt-2">@Model.TotalUserBalance.ToString("N0")</p>
-                    <p class="text-xs text-gray-400 mt-2">@Model.UserCount users &middot; DZD</p>
+                    <p class="text-xs text-gray-400 mt-2">@Model.UserCount @L["Dashboard.Users"] &middot; DZD</p>
                 </div>
                 <div class="w-11 h-11 bg-purple-50 rounded-xl flex items-center justify-center flex-shrink-0">
                     <i class="fas fa-users text-purple-500"></i>
@@ -62,9 +86,9 @@
         <div class="card-body">
             <div class="flex items-start justify-between">
                 <div>
-                    <p class="text-xs font-medium text-gray-400 uppercase tracking-wider">Pending</p>
+                    <p class="text-xs font-medium text-gray-400 uppercase tracking-wider">@L["Dashboard.PendingRequests"]</p>
                     <p class="text-3xl font-bold @(Model.PendingWithdrawals > 0 ? "text-amber-500" : "text-gray-900") mt-2">@Model.PendingWithdrawals</p>
-                    <p class="text-xs text-gray-400 mt-2">withdrawal requests</p>
+                    <p class="text-xs text-gray-400 mt-2">@L["Dashboard.WithdrawalRequests"]</p>
                 </div>
                 <div class="w-11 h-11 bg-amber-50 rounded-xl flex items-center justify-center flex-shrink-0">
                     <i class="fas fa-clock text-amber-500"></i>
@@ -82,8 +106,8 @@
                 <i class="fas fa-signal text-brand-500 text-sm"></i>
             </div>
             <div>
-                <p class="text-sm font-semibold text-gray-900">View Modems</p>
-                <p class="text-xs text-gray-400">@Model.ModemsTotal devices connected</p>
+                <p class="text-sm font-semibold text-gray-900">@L["Dashboard.ViewModems"]</p>
+                <p class="text-xs text-gray-400">@Model.ModemsTotal @L["Dashboard.DevicesConnected"]</p>
             </div>
             <i class="fas fa-chevron-right text-gray-300 ml-auto group-hover:text-brand-400 transition-colors text-xs"></i>
         </div>
@@ -94,8 +118,8 @@
                 <i class="fas fa-user-plus text-purple-500 text-sm"></i>
             </div>
             <div>
-                <p class="text-sm font-semibold text-gray-900">Manage Users</p>
-                <p class="text-xs text-gray-400">@Model.UserCount active users</p>
+                <p class="text-sm font-semibold text-gray-900">@L["Dashboard.ManageUsers"]</p>
+                <p class="text-xs text-gray-400">@Model.UserCount @L["Dashboard.ActiveUsers"]</p>
             </div>
             <i class="fas fa-chevron-right text-gray-300 ml-auto group-hover:text-purple-400 transition-colors text-xs"></i>
         </div>
@@ -106,8 +130,8 @@
                 <i class="fas fa-money-bill-wave text-amber-500 text-sm"></i>
             </div>
             <div>
-                <p class="text-sm font-semibold text-gray-900">Withdrawals</p>
-                <p class="text-xs text-gray-400">@Model.PendingWithdrawals pending requests</p>
+                <p class="text-sm font-semibold text-gray-900">@L["Nav.Withdrawals"]</p>
+                <p class="text-xs text-gray-400">@Model.PendingWithdrawals @L["Dashboard.PendingRequests2"]</p>
             </div>
             <i class="fas fa-chevron-right text-gray-300 ml-auto group-hover:text-amber-400 transition-colors text-xs"></i>
         </div>
@@ -117,17 +141,17 @@
 <!-- Recent SMS -->
 <div class="card">
     <div class="card-header flex items-center justify-between">
-        <h3 class="text-sm font-semibold text-gray-900">Recent SMS</h3>
+        <h3 class="text-sm font-semibold text-gray-900">@L["Dashboard.RecentSMS"]</h3>
         <span class="text-xs text-gray-400">@Model.RecentSms.Count messages</span>
     </div>
     <div class="overflow-x-auto">
         <table class="w-full text-sm">
             <thead>
                 <tr class="border-b border-gray-100">
-                    <th class="px-5 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Time</th>
-                    <th class="px-5 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Sender</th>
-                    <th class="px-5 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Content</th>
-                    <th class="px-5 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Modem</th>
+                    <th class="px-5 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">@L["Dashboard.Time"]</th>
+                    <th class="px-5 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">@L["Dashboard.Sender"]</th>
+                    <th class="px-5 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">@L["Dashboard.Content"]</th>
+                    <th class="px-5 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">@L["Dashboard.Modem"]</th>
                 </tr>
             </thead>
             <tbody class="divide-y divide-gray-50">
@@ -146,7 +170,7 @@
                                 </div>
                             </td>
                             <td class="px-5 py-3 text-gray-500 max-w-xs truncate text-xs">@sms.Content</td>
-                            <td class="px-5 py-3 text-gray-400 font-mono text-[11px]">@(sms.ModemImei?[^4..] ?? "N/A")</td>
+                            <td class="px-5 py-3 text-gray-400 text-[11px]">@(sms.PhoneNumber ?? sms.ModemImei?[^4..] ?? "N/A")</td>
                         </tr>
                     }
                 }
@@ -155,7 +179,7 @@
                     <tr>
                         <td colspan="4" class="px-5 py-12 text-center">
                             <i class="fas fa-inbox text-gray-300 text-2xl mb-2"></i>
-                            <p class="text-sm text-gray-400">No SMS received yet</p>
+                            <p class="text-sm text-gray-400">@L["Common.NoData"]</p>
                         </td>
                     </tr>
                 }
@@ -163,3 +187,6 @@
         </table>
     </div>
 </div>
+
+</div>
+

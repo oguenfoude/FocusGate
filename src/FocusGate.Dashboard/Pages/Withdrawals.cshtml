@@ -1,108 +1,134 @@
 @page
 @model FocusGate.Dashboard.Pages.WithdrawalsModel
 @{
-    ViewData["Title"] = "Withdrawals";
+    ViewData["Title"] = L["Withdrawals.Title"];
+    var currentStatus = HttpContext.Request.Query["status"].ToString();
+    var pendingCount   = Model.AllRequests.Count(r => r.Status == "Pending");
+    var approvedCount  = Model.AllRequests.Count(r => r.Status == "Approved");
+    var rejectedCount  = Model.AllRequests.Count(r => r.Status == "Rejected");
 }
 
 <!-- Header -->
 <div class="flex items-center justify-between mb-5">
-    <div>
-        <p class="text-sm text-gray-400">@Model.Requests.Count request(s)</p>
+    <div class="flex items-center gap-2">
+        <span class="text-sm text-gray-400">@Model.Requests.Count @L["Dashboard.WithdrawalRequests"]</span>
+        @if (pendingCount > 0)
+        {
+            <span class="badge badge-warning text-[11px]"><i class="fas fa-clock text-[9px]"></i> @pendingCount @L["Withdrawals.Pending"]</span>
+        }
     </div>
-    <select id="statusFilter"
-            hx-get="/Withdrawals" hx-trigger="change" hx-target="#withdrawalTable"
-            hx-vals="js:{status: document.getElementById('statusFilter').value}"
-            class="input w-40">
-        <option value="">All Status</option>
-        <option value="Pending">Pending</option>
-        <option value="Approved">Approved</option>
-        <option value="Rejected">Rejected</option>
-    </select>
+    <div class="relative">
+        <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-300 text-xs"></i>
+        <input type="text" id="searchInput" placeholder="@L["Common.Search"]"
+               class="input pl-9 w-52 text-sm" onkeyup="filterTable()" />
+    </div>
 </div>
 
-<!-- Table -->
-<div id="withdrawalTable" class="card overflow-hidden">
-    <div class="overflow-x-auto">
-        <table class="w-full text-sm">
-            <thead>
-                <tr class="border-b border-gray-100">
-                    <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">User</th>
-                    <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Amount</th>
-                    <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Status</th>
-                    <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Requested</th>
-                    <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Note</th>
-                    <th class="px-4 py-3 text-right text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Actions</th>
-                </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-50">
-                @if (Model.Requests.Any())
-                {
-                    @foreach (var r in Model.Requests)
-                    {
-                        <tr class="table-row">
-                            <td class="px-4 py-3">
-                                <a href="/UserDetail?id=@r.UserId" class="flex items-center gap-2 group">
-                                    <div class="w-7 h-7 bg-brand-50 text-brand-600 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 group-hover:bg-brand-100 transition-colors">
-                                        @r.Username[0]
-                                    </div>
-                                    <span class="text-sm font-medium text-gray-900 group-hover:text-brand-600 transition-colors">@r.Username</span>
-                                </a>
-                            </td>
-                            <td class="px-4 py-3 font-semibold text-sm">@r.Amount.ToString("N2") DA</td>
-                            <td class="px-4 py-3">
-                                @if (r.Status == "Pending")
-                                {
-                                    <span class="badge badge-warning">Pending</span>
-                                }
-                                else if (r.Status == "Approved")
-                                {
-                                    <span class="badge badge-success">Approved</span>
-                                }
-                                else
-                                {
-                                    <span class="badge badge-danger">Rejected</span>
-                                }
-                            </td>
-                            <td class="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">@r.RequestedAt.ToLocalTime().ToString("MMM dd, HH:mm")</td>
-                            <td class="px-4 py-3 text-gray-400 text-xs max-w-[200px] truncate">@(r.Note ?? "-")</td>
-                            <td class="px-4 py-3 text-right">
-                                @if (r.Status == "Pending")
-                                {
-                                    <div class="flex items-center justify-end gap-1.5">
-                                        <button hx-post="/Withdrawals?handler=Approve&id=@r.Id"
-                                                hx-confirm="Approve this withdrawal? Balance will be deducted."
-                                                hx-target="closest tr"
-                                                hx-swap="outerHTML"
-                                                class="btn btn-primary btn-sm">
-                                            <i class="fas fa-check text-[10px]"></i> Approve
-                                        </button>
-                                        <button hx-post="/Withdrawals?handler=Reject&id=@r.Id"
-                                                hx-confirm="Reject this withdrawal?"
-                                                hx-target="closest tr"
-                                                hx-swap="outerHTML"
-                                                class="btn btn-danger btn-sm">
-                                            <i class="fas fa-times text-[10px]"></i> Reject
-                                        </button>
-                                    </div>
-                                }
-                                else
-                                {
-                                    <span class="text-[11px] text-gray-300">@(r.ProcessedAt?.ToLocalTime().ToString("MMM dd, HH:mm") ?? "")</span>
-                                }
-                            </td>
+<!-- Filter Tabs -->
+<div id="withdrawalTable" hx-get="?status=@currentStatus" hx-trigger="every 5s" hx-select="#withdrawalTable" hx-swap="outerHTML">
+    <div class="flex items-center gap-2 mb-4">
+        <a href="/Withdrawals" class="px-4 py-1.5 rounded-full text-xs font-medium transition-colors @(string.IsNullOrEmpty(currentStatus) ? "bg-gray-900 text-white" : "bg-white text-gray-500 border border-gray-200 hover:border-gray-300")">@L["Common.All"] (@Model.AllRequests.Count)</a>
+        <a href="/Withdrawals?status=Pending" class="px-4 py-1.5 rounded-full text-xs font-medium transition-colors @(currentStatus == "Pending" ? "bg-amber-500 text-white" : "bg-white text-gray-500 border border-gray-200 hover:border-gray-300")">@L["Withdrawals.Pending"] (@pendingCount)</a>
+        <a href="/Withdrawals?status=Approved" class="px-4 py-1.5 rounded-full text-xs font-medium transition-colors @(currentStatus == "Approved" ? "bg-brand-500 text-white" : "bg-white text-gray-500 border border-gray-200 hover:border-gray-300")">@L["Withdrawals.Approved"] (@approvedCount)</a>
+        <a href="/Withdrawals?status=Rejected" class="px-4 py-1.5 rounded-full text-xs font-medium transition-colors @(currentStatus == "Rejected" ? "bg-red-500 text-white" : "bg-white text-gray-500 border border-gray-200 hover:border-gray-300")">@L["Withdrawals.Rejected"] (@rejectedCount)</a>
+    </div>
+
+    <!-- Table -->
+    <div class="card overflow-hidden">
+        @if (Model.Requests.Any())
+        {
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm" id="withdrawalDataTable">
+                    <thead>
+                        <tr class="border-b border-gray-100 bg-gray-50/50">
+                            <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">@L["Common.User"]</th>
+                            <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">@L["Common.Amount"]</th>
+                            <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">@L["Common.Status"]</th>
+                            <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">@L["Withdrawals.Requested"]</th>
+                            <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">@L["Withdrawals.Processed"]</th>
+                            <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">@L["Common.Note"]</th>
+                            <th class="px-4 py-3 text-right text-[11px] font-semibold text-gray-400 uppercase tracking-wider w-36">@L["Common.Actions"]</th>
                         </tr>
-                    }
-                }
-                else
+                    </thead>
+                    <tbody class="divide-y divide-gray-50">
+                        @foreach (var r in Model.Requests)
+                        {
+                            <tr class="table-row">
+                                <td class="px-4 py-3.5">
+                                    <a href="/UserDetail?id=@r.UserId" class="flex items-center gap-2 group">
+                                        <div class="w-7 h-7 bg-brand-50 text-brand-600 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 group-hover:bg-brand-100 transition-colors">@r.Username[0]</div>
+                                        <span class="font-medium text-gray-900 group-hover:text-brand-600 transition-colors">@r.Username</span>
+                                    </a>
+                                </td>
+                                <td class="px-4 py-3.5">
+                                    <span class="font-bold text-gray-900">@r.Amount.ToString("N2")</span>
+                                    <span class="text-xs text-gray-400 ml-1">DA</span>
+                                </td>
+                                <td class="px-4 py-3.5">
+                                    @if (r.Status == "Pending")
+                                    {
+                                        <span class="badge badge-warning">⏳ @L["Withdrawals.Pending"]</span>
+                                    }
+                                    else if (r.Status == "Approved")
+                                    {
+                                        <span class="badge badge-success">✓ @L["Withdrawals.Approved"]</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge badge-danger">✕ @L["Withdrawals.Rejected"]</span>
+                                    }
+                                </td>
+                                <td class="px-4 py-3.5 text-xs text-gray-400 whitespace-nowrap">@r.RequestedAt.ToLocalTime().ToString("MMM dd, HH:mm")</td>
+                                <td class="px-4 py-3.5 text-xs text-gray-400 whitespace-nowrap">
+                                    @(r.ProcessedAt?.ToLocalTime().ToString("MMM dd, HH:mm") ?? "—")
+                                </td>
+                                <td class="px-4 py-3.5 text-xs text-gray-400 max-w-[160px] truncate" title="@r.Note">@(r.Note ?? "—")</td>
+                                <td class="px-4 py-3.5 text-right">
+                                    @if (r.Status == "Pending")
+                                    {
+                                        <div class="flex items-center justify-end gap-1.5">
+                                            <button hx-post="/Withdrawals?handler=Approve&id=@r.Id"
+                                                    hx-confirm="Approve @r.Amount.ToString("N2") DA for @r.Username?"
+                                                    hx-swap="none"
+                                                    class="btn btn-primary btn-sm">
+                                                <i class="fas fa-check text-[10px]"></i> @L["Withdrawals.Approve"]
+                                            </button>
+                                            <button hx-post="/Withdrawals?handler=Reject&id=@r.Id"
+                                                    hx-confirm="Reject this withdrawal?"
+                                                    hx-swap="none"
+                                                    class="btn btn-danger btn-sm">
+                                                <i class="fas fa-times text-[10px]"></i> @L["Withdrawals.Reject"]
+                                            </button>
+                                        </div>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        else
+        {
+            <div class="py-16 text-center">
+                <i class="fas fa-money-bill-wave text-gray-200 text-4xl mb-3"></i>
+                <p class="text-sm text-gray-400 mt-2">@L["Common.NoData"]</p>
+                @if (!string.IsNullOrEmpty(currentStatus))
                 {
-                    <tr>
-                        <td colspan="6" class="px-5 py-12 text-center">
-                            <i class="fas fa-money-bill-wave text-gray-200 text-3xl mb-2"></i>
-                            <p class="text-sm text-gray-400">No withdrawal requests</p>
-                        </td>
-                    </tr>
+                    <a href="/Withdrawals" class="text-xs text-brand-500 hover:underline mt-1 inline-block">@L["Common.ClearFilter"]</a>
                 }
-            </tbody>
-        </table>
+            </div>
+        }
     </div>
 </div>
+
+<script>
+    function filterTable() {
+        var input = document.getElementById('searchInput').value.toLowerCase();
+        var rows = document.querySelectorAll('#withdrawalDataTable tbody tr');
+        rows.forEach(function(row) {
+            row.style.display = row.textContent.toLowerCase().includes(input) ? '' : 'none';
+        });
+    }
+</script>
+

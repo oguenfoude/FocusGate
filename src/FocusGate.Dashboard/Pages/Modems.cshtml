@@ -1,103 +1,196 @@
 @page
 @model FocusGate.Dashboard.Pages.ModemsModel
 @{
-    ViewData["Title"] = "Modems";
+    ViewData["Title"] = L["Modems.Title"];
+    var currentStatus  = HttpContext.Request.Query["status"].ToString();
+    var onlineCount    = Model.AllModems.Count(m => m.IsOnline);
+    var offlineCount   = Model.AllModems.Count(m => !m.IsOnline);
+    var assignedCount  = Model.AllModems.Count(m => m.UserId.HasValue);
+    var freeCount      = Model.AllModems.Count(m => !m.UserId.HasValue);
 }
 
 <!-- Header -->
 <div class="flex items-center justify-between mb-5">
-    <div>
-        <p class="text-sm text-gray-400">@Model.Modems.Count modem(s) found</p>
+    <div class="flex items-center gap-2 flex-wrap">
+        <span class="text-sm text-gray-400">@Model.Modems.Count @L["Nav.Modems"]</span>
+        @if (onlineCount > 0)
+        {
+            <span class="badge badge-success"><span class="pulse-dot relative" style="width:5px;height:5px;"></span>@onlineCount @L["Common.Online"]</span>
+        }
+        @if (assignedCount > 0)
+        {
+            <span class="badge badge-info"><i class="fas fa-user text-[9px]"></i>@assignedCount @L["Modems.Assigned"]</span>
+        }
     </div>
-    <div class="flex items-center gap-3">
-        <div class="relative">
-            <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-300 text-xs"></i>
-            <input type="text" id="searchInput" placeholder="Search IMEI, phone..."
-                   class="input pl-9 w-56" onkeyup="filterTable()" />
-        </div>
-        <select id="statusFilter" hx-get="/Modems" hx-trigger="change" hx-target="#modemTable"
-                hx-vals="js:{status: document.getElementById('statusFilter').value}"
-                class="input w-36">
-            <option value="">All Status</option>
-            <option value="online">Online</option>
-            <option value="offline">Offline</option>
-        </select>
+    <div class="relative">
+        <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-300 text-xs"></i>
+        <input type="text" id="searchInput" placeholder="@L["Common.Search"]"
+               class="input pl-9 w-56 text-sm" onkeyup="filterTable()" />
     </div>
 </div>
 
-<!-- Table -->
-<div id="modemTable" class="card overflow-hidden">
-    <div class="overflow-x-auto">
-        <table class="w-full text-sm" id="modemDataTable">
-            <thead>
-                <tr class="border-b border-gray-100">
-                    <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Status</th>
-                    <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">IMEI</th>
-                    <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Phone</th>
-                    <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Balance</th>
-                    <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">User</th>
-                    <th class="px-4 py-3 text-right text-[11px] font-semibold text-gray-400 uppercase tracking-wider w-10"></th>
-                </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-50">
-                @foreach (var m in Model.Modems)
-                {
-                    <tr class="table-row cursor-pointer" onclick="window.location='/ModemDetail?id=@m.Id'">
-                        <td class="px-4 py-3">
-                            @if (m.IsOnline)
-                            {
-                                <span class="badge badge-success">
-                                    <span class="pulse-dot relative" style="width:5px;height:5px;"></span>
-                                    Online
-                                </span>
-                            }
-                            else
-                            {
-                                <span class="badge badge-danger">Offline</span>
-                            }
-                        </td>
-                        <td class="px-4 py-3 font-mono text-[11px] text-gray-600">@m.IMEI</td>
-                        <td class="px-4 py-3 font-medium text-xs">@m.PhoneNumber</td>
-                        <td class="px-4 py-3">
-                            <span class="font-semibold text-xs @(m.Balance > 0 ? "text-brand-600" : "text-gray-300")">@m.Balance.ToString("N2") DA</span>
-                        </td>
-                        <td class="px-4 py-3 text-xs">
-                            @if (m.UserName != null)
-                            {
-                                <span class="badge badge-info">@m.UserName</span>
-                            }
-                            else
-                            {
-                                <span class="text-gray-300">Unassigned</span>
-                            }
-                        </td>
-                        <td class="px-4 py-3 text-right" onclick="event.stopPropagation()">
-                            <div x-data="{ open: false }" class="relative">
-                                <button @@click="open = !open" class="text-gray-300 hover:text-gray-500 p-1">
-                                    <i class="fas fa-ellipsis-v text-xs"></i>
-                                </button>
-                                <div x-show="open" @@click.away="open = false" x-cloak x-transition
-                                     class="absolute right-0 mt-1 w-40 bg-white border border-gray-200 rounded-lg shadow-lg z-10 py-1">
-                                    <a href="/ModemDetail?id=@m.Id" class="flex items-center gap-2 px-3 py-2 text-xs text-gray-600 hover:bg-gray-50">
-                                        <i class="fas fa-eye w-4 text-center"></i> View Details
-                                    </a>
-                                    @if (m.UserId.HasValue)
+<!-- Filter Pills -->
+<div id="modemTable" hx-get="?status=@currentStatus" hx-trigger="every 5s" hx-select="#modemTable" hx-swap="outerHTML">
+    <div class="flex items-center gap-2 mb-4 flex-wrap">
+        <a href="/Modems"
+           class="px-4 py-1.5 rounded-full text-xs font-medium transition-colors
+                  @(string.IsNullOrEmpty(currentStatus) ? "bg-gray-900 text-white" : "bg-white text-gray-500 border border-gray-200 hover:border-gray-300")">
+            @L["Common.All"] (@Model.AllModems.Count)
+        </a>
+        <a href="/Modems?status=online"
+           class="px-4 py-1.5 rounded-full text-xs font-medium transition-colors
+                  @(currentStatus == "online" ? "bg-brand-500 text-white" : "bg-white text-gray-500 border border-gray-200 hover:border-gray-300")">
+            <span class="inline-block w-1.5 h-1.5 rounded-full bg-current mr-1 opacity-70"></span>@L["Common.Online"] (@onlineCount)
+        </a>
+        <a href="/Modems?status=offline"
+           class="px-4 py-1.5 rounded-full text-xs font-medium transition-colors
+                  @(currentStatus == "offline" ? "bg-red-500 text-white" : "bg-white text-gray-500 border border-gray-200 hover:border-gray-300")">
+            @L["Common.Offline"] (@offlineCount)
+        </a>
+        <span class="text-gray-200 text-xs">|</span>
+        <a href="/Modems?status=assigned"
+           class="px-4 py-1.5 rounded-full text-xs font-medium transition-colors
+                  @(currentStatus == "assigned" ? "bg-blue-500 text-white" : "bg-white text-gray-500 border border-gray-200 hover:border-gray-300")">
+            <i class="fas fa-user text-[9px] mr-1"></i>@L["Modems.Assigned"] (@assignedCount)
+        </a>
+        <a href="/Modems?status=unassigned"
+           class="px-4 py-1.5 rounded-full text-xs font-medium transition-colors
+                  @(currentStatus == "unassigned" ? "bg-gray-600 text-white" : "bg-white text-gray-500 border border-gray-200 hover:border-gray-300")">
+            <i class="fas fa-user-slash text-[9px] mr-1"></i>@L["Modems.Free"] (@freeCount)
+        </a>
+    </div>
+
+    <!-- Table -->
+    <div class="card overflow-hidden">
+        @if (Model.Modems.Any())
+        {
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm" id="modemDataTable">
+                    <thead>
+                        <tr class="border-b border-gray-100 bg-gray-50/50">
+                            <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider w-24">@L["Common.Status"]</th>
+                            <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">@L["Modems.PhoneNumber"]</th>
+                            <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">@L["Common.Balance"]</th>
+                            <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">@L["Modems.Device"]</th>
+                            <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">@L["Modems.AssignedTo"]</th>
+                            <th class="px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">@L["Modems.LastSeen"]</th>
+                            <th class="px-4 py-3 w-10"></th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-50">
+                        @foreach (var m in Model.Modems)
+                        {
+                            <tr class="table-row cursor-pointer" onclick="window.location='/ModemDetail?id=@m.Id'">
+                                <!-- Status -->
+                                <td class="px-4 py-3.5">
+                                    @if (m.IsOnline)
                                     {
-                                        <button hx-post="/Modems?handler=Unassign&modemId=@m.Id"
-                                                hx-confirm="Unassign this modem?"
-                                                hx-target="closest tr"
-                                                hx-swap="outerHTML"
-                                                class="flex items-center gap-2 w-full text-left px-3 py-2 text-xs text-red-500 hover:bg-red-50">
-                                            <i class="fas fa-user-minus w-4 text-center"></i> Unassign
-                                        </button>
+                                        <span class="badge badge-success">
+                                            <span class="pulse-dot relative" style="width:5px;height:5px;"></span> @L["Common.Online"]
+                                        </span>
                                     }
-                                </div>
-                            </div>
-                        </td>
-                    </tr>
+                                    else
+                                    {
+                                        <span class="badge badge-danger">@L["Common.Offline"]</span>
+                                    }
+                                </td>
+                                <!-- Phone Number — primary identifier -->
+                                <td class="px-4 py-3.5">
+                                    <div class="flex items-center gap-2">
+                                        <div class="w-8 h-8 rounded-lg bg-gray-50 border border-gray-100 flex items-center justify-center flex-shrink-0">
+                                            <i class="fas fa-sim-card text-gray-300 text-xs"></i>
+                                        </div>
+                                        <div>
+                                            <p class="font-semibold text-gray-900 text-sm tracking-wide">@m.PhoneNumber</p>
+                                            <p class="text-[10px] text-gray-300 font-mono">@(m.IMEI.Length > 8 ? m.IMEI[^8..] : m.IMEI)</p>
+                                        </div>
+                                    </div>
+                                </td>
+                                <!-- Balance -->
+                                <td class="px-4 py-3.5">
+                                    <span class="font-semibold text-sm @(m.Balance > 0 ? "text-brand-600" : "text-gray-300")">
+                                        @m.Balance.ToString("N2") DA
+                                    </span>
+                                </td>
+                                <!-- Device -->
+                                <td class="px-4 py-3.5">
+                                    <span class="text-xs text-gray-600 font-medium">@m.Brand</span>
+                                    @if (!string.IsNullOrEmpty(m.Model))
+                                    {
+                                        <span class="text-xs text-gray-400"> @m.Model</span>
+                                    }
+                                    @if (m.ComPort != null)
+                                    {
+                                        <br /><span class="text-[10px] text-gray-300">@m.ComPort</span>
+                                    }
+                                </td>
+                                <!-- Assigned To — shows username + phone number -->
+                                <td class="px-4 py-3.5">
+                                    @if (m.UserId.HasValue && m.UserName != null)
+                                    {
+                                        <a href="/UserDetail?id=@m.UserId" onclick="event.stopPropagation()"
+                                           class="flex items-center gap-2 group w-fit">
+                                            <div class="w-6 h-6 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 group-hover:bg-blue-100 transition-colors">
+                                                @m.UserName[0]
+                                            </div>
+                                            <span class="text-sm font-medium text-gray-700 group-hover:text-blue-600 transition-colors">@m.UserName</span>
+                                        </a>
+                                    }
+                                    else
+                                    {
+                                        <span class="inline-flex items-center gap-1.5 text-xs text-gray-300">
+                                            <i class="fas fa-user-slash text-[10px]"></i> @L["Modems.Free"]
+                                        </span>
+                                    }
+                                </td>
+                                <!-- Last Seen -->
+                                <td class="px-4 py-3.5 text-xs text-gray-400 whitespace-nowrap">
+                                    @m.LastSeen.ToLocalTime().ToString("MMM dd, HH:mm")
+                                </td>
+                                <!-- Actions -->
+                                <td class="px-4 py-3.5 text-right" onclick="event.stopPropagation()">
+                                    <div x-data="{ open: false }" class="relative">
+                                        <button @@click="open = !open"
+                                                class="text-gray-300 hover:text-gray-500 p-1.5 rounded-lg hover:bg-gray-100 transition-colors">
+                                            <i class="fas fa-ellipsis-v text-xs"></i>
+                                        </button>
+                                        <div x-show="open" @@click.away="open = false" x-cloak x-transition
+                                             class="absolute right-0 mt-1 w-44 bg-white border border-gray-200 rounded-lg shadow-lg z-10 py-1">
+                                            <a href="/ModemDetail?id=@m.Id"
+                                               class="flex items-center gap-2 px-3 py-2 text-xs text-gray-600 hover:bg-gray-50">
+                                                <i class="fas fa-eye w-4 text-center text-gray-400"></i> @L["Modems.ViewDetails"]
+                                            </a>
+                                            @if (m.UserId.HasValue)
+                                            {
+                                                <button hx-post="/Modems?handler=Unassign&modemId=@m.Id"
+                                                        hx-confirm="Unassign @m.PhoneNumber from @m.UserName?"
+                                                        hx-swap="none"
+                                                        class="flex items-center gap-2 w-full text-left px-3 py-2 text-xs text-red-500 hover:bg-red-50">
+                                                    <i class="fas fa-user-minus w-4 text-center"></i> @L["Modems.Unassign"]
+                                                </button>
+                                            }
+                                        </div>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        else
+        {
+            <div class="py-16 text-center">
+                <i class="fas fa-tower-broadcast text-gray-200 text-4xl mb-3"></i>
+                <p class="text-sm text-gray-400 mt-2">@L["Modems.NoModems"]</p>
+                @if (!string.IsNullOrEmpty(currentStatus))
+                {
+                    <a href="/Modems" class="text-xs text-brand-500 hover:underline mt-1 inline-block">
+                        <i class="fas fa-times mr-1"></i>@L["Common.ClearFilter"]
+                    </a>
                 }
-            </tbody>
-        </table>
+            </div>
+        }
     </div>
 </div>
 
@@ -106,8 +199,8 @@
         var input = document.getElementById('searchInput').value.toLowerCase();
         var rows = document.querySelectorAll('#modemDataTable tbody tr');
         rows.forEach(function(row) {
-            var text = row.textContent.toLowerCase();
-            row.style.display = text.includes(input) ? '' : 'none';
+            row.style.display = row.textContent.toLowerCase().includes(input) ? '' : 'none';
         });
     }
 </script>
+
