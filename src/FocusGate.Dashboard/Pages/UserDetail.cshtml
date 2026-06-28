@@ -1,19 +1,19 @@
 @page
 @model FocusGate.Dashboard.Pages.UserDetailModel
 @{
-    ViewData["Title"] = L["UserDetail.Title"];
+    ViewData["Title"] = "User Detail";
 }
 
 <!-- Back link -->
 <a href="/Users" class="inline-flex items-center gap-1.5 text-xs text-gray-400 hover:text-brand-500 mb-4 transition-colors">
-    <i class="fas fa-arrow-left"></i> @L["UserDetail.Back"]
+    <i class="fas fa-arrow-left"></i> Back to Users
 </a>
 
 @if (Model.User == null)
 {
     <div class="card p-12 text-center">
         <i class="fas fa-exclamation-triangle text-gray-300 text-3xl mb-3"></i>
-        <p class="text-gray-400">@L["UserDetail.NotFound"]</p>
+        <p class="text-gray-400">User not found</p>
     </div>
 }
 else
@@ -27,16 +27,16 @@ else
             <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-3">
                     <h3 class="text-lg font-bold text-gray-900">@Model.User.Username</h3>
-                    <span class="badge @(Model.User.Role == FocusGate.Core.Enums.UserRole.Admin ? "badge-purple" : "badge-gray")">@(Model.User.Role == FocusGate.Core.Enums.UserRole.Admin ? "Admin" : L["Common.User"].Value)</span>
+                    <span class="badge @(Model.User.Role == FocusGate.Core.Enums.UserRole.Admin ? "badge-purple" : "badge-gray")">@Model.User.Role</span>
                     @if (Model.User.ArchivedAt != null)
                     {
-                        <span class="badge badge-gray">@L["Users.Archived"]</span>
+                        <span class="badge badge-gray">Archived</span>
                     }
                 </div>
-                <p class="text-xs text-gray-400 mt-1">@Model.User.DisplayName &middot; @L["UserDetail.Since"] @Model.User.CreatedAt.ToLocalTime().ToString("MMM dd, yyyy")</p>
+                <p class="text-xs text-gray-400 mt-1">@Model.User.DisplayName &middot; Since @Model.User.CreatedAt.ToLocalTime().ToString("MMM dd, yyyy")</p>
             </div>
             <div class="text-right flex-shrink-0">
-                <p class="text-xs text-gray-400">@L["UserDetail.WalletBalance"]</p>
+                <p class="text-xs text-gray-400">Wallet Balance</p>
                 <p class="text-2xl font-bold text-brand-600 mt-0.5">@Model.User.Balance.ToString("N2") DA</p>
             </div>
         </div>
@@ -47,23 +47,25 @@ else
         <div class="flex gap-0 border-b border-gray-200 mb-5">
             <button @@click="tab = 'modems'" :class="tab === 'modems' ? 'border-brand-500 text-brand-600' : 'border-transparent text-gray-400 hover:text-gray-600'"
                     class="px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px">
-                <i class="fas fa-tower-broadcast mr-1.5"></i> @L["Nav.Modems"]
+                <i class="fas fa-tower-broadcast mr-1.5"></i> Modems
                 <span class="ml-1 text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full">@Model.AssignedModems.Count</span>
             </button>
             <button @@click="tab = 'wallet'" :class="tab === 'wallet' ? 'border-brand-500 text-brand-600' : 'border-transparent text-gray-400 hover:text-gray-600'"
                     class="px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px">
-                <i class="fas fa-wallet mr-1.5"></i> @L["UserDetail.WalletTab"]
+                <i class="fas fa-wallet mr-1.5"></i> Wallet
             </button>
             <button @@click="tab = 'history'" :class="tab === 'history' ? 'border-brand-500 text-brand-600' : 'border-transparent text-gray-400 hover:text-gray-600'"
                     class="px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px">
-                <i class="fas fa-clock mr-1.5"></i> @L["UserDetail.HistoryTab"]
+                <i class="fas fa-clock mr-1.5"></i> History
             </button>
         </div>
 
         <!-- Modems Tab -->
         <div x-show="tab === 'modems'" x-transition>
             <div class="card">
-                <div class="card-header"><h4 class="text-sm font-semibold text-gray-900">@L["UserDetail.AssignedModems"]</h4></div>
+                <div class="card-header flex items-center justify-between">
+                    <h4 class="text-sm font-semibold text-gray-900">Assigned Modems</h4>
+                </div>
                 <div class="card-body">
                     @if (Model.AssignedModems.Any())
                     {
@@ -94,25 +96,25 @@ else
                     {
                         <div class="py-8 text-center">
                             <i class="fas fa-tower-broadcast text-gray-200 text-2xl mb-2"></i>
-                            <p class="text-sm text-gray-400">@L["UserDetail.NoModems"]</p>
+                            <p class="text-sm text-gray-400">No modems assigned</p>
                         </div>
                     }
 
                     <!-- Assign form -->
                     <div class="pt-4 border-t border-gray-100">
-                        <p class="text-[11px] text-gray-400 uppercase tracking-wider font-medium mb-2">@L["UserDetail.AssignNew"]</p>
+                        <p class="text-[11px] text-gray-400 uppercase tracking-wider font-medium mb-2">Assign New Modem</p>
                         <form hx-post="/UserDetail?handler=AssignModem&userId=@Model.User.Id"
                               hx-swap="none"
                               hx-on::after-request="if(event.detail.successful){ this.reset(); }"
                               class="flex gap-2">
                             <select name="modemId" required class="input flex-1">
-                                <option value="">@L["UserDetail.SelectModem"]</option>
+                                <option value="">Select modem...</option>
                                 @foreach (var m in Model.AvailableModems)
                                 {
                                     <option value="@m.Id">@m.PhoneNumber (IMEI: @m.Imei)</option>
                                 }
                             </select>
-                            <button type="submit" class="btn btn-primary">@L["UserDetail.Assign"]</button>
+                            <button type="submit" class="btn btn-primary">Assign</button>
                         </form>
                     </div>
                 </div>
@@ -123,14 +125,14 @@ else
         <div x-show="tab === 'wallet'" x-transition>
             <div class="card">
                 <div class="card-body text-center py-10">
-                    <p class="text-xs text-gray-400 uppercase tracking-wider font-medium">@L["UserDetail.CurrentBalance"]</p>
+                    <p class="text-xs text-gray-400 uppercase tracking-wider font-medium">Current Balance</p>
                     <p class="text-5xl font-bold text-brand-600 mt-3">@Model.User.Balance.ToString("N2")</p>
                     <p class="text-sm text-gray-400 mt-1">DZD</p>
 
                     <div class="mt-8 pt-6 border-t border-gray-100">
                         <button onclick="document.getElementById('withdrawalModal').classList.remove('hidden')"
                                 class="btn btn-primary px-8">
-                            <i class="fas fa-money-bill-wave"></i> @L["UserDetail.CreateWithdrawal"]
+                            <i class="fas fa-money-bill-wave"></i> Create Withdrawal Request
                         </button>
                     </div>
                 </div>
@@ -144,11 +146,11 @@ else
                     <table class="w-full text-sm">
                         <thead>
                             <tr class="border-b border-gray-100">
-                                <th class="px-5 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">@L["Common.Date"]</th>
-                                <th class="px-5 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">@L["Common.Type"]</th>
-                                <th class="px-5 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">@L["Common.Amount"]</th>
-                                <th class="px-5 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">@L["Common.Balance"]</th>
-                                <th class="px-5 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">@L["Common.Note"]</th>
+                                <th class="px-5 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Date</th>
+                                <th class="px-5 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Type</th>
+                                <th class="px-5 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Amount</th>
+                                <th class="px-5 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Balance After</th>
+                                <th class="px-5 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Note</th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-gray-50">
@@ -160,7 +162,7 @@ else
                                         <td class="px-5 py-3 text-gray-400 text-xs whitespace-nowrap">@b.RecordedAt.ToLocalTime().ToString("MMM dd, HH:mm")</td>
                                         <td class="px-5 py-3">
                                             <span class="badge @(b.Type == 0 ? "badge-success" : "badge-danger")">
-                                                @(b.Type == 0 ? L["UserDetail.Credit"].Value : L["UserDetail.Withdrawal"].Value)
+                                                @(b.Type == 0 ? "Credit" : "Withdrawal")
                                             </span>
                                         </td>
                                         <td class="px-5 py-3 font-semibold text-sm @(b.Amount >= 0 ? "text-brand-600" : "text-red-500")">
@@ -176,7 +178,7 @@ else
                                 <tr>
                                     <td colspan="5" class="px-5 py-12 text-center">
                                         <i class="fas fa-clock text-gray-200 text-2xl mb-2"></i>
-                                        <p class="text-sm text-gray-400">@L["Common.NoData"]</p>
+                                        <p class="text-sm text-gray-400">No balance history</p>
                                     </td>
                                 </tr>
                             }
@@ -190,24 +192,24 @@ else
     <div id="withdrawalModal" class="hidden fixed inset-0 z-50 modal-overlay flex items-center justify-center p-4" onclick="if(event.target===this)this.classList.add('hidden')">
         <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm">
             <div class="px-5 py-4 border-b border-gray-100">
-                <h3 class="text-base font-semibold text-gray-900">@L["UserDetail.WithdrawalRequest"]</h3>
+                <h3 class="text-base font-semibold text-gray-900">Withdrawal Request</h3>
             </div>
             <form hx-post="/UserDetail?handler=CreateWithdrawal&userId=@Model.User.Id"
                   hx-swap="none"
                   hx-on::after-request="if(event.detail.successful){ document.getElementById('withdrawalModal').classList.add('hidden'); this.reset(); }"
                   class="p-5 space-y-4">
                 <div>
-                    <label class="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">@L["UserDetail.Amount"] *</label>
+                    <label class="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Amount (DZD) *</label>
                     <input type="number" name="amount" step="0.01" min="0.01" required class="input" placeholder="0.00" />
-                    <p class="text-[11px] text-gray-400 mt-1">@L["UserDetail.Available"]: @Model.User.Balance.ToString("N2") DA</p>
+                    <p class="text-[11px] text-gray-400 mt-1">Available: @Model.User.Balance.ToString("N2") DA</p>
                 </div>
                 <div>
-                    <label class="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">@L["UserDetail.NoteOptional"]</label>
-                    <textarea name="note" rows="2" class="input" placeholder="@L["UserDetail.ReasonPlaceholder"]"></textarea>
+                    <label class="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Note (optional)</label>
+                    <textarea name="note" rows="2" class="input" placeholder="Reason for withdrawal..."></textarea>
                 </div>
                 <div class="flex gap-3 pt-2">
-                    <button type="submit" class="btn btn-primary flex-1">@L["UserDetail.CreateRequest"]</button>
-                    <button type="button" onclick="document.getElementById('withdrawalModal').classList.add('hidden')" class="btn btn-outline">@L["Common.Cancel"]</button>
+                    <button type="submit" class="btn btn-primary flex-1">Create Request</button>
+                    <button type="button" onclick="document.getElementById('withdrawalModal').classList.add('hidden')" class="btn btn-outline">Cancel</button>
                 </div>
             </form>
         </div>

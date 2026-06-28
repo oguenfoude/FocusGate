@@ -46,10 +46,14 @@ public class UserDetailModel : PageModel
             })
             .ToListAsync();
 
-        var assignedModemIds = AssignedModems.Select(m => m.ModemId).ToHashSet();
+        // Get all modem IDs already assigned to any user
+        var alreadyAssigned = await _db.UserModems
+            .Where(um => um.RemovedAt == null)
+            .Select(um => um.ModemId)
+            .ToListAsync();
 
         AvailableModems = await _db.Modems
-            .Where(m => !assignedModemIds.Contains(m.Id) && m.ArchivedAt == null)
+            .Where(m => !alreadyAssigned.Contains(m.Id))
             .Select(m => new AvailableModem
             {
                 Id = m.Id,
@@ -92,10 +96,12 @@ public class UserDetailModel : PageModel
 
     public async Task<IActionResult> OnPostAssignModemAsync(long userId, int modemId)
     {
-        var exists = await _db.UserModems
-            .AnyAsync(um => um.UserId == userId && um.ModemId == modemId && um.RemovedAt == null);
+        // Check including soft-deleted records (bypass global filter)
+        var existing = await _db.UserModems
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(um => um.UserId == userId && um.ModemId == modemId);
 
-        if (!exists)
+        if (existing == null)
         {
             _db.UserModems.Add(new UserModem
             {
@@ -104,9 +110,17 @@ public class UserDetailModel : PageModel
                 AssignedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             });
-            await _db.SaveChangesAsync();
         }
+        else if (existing.RemovedAt != null)
+        {
+            // Reactivate the soft-deleted assignment
+            existing.RemovedAt = null;
+            existing.AssignedAt = DateTime.UtcNow;
+            existing.UpdatedAt = DateTime.UtcNow;
+        }
+        // else: already active, do nothing
 
+        await _db.SaveChangesAsync();
         Response.Headers["HX-Redirect"] = $"/UserDetail?id={userId}";
         return new EmptyResult();
     }

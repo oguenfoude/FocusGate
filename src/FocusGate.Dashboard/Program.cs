@@ -37,6 +37,7 @@ Log.Logger = new LoggerConfiguration()
 builder.Host.UseSerilog();
 
 builder.Services.AddFocusGateDashboard(configuration, dataDir);
+builder.Services.AddLocalization();
 builder.Services.AddRazorPages();
 
 builder.WebHost.ConfigureKestrel(options =>
@@ -67,6 +68,13 @@ app.Lifetime.ApplicationStopping.Register(async () =>
 });
 
 app.UseStaticFiles();
+
+var supportedCultures = new[] { "en", "fr", "ar" };
+app.UseRequestLocalization(new RequestLocalizationOptions()
+    .SetDefaultCulture("en")
+    .AddSupportedCultures(supportedCultures)
+    .AddSupportedUICultures(supportedCultures));
+
 app.MapRazorPages();
 
 Log.Information("FocusGate Dashboard starting on http://localhost:5080");

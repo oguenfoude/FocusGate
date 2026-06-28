@@ -12,6 +12,7 @@ public class ModemsModel : PageModel
     private readonly FocusGateDbContext _db;
 
     public List<ModemRow> Modems { get; set; } = new();
+    public List<ModemRow> AllModems { get; set; } = new();
 
     public ModemsModel(FocusGateDbContext db)
     {
@@ -20,45 +21,46 @@ public class ModemsModel : PageModel
 
     public async Task OnGetAsync(string? status = null)
     {
-        var query = _db.Modems
+        // Always load ALL modems + their user assignments for tab counts
+        var allModemsRaw = await _db.Modems
             .Include(m => m.SimCards.Where(s => s.IsActive))
             .AsNoTracking()
-            .AsQueryable();
+            .OrderBy(m => m.Id)
+            .ToListAsync();
 
-        if (status == "online")
-            query = query.Where(m => m.Status == ModemStatus.Online);
-        else if (status == "offline")
-            query = query.Where(m => m.Status != ModemStatus.Online);
+        var allModemIds = allModemsRaw.Select(m => m.Id).ToList();
 
-        var modems = await query.OrderBy(m => m.Id).ToListAsync();
-
-        var modemIds = modems.Select(m => m.Id).ToList();
-
-        var userModems = await _db.UserModems
-            .Where(um => modemIds.Contains(um.ModemId) && um.RemovedAt == null)
+        var allUserModems = await _db.UserModems
+            .Where(um => allModemIds.Contains(um.ModemId) && um.RemovedAt == null)
             .Include(um => um.User)
             .ToDictionaryAsync(um => um.ModemId);
 
-        Modems = modems.Select(m =>
+        AllModems = allModemsRaw.Select(m =>
         {
             var sim = m.SimCards.FirstOrDefault(s => s.IsActive);
-            userModems.TryGetValue(m.Id, out var userModem);
-
+            allUserModems.TryGetValue(m.Id, out var um);
             return new ModemRow
             {
-                Id = m.Id,
-                IMEI = m.IMEI,
-                ComPort = m.ComPort ?? sim?.Modem?.ComPort,
-                Brand = m.Brand.ToString(),
-                Model = m.Model,
+                Id = m.Id, IMEI = m.IMEI,
+                ComPort = m.ComPort,
+                Brand = m.Brand.ToString(), Model = m.Model,
                 IsOnline = m.Status == ModemStatus.Online,
                 PhoneNumber = sim?.PhoneNumber.ToString() ?? "N/A",
                 Balance = sim?.Balance ?? 0,
                 LastSeen = sim?.LastSeen ?? m.CreatedAt,
-                UserId = userModem?.UserId,
-                UserName = userModem?.User?.Username
+                UserId = um?.UserId, UserName = um?.User?.Username
             };
         }).ToList();
+
+        // Apply filter
+        Modems = status switch
+        {
+            "online"     => AllModems.Where(m => m.IsOnline).ToList(),
+            "offline"    => AllModems.Where(m => !m.IsOnline).ToList(),
+            "assigned"   => AllModems.Where(m => m.UserId.HasValue).ToList(),
+            "unassigned" => AllModems.Where(m => !m.UserId.HasValue).ToList(),
+            _            => AllModems
+        };
     }
 
     public async Task<IActionResult> OnPostUnassignAsync(int modemId)

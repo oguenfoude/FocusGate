@@ -1,4 +1,4 @@
-﻿using FocusGate.Core.Interfaces;
+using FocusGate.Core.Interfaces;
 using FocusGate.Infrastructure.Data;
 using FocusGate.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;

@@ -1,4 +1,4 @@
-namespace FocusGate.Dashboard;
+namespace FocusGate.Dashboard.Resources;
 
 /// <summary>
 /// Marker class used by ASP.NET Core IStringLocalizer to locate shared resource files.

@@ -16,6 +16,7 @@ public class IndexModel : PageModel
     public decimal TotalUserBalance { get; set; }
     public int PendingWithdrawals { get; set; }
     public List<SmsRow> RecentSms { get; set; } = new();
+    public List<HighBalanceModemRow> HighBalanceModems { get; set; } = new();
 
     public IndexModel(FocusGateDbContext db)
     {
@@ -43,7 +44,19 @@ public class IndexModel : PageModel
                 SenderNumber = s.SenderNumber,
                 Content = s.Content,
                 ReceivedAt = s.ReceivedAt,
-                ModemImei = s.SimCard != null && s.SimCard.Modem != null ? s.SimCard.Modem.IMEI : null
+                ModemImei = s.SimCard != null && s.SimCard.Modem != null ? s.SimCard.Modem.IMEI : null,
+                PhoneNumber = s.SimCard != null ? s.SimCard.PhoneNumber.ToString() : null
+            })
+            .ToListAsync();
+
+        HighBalanceModems = await _db.Modems
+            .Include(m => m.SimCards.Where(s => s.IsActive))
+            .Where(m => m.SimCards.Any(s => s.IsActive && s.Balance >= 45000))
+            .Select(m => new HighBalanceModemRow
+            {
+                Id = m.Id,
+                PhoneNumber = m.SimCards.FirstOrDefault(s => s.IsActive)!.PhoneNumber.ToString(),
+                Balance = m.SimCards.FirstOrDefault(s => s.IsActive)!.Balance
             })
             .ToListAsync();
     }
@@ -54,5 +67,13 @@ public class IndexModel : PageModel
         public string Content { get; set; } = "";
         public DateTime ReceivedAt { get; set; }
         public string? ModemImei { get; set; }
+        public string? PhoneNumber { get; set; }
+    }
+
+    public class HighBalanceModemRow
+    {
+        public int Id { get; set; }
+        public string PhoneNumber { get; set; } = "";
+        public decimal Balance { get; set; }
     }
 }

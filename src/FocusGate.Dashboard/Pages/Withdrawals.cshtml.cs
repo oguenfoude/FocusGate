@@ -12,6 +12,7 @@ public class WithdrawalsModel : PageModel
     private readonly FocusGateDbContext _db;
 
     public List<WithdrawalRow> Requests { get; set; } = new();
+    public List<WithdrawalRow> AllRequests { get; set; } = new();
 
     public WithdrawalsModel(FocusGateDbContext db)
     {
@@ -20,26 +21,30 @@ public class WithdrawalsModel : PageModel
 
     public async Task OnGetAsync(string? status = null)
     {
-        var query = _db.WithdrawalRequests
+        var all = await _db.WithdrawalRequests
             .Include(w => w.User)
             .AsNoTracking()
-            .AsQueryable();
+            .OrderByDescending(w => w.RequestedAt)
+            .ToListAsync();
 
-        if (!string.IsNullOrEmpty(status) && Enum.TryParse<WithdrawalStatus>(status, out var s))
-            query = query.Where(w => w.Status == s);
-
-        var requests = await query.OrderByDescending(w => w.RequestedAt).ToListAsync();
-
-        Requests = requests.Select(w => new WithdrawalRow
+        AllRequests = all.Select(w => new WithdrawalRow
         {
-            Id = w.Id,
-            UserId = w.UserId,
+            Id = w.Id, UserId = w.UserId,
             Username = w.User?.Username ?? "Unknown",
-            Amount = w.Amount,
-            Status = w.Status.ToString(),
-            RequestedAt = w.RequestedAt,
-            ProcessedAt = w.ProcessedAt,
-            Note = w.Note
+            Amount = w.Amount, Status = w.Status.ToString(),
+            RequestedAt = w.RequestedAt, ProcessedAt = w.ProcessedAt, Note = w.Note
+        }).ToList();
+
+        var filtered = string.IsNullOrEmpty(status) || !Enum.TryParse<WithdrawalStatus>(status, out var s)
+            ? all
+            : all.Where(w => w.Status == s).ToList();
+
+        Requests = filtered.Select(w => new WithdrawalRow
+        {
+            Id = w.Id, UserId = w.UserId,
+            Username = w.User?.Username ?? "Unknown",
+            Amount = w.Amount, Status = w.Status.ToString(),
+            RequestedAt = w.RequestedAt, ProcessedAt = w.ProcessedAt, Note = w.Note
         }).ToList();
     }
 

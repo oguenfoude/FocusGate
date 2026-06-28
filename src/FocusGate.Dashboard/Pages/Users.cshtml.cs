@@ -22,12 +22,23 @@ public class UsersModel : PageModel
 
     public async Task OnGetAsync(bool showArchived = false)
     {
-        var query = _db.Users
-            .Include(u => u.UserModems.Where(um => um.RemovedAt == null))
-            .AsNoTracking();
+        IQueryable<User> query;
 
-        if (!showArchived)
-            query = query.Where(u => u.ArchivedAt == null);
+        if (showArchived)
+        {
+            // Must bypass the global query filter to see archived users
+            query = _db.Users
+                .IgnoreQueryFilters()
+                .Include(u => u.UserModems.Where(um => um.RemovedAt == null))
+                .AsNoTracking();
+        }
+        else
+        {
+            query = _db.Users
+                .Include(u => u.UserModems.Where(um => um.RemovedAt == null))
+                .AsNoTracking()
+                .Where(u => u.ArchivedAt == null);
+        }
 
         var users = await query.OrderBy(u => u.Id).ToListAsync();
 
@@ -46,7 +57,7 @@ public class UsersModel : PageModel
     public async Task<IActionResult> OnPostArchiveAsync(long userId)
     {
         var user = await _db.Users.FindAsync(userId);
-        if (user != null)
+        if (user != null && user.Role != UserRole.Admin)
         {
             user.ArchivedAt = DateTime.UtcNow;
             user.UpdatedAt = DateTime.UtcNow;
@@ -58,7 +69,8 @@ public class UsersModel : PageModel
 
     public async Task<IActionResult> OnPostRestoreAsync(long userId)
     {
-        var user = await _db.Users.FindAsync(userId);
+        // Must bypass the global query filter to find archived users
+        var user = await _db.Users.IgnoreQueryFilters().FirstOrDefaultAsync(u => u.Id == userId);
         if (user != null)
         {
             user.ArchivedAt = null;
@@ -69,7 +81,7 @@ public class UsersModel : PageModel
         return new EmptyResult();
     }
 
-    public async Task<IActionResult> OnPostAddUserAsync(string username, string password, string? displayName, string role)
+    public async Task<IActionResult> OnPostAddUserAsync(string username, string password)
     {
         if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
         {
@@ -77,7 +89,7 @@ public class UsersModel : PageModel
             return new EmptyResult();
         }
 
-        var exists = await _db.Users.AnyAsync(u => u.Username == username);
+        var exists = await _db.Users.IgnoreQueryFilters().AnyAsync(u => u.Username == username);
         if (exists)
         {
             Response.Headers["HX-Redirect"] = "/Users";
@@ -88,8 +100,8 @@ public class UsersModel : PageModel
         {
             Username = username,
             Password = HashPassword(password),
-            DisplayName = displayName ?? username,
-            Role = role == "Admin" ? UserRole.Admin : UserRole.User,
+            DisplayName = username,
+            Role = UserRole.User,
             IsActive = true,
             Balance = 0,
             CreatedAt = DateTime.UtcNow,
