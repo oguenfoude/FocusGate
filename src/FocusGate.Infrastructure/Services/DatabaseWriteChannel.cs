@@ -419,59 +419,6 @@ public class DatabaseWriteChannel
         return true;
     }
 
-    private static decimal ExtractRechargeAmount(string content)
-    {
-        var marker = "recharg";
-        var idx = content.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
-        if (idx < 0) return 0;
-
-        var afterMarker = content[idx..];
-        var numMatch = System.Text.RegularExpressions.Regex.Match(afterMarker, @"(\d[\d.,]+)");
-        if (!numMatch.Success) return 0;
-
-        var numStr = numMatch.Groups[1].Value;
-        if (numStr.Contains(',') && numStr.Contains('.'))
-        {
-            var lastComma = numStr.LastIndexOf(',');
-            var lastDot = numStr.LastIndexOf('.');
-            if (lastComma > lastDot)
-                numStr = numStr.Replace(".", "").Replace(",", ".");
-            else
-                numStr = numStr.Replace(",", "");
-        }
-        else if (numStr.Contains(','))
-        {
-            numStr = numStr.Replace(",", ".");
-        }
-        return decimal.TryParse(numStr, System.Globalization.NumberStyles.Any,
-            System.Globalization.CultureInfo.InvariantCulture, out var val) ? val : 0;
-    }
-
-    private static decimal ExtractCreditAmount(string content)
-    {
-        var marker = "montant de ";
-        var idx = content.IndexOf(marker, StringComparison.Ordinal);
-        if (idx < 0) return 0;
-        idx += marker.Length;
-        var end = content.IndexOf(" DZD", idx, StringComparison.Ordinal);
-        if (end < 0) return 0;
-        var numStr = content[idx..end];
-        if (numStr.Contains(',') && numStr.Contains('.'))
-        {
-            var lastComma = numStr.LastIndexOf(',');
-            var lastDot = numStr.LastIndexOf('.');
-            if (lastComma > lastDot)
-                numStr = numStr.Replace(".", "").Replace(",", ".");
-            else
-                numStr = numStr.Replace(",", "");
-        }
-        else if (numStr.Contains(','))
-        {
-            numStr = numStr.Replace(",", ".");
-        }
-        return decimal.TryParse(numStr, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var val) ? val : 0;
-    }
-
     private static decimal? ExtractBalanceFromContent(string content)
     {
         var soldeIdx = content.IndexOf("Solde", StringComparison.OrdinalIgnoreCase);

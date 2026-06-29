@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using System.Text;
 using FocusGate.Core.Enums;
 using FocusGate.Core.Models;
@@ -108,7 +107,7 @@ public class UsersModel : PageModel
         var user = new User
         {
             Username = username,
-            Password = HashPassword(password),
+            Password = password,
             DisplayName = username,
             Role = UserRole.User,
             IsActive = true,
@@ -124,13 +123,6 @@ public class UsersModel : PageModel
         TempData["ToastType"] = "success";
         Response.Headers["HX-Redirect"] = "/Users";
         return new EmptyResult();
-    }
-
-    private static string HashPassword(string password)
-    {
-        using var sha256 = SHA256.Create();
-        var bytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(password));
-        return Convert.ToHexString(bytes).ToLower();
     }
 
     public class UserRow

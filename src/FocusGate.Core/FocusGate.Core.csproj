@@ -7,10 +7,5 @@
     <NuGetAudit>false</NuGetAudit>
   </PropertyGroup>
 
-  <ItemGroup>
-    <EmbeddedResource Include="Keys\public_key.xml" />
-    <EmbeddedResource Include="Keys\private_key.xml" />
-  </ItemGroup>
-
 </Project>
 
