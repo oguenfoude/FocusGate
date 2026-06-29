@@ -1,0 +1,50 @@
+@page
+@model FocusGate.Dashboard.Pages.WarningsModel
+@{
+    ViewData["Title"] = L["Nav.Warnings"];
+}
+
+<!-- Warnings List -->
+<div class="card overflow-hidden">
+    <div class="card-header flex items-center justify-between">
+        <h3 class="text-sm font-semibold text-gray-900">@L["Nav.Warnings"]</h3>
+        <span class="badge badge-danger text-[11px]">@Model.Warnings.Count @L["Nav.Warnings"]</span>
+    </div>
+    <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+            <thead>
+                <tr class="border-b border-gray-100 bg-gray-50/50">
+                    <th class="px-5 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">@L["Modems.PhoneNumber"]</th>
+                    <th class="px-5 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">@L["Common.Balance"]</th>
+                    <th class="px-5 py-3 text-[11px] font-semibold text-gray-400 uppercase tracking-wider w-24"></th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-50">
+                @if (Model.Warnings.Any())
+                {
+                    @foreach (var w in Model.Warnings)
+                    {
+                        <tr class="table-row">
+                            <td class="px-5 py-3.5 font-semibold text-gray-900">@w.PhoneNumber</td>
+                            <td class="px-5 py-3.5 font-bold text-red-600">@w.Balance.ToString("N2") DA</td>
+                            <td class="px-5 py-3.5 text-right">
+                                <a href="/ModemDetail?id=@w.Id" class="btn btn-outline btn-sm">
+                                    <i class="fas fa-eye"></i> @L["Modems.ViewDetails"]
+                                </a>
+                            </td>
+                        </tr>
+                    }
+                }
+                else
+                {
+                    <tr>
+                        <td colspan="3" class="px-5 py-12 text-center">
+                            <i class="fas fa-check-circle text-brand-500 text-3xl mb-2"></i>
+                            <p class="text-sm text-gray-500 font-medium">All modem balances are within normal limits.</p>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>

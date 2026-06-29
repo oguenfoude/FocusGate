@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <root>
   <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
     <xsd:element name="root" msdata:IsDataSet="true" />
@@ -117,4 +117,13 @@
   <data name="UserDetail.Credit"><value>شحن</value></data>
   <data name="UserDetail.Withdrawal"><value>سحب</value></data>
   <data name="UserDetail.Since"><value>منذ</value></data>
+  <data name="Nav.Warnings"><value>تحذيرات</value></data>
+  <data name="Toast.WithdrawalApproved"><value>تمت الموافقة على السحب</value></data>
+  <data name="Toast.WithdrawalRejected"><value>تم رفض السحب</value></data>
+  <data name="Toast.ModemUnassigned"><value>تم إلغاء تعيين المودم بنجاح</value></data>
+  <data name="Toast.ModemAssigned"><value>تم تعيين المودم بنجاح</value></data>
+  <data name="Toast.WithdrawalCreated"><value>تم إنشاء طلب السحب</value></data>
+  <data name="Toast.UserArchived"><value>تم أرشفة المستخدم بنجاح</value></data>
+  <data name="Toast.UserRestored"><value>تم استعادة المستخدم بنجاح</value></data>
+  <data name="Toast.UserCreated"><value>تم إنشاء المستخدم بنجاح</value></data>
 </root>

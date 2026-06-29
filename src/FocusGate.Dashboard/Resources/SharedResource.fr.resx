@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <root>
   <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
     <xsd:element name="root" msdata:IsDataSet="true" />
@@ -117,4 +117,13 @@
   <data name="UserDetail.Credit"><value>Crédit</value></data>
   <data name="UserDetail.Withdrawal"><value>Retrait</value></data>
   <data name="UserDetail.Since"><value>Depuis</value></data>
+  <data name="Nav.Warnings"><value>Avertissements</value></data>
+  <data name="Toast.WithdrawalApproved"><value>Retrait approuvé</value></data>
+  <data name="Toast.WithdrawalRejected"><value>Retrait rejeté</value></data>
+  <data name="Toast.ModemUnassigned"><value>Modem désaffecté avec succès</value></data>
+  <data name="Toast.ModemAssigned"><value>Modem assigné avec succès</value></data>
+  <data name="Toast.WithdrawalCreated"><value>Demande de retrait créée</value></data>
+  <data name="Toast.UserArchived"><value>Utilisateur archivé avec succès</value></data>
+  <data name="Toast.UserRestored"><value>Utilisateur restauré avec succès</value></data>
+  <data name="Toast.UserCreated"><value>Utilisateur créé avec succès</value></data>
 </root>

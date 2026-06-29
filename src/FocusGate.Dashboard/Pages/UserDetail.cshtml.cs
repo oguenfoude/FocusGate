@@ -4,21 +4,26 @@ using FocusGate.Infrastructure.Data;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Localization;
+using FocusGate.Dashboard.Resources;
 
 namespace FocusGate.Dashboard.Pages;
 
 public class UserDetailModel : PageModel
 {
     private readonly FocusGateDbContext _db;
+    private readonly IStringLocalizer<SharedResource> _localizer;
 
     public new User? User { get; set; }
     public List<AssignedModem> AssignedModems { get; set; } = new();
     public List<AvailableModem> AvailableModems { get; set; } = new();
     public List<UserBalanceHistoryRow> BalanceHistory { get; set; } = new();
+    public List<SmsRow> SmsMessages { get; set; } = new();
 
-    public UserDetailModel(FocusGateDbContext db)
+    public UserDetailModel(FocusGateDbContext db, IStringLocalizer<SharedResource> localizer)
     {
         _db = db;
+        _localizer = localizer;
     }
 
     public async Task OnGetAsync(long id)
@@ -76,6 +81,25 @@ public class UserDetailModel : PageModel
                 Note = b.Note
             })
             .ToListAsync();
+
+        // SMS messages from user's assigned modems
+        var userModemIds = await _db.UserModems
+            .Where(um => um.UserId == id && um.RemovedAt == null)
+            .Select(um => um.ModemId)
+            .ToListAsync();
+
+        SmsMessages = await _db.SmsRecords
+            .Where(s => s.SimCard != null && s.SimCard.Modem != null && userModemIds.Contains(s.SimCard.Modem.Id))
+            .OrderByDescending(s => s.ReceivedAt)
+            .Take(50)
+            .Select(s => new SmsRow
+            {
+                SenderNumber = s.SenderNumber,
+                Content = s.Content,
+                ReceivedAt = s.ReceivedAt,
+                PhoneNumber = s.SimCard != null ? s.SimCard.PhoneNumber.ToString() : "N/A"
+            })
+            .ToListAsync();
     }
 
     public async Task<IActionResult> OnPostUnassignModemAsync(int modemId, long userId)
@@ -88,6 +112,7 @@ public class UserDetailModel : PageModel
             userModem.RemovedAt = DateTime.UtcNow;
             userModem.UpdatedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync();
+            Response.Headers["HX-Trigger"] = $"{{\"showToast\":{{\"message\":\"{_localizer["Toast.ModemUnassigned"]}\",\"type\":\"success\"}}}}";
         }
 
         Response.Headers["HX-Redirect"] = $"/UserDetail?id={userId}";
@@ -121,6 +146,7 @@ public class UserDetailModel : PageModel
         // else: already active, do nothing
 
         await _db.SaveChangesAsync();
+        Response.Headers["HX-Trigger"] = $"{{\"showToast\":{{\"message\":\"{_localizer["Toast.ModemAssigned"]}\",\"type\":\"success\"}}}}";
         Response.Headers["HX-Redirect"] = $"/UserDetail?id={userId}";
         return new EmptyResult();
     }
@@ -152,6 +178,7 @@ public class UserDetailModel : PageModel
         });
 
         await _db.SaveChangesAsync();
+        Response.Headers["HX-Trigger"] = $"{{\"showToast\":{{\"message\":\"{_localizer["Toast.WithdrawalCreated"]}\",\"type\":\"success\"}}}}";
         Response.Headers["HX-Redirect"] = $"/UserDetail?id={userId}";
         return new EmptyResult();
     }
@@ -178,5 +205,13 @@ public class UserDetailModel : PageModel
         public decimal Amount { get; set; }
         public decimal BalanceAfter { get; set; }
         public string? Note { get; set; }
+    }
+
+    public class SmsRow
+    {
+        public string SenderNumber { get; set; } = "";
+        public string Content { get; set; } = "";
+        public DateTime ReceivedAt { get; set; }
+        public string PhoneNumber { get; set; } = "";
     }
 }

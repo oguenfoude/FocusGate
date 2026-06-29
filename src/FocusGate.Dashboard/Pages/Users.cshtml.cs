@@ -6,18 +6,22 @@ using FocusGate.Infrastructure.Data;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Localization;
+using FocusGate.Dashboard.Resources;
 
 namespace FocusGate.Dashboard.Pages;
 
 public class UsersModel : PageModel
 {
     private readonly FocusGateDbContext _db;
+    private readonly IStringLocalizer<SharedResource> _localizer;
 
     public List<UserRow> Users { get; set; } = new();
 
-    public UsersModel(FocusGateDbContext db)
+    public UsersModel(FocusGateDbContext db, IStringLocalizer<SharedResource> localizer)
     {
         _db = db;
+        _localizer = localizer;
     }
 
     public async Task OnGetAsync(bool showArchived = false)
@@ -63,6 +67,7 @@ public class UsersModel : PageModel
             user.ArchivedAt = DateTime.UtcNow;
             user.UpdatedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync();
+            Response.Headers["HX-Trigger"] = $"{{\"showToast\":{{\"message\":\"{_localizer["Toast.UserArchived"]}\",\"type\":\"success\"}}}}";
         }
         Response.Headers["HX-Redirect"] = "/Users";
         return new EmptyResult();
@@ -77,6 +82,7 @@ public class UsersModel : PageModel
             user.ArchivedAt = null;
             user.UpdatedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync();
+            Response.Headers["HX-Trigger"] = $"{{\"showToast\":{{\"message\":\"{_localizer["Toast.UserRestored"]}\",\"type\":\"success\"}}}}";
         }
         Response.Headers["HX-Redirect"] = "/Users";
         return new EmptyResult();
@@ -112,6 +118,7 @@ public class UsersModel : PageModel
         _db.Users.Add(user);
         await _db.SaveChangesAsync();
 
+        Response.Headers["HX-Trigger"] = $"{{\"showToast\":{{\"message\":\"{_localizer["Toast.UserCreated"]}\",\"type\":\"success\"}}}}";
         Response.Headers["HX-Redirect"] = "/Users";
         return new EmptyResult();
     }

@@ -1,8 +1,10 @@
+@inject FocusGate.Infrastructure.Data.FocusGateDbContext DbContext
 @{
     var requestCulture = Context.Features.Get<IRequestCultureFeature>();
     var currentCulture = requestCulture?.RequestCulture.Culture.TwoLetterISOLanguageName ?? "en";
     var isRtl = currentCulture == "ar";
     var returnUrl = Context.Request.Path + Context.Request.QueryString;
+    var warningCount = DbContext.Modems.Count(m => m.SimCards.Any(s => s.IsActive && s.Balance >= 45000));
 }
 <!DOCTYPE html>
 <html lang="@currentCulture" dir="@(isRtl ? "rtl" : "ltr")">
@@ -98,6 +100,7 @@
                 var isModem = page.StartsWith("/Modem");
                 var isUser = page.StartsWith("/User");
                 var isWithdrawal = page == "/Withdrawals";
+                var isWarning = page == "/Warnings";
             }
             <a href="/" class="sidebar-link relative flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium @(isHome ? "active" : "text-slate-300")">
                 <i class="fas fa-chart-pie w-5 text-center text-[13px]"></i>
@@ -114,6 +117,14 @@
             <a href="/Withdrawals" class="sidebar-link relative flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium @(isWithdrawal ? "active" : "text-slate-300")">
                 <i class="fas fa-money-bill-wave w-5 text-center text-[13px]"></i>
                 @L["Nav.Withdrawals"]
+            </a>
+            <a href="/Warnings" class="sidebar-link relative flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium @(isWarning ? "active" : "text-slate-300")">
+                <i class="fas fa-exclamation-triangle w-5 text-center text-[13px]"></i>
+                <span class="flex-1">@L["Nav.Warnings"]</span>
+                @if (warningCount > 0)
+                {
+                    <span class="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
+                }
             </a>
         </nav>
 
@@ -170,12 +181,43 @@
             @RenderBody()
         </div>
     </div>
+
+    <!-- Toast container -->
+    <div id="toastContainer" class="fixed top-4 right-4 z-50 flex flex-col gap-2" style="pointer-events:none;"></div>
+
     <script>
+        // CSRF token for HTMX
         document.body.addEventListener('htmx:configRequest', function(evt) {
             var token = document.querySelector('input[name="__RequestVerificationToken"]');
             if (token) evt.detail.headers['RequestVerificationToken'] = token.value;
         });
+
+        // Handle HX-Redirect after HTMX requests
+        document.body.addEventListener('htmx:afterRequest', function(evt) {
+            var redirect = evt.detail.xhr.getResponseHeader('HX-Redirect');
+            if (redirect) window.location.href = redirect;
+        });
+
+        // Toast notification system
+        function showToast(message, type) {
+            var container = document.getElementById('toastContainer');
+            var toast = document.createElement('div');
+            toast.style.pointerEvents = 'auto';
+            var bg = type === 'success' ? '#10b981' : type === 'error' ? '#ef4444' : '#6b7280';
+            var icon = type === 'success' ? 'fa-check-circle' : type === 'error' ? 'fa-times-circle' : 'fa-info-circle';
+            toast.innerHTML = '<div style="display:flex;align-items:center;gap:8px;background:' + bg + ';color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;font-weight:500;box-shadow:0 4px 12px rgba(0,0,0,0.15);min-width:200px;animation:slideIn 0.3s ease"><i class="fas ' + icon + '"></i> ' + message + '</div>';
+            container.appendChild(toast);
+            setTimeout(function() { toast.style.opacity = '0'; toast.style.transition = 'opacity 0.3s'; setTimeout(function() { toast.remove(); }, 300); }, 3000);
+        }
+
+        // Listen for toast events from HTMX responses
+        document.body.addEventListener('showToast', function(evt) {
+            showToast(evt.detail.message, evt.detail.type || 'success');
+        });
     </script>
+    <style>
+        @@keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+    </style>
 </body>
 </html>
 

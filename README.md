@@ -10,16 +10,17 @@ Automated SMS credit transfer gateway for Mobilis Algeria. Supports both **COM p
 2. [Requirements](#requirements)
 3. [Quick Start](#quick-start)
 4. [Architecture](#architecture)
-5. [AT Modems (COM Port)](#at-modems-com-port)
-6. [HiLink Modems (Huawei HTTP)](#hilink-modems-huawei-http)
-7. [Database Schema](#database-schema)
-8. [SMS Processing](#sms-processing)
-9. [Balance Tracking](#balance-tracking)
-10. [MongoDB Cloud Sync](#mongodb-cloud-sync)
-11. [Configuration](#configuration)
-12. [Console Commands](#console-commands)
-13. [Deployment](#deployment)
-14. [Source Files](#source-files)
+5. [FocusGate Dashboard (Web)](#focusgate-dashboard-web)
+6. [AT Modems (COM Port)](#at-modems-com-port)
+7. [HiLink Modems (Huawei HTTP)](#hilink-modems-huawei-http)
+8. [Database Schema](#database-schema)
+9. [SMS Processing](#sms-processing)
+10. [Balance Tracking](#balance-tracking)
+11. [MongoDB Cloud Sync](#mongodb-cloud-sync)
+12. [Configuration](#configuration)
+13. [Console Commands](#console-commands)
+14. [Deployment](#deployment)
+15. [Source Files](#source-files)
 
 ---
 
@@ -69,18 +70,23 @@ dotnet run --project src/FocusGate.AT
 
 # Run HiLink modems (Huawei HTTP):
 dotnet run --project src/FocusGate.HiLink
+
+# Run Web Dashboard (port 5080):
+dotnet run --project src/FocusGate.Dashboard
 ```
 
 ### Published (standalone)
 
 ```powershell
-# Build both (self-contained, no .NET needed on target)
+# Build all components (self-contained, no .NET needed on target)
 dotnet publish src/FocusGate.AT -c Release -r win-x64 --self-contained true -o dist/at
 dotnet publish src/FocusGate.HiLink -c Release -r win-x64 --self-contained true -o dist/hilink
+dotnet publish src/FocusGate.Dashboard -c Release -r win-x64 --self-contained true -o dist/dashboard
 
 # Run
 dist/at/FocusGate.AT.exe
 dist/hilink/FocusGate.HiLink.exe
+dist/dashboard/FocusGate.Dashboard.exe
 ```
 
 ### First Run
@@ -99,14 +105,16 @@ FocusGate.Core/              — Shared interfaces, models, DTOs, enums (20 file
 FocusGate.Infrastructure/    — Shared services (DB, Mongo, Config, ModemHandler, etc.) (14 files)
 FocusGate.AT/                — Standalone exe: COM port modem gateway (3 source files)
 FocusGate.HiLink/            — Standalone exe: HiLink HTTP modem gateway (2 source files)
-FocusGate.Desktop/           — WPF Dashboard (unused, to be deleted)
+FocusGate.Dashboard/         — ASP.NET Core Razor Pages Web Dashboard (Port 5080)
+FocusGate.Desktop/           — Deprecated WPF Dashboard
 ```
 
 ### Dependency Graph
 
 ```
-AT      → Core, Infrastructure
-HiLink  → Core, Infrastructure
+AT         → Core, Infrastructure
+HiLink     → Core, Infrastructure
+Dashboard  → Core, Infrastructure
 Infrastructure → Core
 ```
 
@@ -121,11 +129,27 @@ Both share the same database (`%APPDATA%\FocusGate\focusgate.db`), config (`%APP
 
 ### Single-Writer Pattern
 
-All SQLite writes go through `DatabaseWriteChannel` using `Channel<T>`. Thread-safe, no deadlocks.
+All SQLite writes go through `DatabaseWriteChannel` using `Channel<T>`. Thread-safe, no deadlocks. This allows AT, HiLink, and the Dashboard to safely interact with the database concurrently.
 
 ### Async System
 
 ModemHandler uses proper async `Task` loops with `SemaphoreSlim` (prevents overlapping access) and `CancellationTokenSource` (clean shutdown).
+
+---
+
+## FocusGate Dashboard (Web)
+
+**Run:** `dotnet run --project src/FocusGate.Dashboard`
+
+The **FocusGate Dashboard** is a modern, production-ready ASP.NET Core Razor Pages application running on port **5080**.
+
+### Key Features
+- **HTMX Integration**: The dashboard utilizes HTMX for smooth, SPA-like interactions without full page reloads. Includes a custom `HX-Redirect` and CSRF token header configuration for enhanced security.
+- **Localization (i18n)**: Fully localized in English (EN), French (FR), and Arabic (AR). Language strings are driven by `.resx` resource files.
+- **Toast Notifications**: Built-in, animated success/error toast notifications for user interactions (e.g., approving withdrawals, assigning modems).
+- **Robust Online/Offline Detection**: Intelligently identifies if a modem is online by verifying that its database `Status` is `Online` AND it has actively pinged the database (`UpdatedAt`) within the last **5 minutes**.
+- **Unified User Details**: Displays a user's assigned modems, their balance history, and a dedicated **SMS Tab** showing the last 50 SMS messages received by their assigned modems.
+- **Withdrawal Management**: Interactive approval and rejection of user withdrawal requests directly from the UI.
 
 ---
 
@@ -502,9 +526,21 @@ dist/
 | Program.cs | Entry point, DI, mutex `Global\FocusGate_HiLink` (return on contention) |
 | Services/HiLinkModemOrchestrator.cs | Network scanning every 30s, max 10 modems |
 
-### FocusGate.Desktop (unused)
+### FocusGate.Dashboard
 
-WPF Dashboard — dark theme, auto-refresh 5s, system tray. Exists in source but not deployed.
+| File | Description |
+|------|-------------|
+| Program.cs | Entry point, DI, Antiforgery configuration |
+| Pages/Shared/_Layout.cshtml | Main UI layout, HTMX CSRF injection, Toast Notification system |
+| Pages/Index.cshtml | Overview stats (Modems, Users, Balances, SMS) |
+| Pages/Modems.cshtml | Modem management and online/offline status (5m cutoff) |
+| Pages/UserDetail.cshtml | User wallet management, history, and assigned SMS tab |
+| Pages/Withdrawals.cshtml | Withdrawal request workflow (Approve/Reject) |
+| Resources/SharedResource.resx | Localization keys (EN, FR, AR) |
+
+### FocusGate.Desktop (Deprecated)
+
+WPF Dashboard — dark theme, auto-refresh 5s, system tray. Replaced by `FocusGate.Dashboard`.
 
 ---
 

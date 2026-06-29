@@ -38,6 +38,7 @@ builder.Host.UseSerilog();
 
 builder.Services.AddFocusGateDashboard(configuration, dataDir);
 builder.Services.AddLocalization();
+builder.Services.AddAntiforgery(options => options.HeaderName = "RequestVerificationToken");
 builder.Services.AddRazorPages();
 
 builder.WebHost.ConfigureKestrel(options =>
@@ -56,41 +57,6 @@ using (var scope = app.Services.CreateScope())
     var machineIdService = scope.ServiceProvider.GetRequiredService<Action<FocusGateDbContext>>();
     machineIdService(db);
 
-    // Seed test data for customer and withdrawal requests if none exist
-    if (!db.Users.Any(u => u.Role == FocusGate.Core.Enums.UserRole.User))
-    {
-        var testUser = new FocusGate.Core.Models.User
-        {
-            Username = "test_customer",
-            Password = "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b", // hashed "1"
-            DisplayName = "Test Customer",
-            Role = FocusGate.Core.Enums.UserRole.User,
-            IsActive = true,
-            Balance = 5000m,
-            CreatedAt = DateTime.UtcNow,
-            UpdatedAt = DateTime.UtcNow,
-            MachineId = db.MachineId ?? ""
-        };
-        db.Users.Add(testUser);
-        db.SaveChanges();
-    }
-
-    var customer = db.Users.FirstOrDefault(u => u.Role == FocusGate.Core.Enums.UserRole.User);
-    if (customer != null && !db.WithdrawalRequests.Any())
-    {
-        db.WithdrawalRequests.Add(new FocusGate.Core.Models.WithdrawalRequest
-        {
-            UserId = customer.Id,
-            Amount = 1500m,
-            Status = FocusGate.Core.Enums.WithdrawalStatus.Pending,
-            Note = "Requesting payout for testing",
-            RequestedAt = DateTime.UtcNow,
-            CreatedAt = DateTime.UtcNow,
-            UpdatedAt = DateTime.UtcNow,
-            MachineId = db.MachineId ?? ""
-        });
-        db.SaveChanges();
-    }
 }
 
 var cts = new CancellationTokenSource();

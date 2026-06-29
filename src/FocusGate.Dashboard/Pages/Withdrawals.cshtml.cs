@@ -4,19 +4,23 @@ using FocusGate.Infrastructure.Data;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Localization;
+using FocusGate.Dashboard.Resources;
 
 namespace FocusGate.Dashboard.Pages;
 
 public class WithdrawalsModel : PageModel
 {
     private readonly FocusGateDbContext _db;
+    private readonly IStringLocalizer<SharedResource> _localizer;
 
     public List<WithdrawalRow> Requests { get; set; } = new();
     public List<WithdrawalRow> AllRequests { get; set; } = new();
 
-    public WithdrawalsModel(FocusGateDbContext db)
+    public WithdrawalsModel(FocusGateDbContext db, IStringLocalizer<SharedResource> localizer)
     {
         _db = db;
+        _localizer = localizer;
     }
 
     public async Task OnGetAsync(string? status = null)
@@ -96,6 +100,7 @@ public class WithdrawalsModel : PageModel
         });
 
         await _db.SaveChangesAsync();
+        Response.Headers["HX-Trigger"] = $"{{\"showToast\":{{\"message\":\"{_localizer["Toast.WithdrawalApproved"]}\",\"type\":\"success\"}}}}";
         Response.Headers["HX-Redirect"] = "/Withdrawals";
         return new EmptyResult();
     }
@@ -116,6 +121,7 @@ public class WithdrawalsModel : PageModel
         request.UpdatedAt = DateTime.UtcNow;
 
         await _db.SaveChangesAsync();
+        Response.Headers["HX-Trigger"] = $"{{\"showToast\":{{\"message\":\"{_localizer["Toast.WithdrawalRejected"]}\",\"type\":\"success\"}}}}";
         Response.Headers["HX-Redirect"] = "/Withdrawals";
         return new EmptyResult();
     }

@@ -35,6 +35,8 @@ public class ModemsModel : PageModel
             .Include(um => um.User)
             .ToDictionaryAsync(um => um.ModemId);
 
+        var cutoff = DateTime.UtcNow.AddMinutes(-5);
+
         AllModems = allModemsRaw.Select(m =>
         {
             var sim = m.SimCards.FirstOrDefault(s => s.IsActive);
@@ -44,7 +46,7 @@ public class ModemsModel : PageModel
                 Id = m.Id, IMEI = m.IMEI,
                 ComPort = m.ComPort,
                 Brand = m.Brand.ToString(), Model = m.Model,
-                IsOnline = m.Status == ModemStatus.Online,
+                IsOnline = m.Status == ModemStatus.Online && m.UpdatedAt >= cutoff,
                 PhoneNumber = sim?.PhoneNumber.ToString() ?? "N/A",
                 Balance = sim?.Balance ?? 0,
                 LastSeen = sim?.LastSeen ?? m.CreatedAt,

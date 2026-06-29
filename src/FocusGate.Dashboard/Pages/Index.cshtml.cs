@@ -16,7 +16,6 @@ public class IndexModel : PageModel
     public decimal TotalUserBalance { get; set; }
     public int PendingWithdrawals { get; set; }
     public List<SmsRow> RecentSms { get; set; } = new();
-    public List<HighBalanceModemRow> HighBalanceModems { get; set; } = new();
 
     public IndexModel(FocusGateDbContext db)
     {
@@ -26,7 +25,8 @@ public class IndexModel : PageModel
     public async Task OnGetAsync()
     {
         ModemsTotal = await _db.Modems.CountAsync();
-        ModemsOnline = await _db.Modems.CountAsync(m => m.Status == Core.Enums.ModemStatus.Online);
+        var cutoff = DateTime.UtcNow.AddMinutes(-5);
+        ModemsOnline = await _db.Modems.CountAsync(m => m.Status == Core.Enums.ModemStatus.Online && m.UpdatedAt >= cutoff);
 
         SimCount = await _db.SimCards.CountAsync(s => s.IsActive);
         TotalSimBalance = (await _db.SimCards.Where(s => s.IsActive).Select(s => s.Balance).ToListAsync()).Sum();
@@ -48,17 +48,6 @@ public class IndexModel : PageModel
                 PhoneNumber = s.SimCard != null ? s.SimCard.PhoneNumber.ToString() : null
             })
             .ToListAsync();
-
-        HighBalanceModems = await _db.Modems
-            .Include(m => m.SimCards.Where(s => s.IsActive))
-            .Where(m => m.SimCards.Any(s => s.IsActive && s.Balance >= 1000))
-            .Select(m => new HighBalanceModemRow
-            {
-                Id = m.Id,
-                PhoneNumber = m.SimCards.FirstOrDefault(s => s.IsActive)!.PhoneNumber.ToString(),
-                Balance = m.SimCards.FirstOrDefault(s => s.IsActive)!.Balance
-            })
-            .ToListAsync();
     }
 
     public class SmsRow
@@ -68,12 +57,5 @@ public class IndexModel : PageModel
         public DateTime ReceivedAt { get; set; }
         public string? ModemImei { get; set; }
         public string? PhoneNumber { get; set; }
-    }
-
-    public class HighBalanceModemRow
-    {
-        public int Id { get; set; }
-        public string PhoneNumber { get; set; } = "";
-        public decimal Balance { get; set; }
     }
 }
