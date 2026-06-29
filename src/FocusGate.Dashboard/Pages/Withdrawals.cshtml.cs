@@ -100,7 +100,8 @@ public class WithdrawalsModel : PageModel
         });
 
         await _db.SaveChangesAsync();
-        Response.Headers["HX-Trigger"] = $"{{\"showToast\":{{\"message\":\"{_localizer["Toast.WithdrawalApproved"]}\",\"type\":\"success\"}}}}";
+        TempData["ToastMessage"] = _localizer["Toast.WithdrawalApproved"].Value;
+        TempData["ToastType"] = "success";
         Response.Headers["HX-Redirect"] = "/Withdrawals";
         return new EmptyResult();
     }
@@ -121,7 +122,8 @@ public class WithdrawalsModel : PageModel
         request.UpdatedAt = DateTime.UtcNow;
 
         await _db.SaveChangesAsync();
-        Response.Headers["HX-Trigger"] = $"{{\"showToast\":{{\"message\":\"{_localizer["Toast.WithdrawalRejected"]}\",\"type\":\"success\"}}}}";
+        TempData["ToastMessage"] = _localizer["Toast.WithdrawalRejected"].Value;
+        TempData["ToastType"] = "success";
         Response.Headers["HX-Redirect"] = "/Withdrawals";
         return new EmptyResult();
     }

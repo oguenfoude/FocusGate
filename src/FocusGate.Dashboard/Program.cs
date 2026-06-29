@@ -39,7 +39,7 @@ builder.Host.UseSerilog();
 builder.Services.AddFocusGateDashboard(configuration, dataDir);
 builder.Services.AddLocalization();
 builder.Services.AddAntiforgery(options => options.HeaderName = "RequestVerificationToken");
-builder.Services.AddRazorPages();
+builder.Services.AddRazorPages().AddViewLocalization();
 
 builder.WebHost.ConfigureKestrel(options =>
 {

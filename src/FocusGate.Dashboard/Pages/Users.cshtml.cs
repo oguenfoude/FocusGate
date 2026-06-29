@@ -67,7 +67,8 @@ public class UsersModel : PageModel
             user.ArchivedAt = DateTime.UtcNow;
             user.UpdatedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync();
-            Response.Headers["HX-Trigger"] = $"{{\"showToast\":{{\"message\":\"{_localizer["Toast.UserArchived"]}\",\"type\":\"success\"}}}}";
+            TempData["ToastMessage"] = _localizer["Toast.UserArchived"].Value;
+            TempData["ToastType"] = "success";
         }
         Response.Headers["HX-Redirect"] = "/Users";
         return new EmptyResult();
@@ -82,7 +83,8 @@ public class UsersModel : PageModel
             user.ArchivedAt = null;
             user.UpdatedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync();
-            Response.Headers["HX-Trigger"] = $"{{\"showToast\":{{\"message\":\"{_localizer["Toast.UserRestored"]}\",\"type\":\"success\"}}}}";
+            TempData["ToastMessage"] = _localizer["Toast.UserRestored"].Value;
+            TempData["ToastType"] = "success";
         }
         Response.Headers["HX-Redirect"] = "/Users";
         return new EmptyResult();
@@ -118,7 +120,8 @@ public class UsersModel : PageModel
         _db.Users.Add(user);
         await _db.SaveChangesAsync();
 
-        Response.Headers["HX-Trigger"] = $"{{\"showToast\":{{\"message\":\"{_localizer["Toast.UserCreated"]}\",\"type\":\"success\"}}}}";
+        TempData["ToastMessage"] = _localizer["Toast.UserCreated"].Value;
+        TempData["ToastType"] = "success";
         Response.Headers["HX-Redirect"] = "/Users";
         return new EmptyResult();
     }

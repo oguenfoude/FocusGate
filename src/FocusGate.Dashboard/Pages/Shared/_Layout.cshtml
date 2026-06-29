@@ -214,6 +214,15 @@
         document.body.addEventListener('showToast', function(evt) {
             showToast(evt.detail.message, evt.detail.type || 'success');
         });
+        
+        @if (TempData["ToastMessage"] != null)
+        {
+            <text>
+            document.addEventListener('DOMContentLoaded', function() {
+                showToast('@Html.Raw(TempData["ToastMessage"])', '@(TempData["ToastType"] ?? "success")');
+            });
+            </text>
+        }
     </script>
     <style>
         @@keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }

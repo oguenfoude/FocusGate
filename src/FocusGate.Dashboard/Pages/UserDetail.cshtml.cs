@@ -112,7 +112,8 @@ public class UserDetailModel : PageModel
             userModem.RemovedAt = DateTime.UtcNow;
             userModem.UpdatedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync();
-            Response.Headers["HX-Trigger"] = $"{{\"showToast\":{{\"message\":\"{_localizer["Toast.ModemUnassigned"]}\",\"type\":\"success\"}}}}";
+            TempData["ToastMessage"] = _localizer["Toast.ModemUnassigned"].Value;
+            TempData["ToastType"] = "success";
         }
 
         Response.Headers["HX-Redirect"] = $"/UserDetail?id={userId}";
@@ -146,7 +147,8 @@ public class UserDetailModel : PageModel
         // else: already active, do nothing
 
         await _db.SaveChangesAsync();
-        Response.Headers["HX-Trigger"] = $"{{\"showToast\":{{\"message\":\"{_localizer["Toast.ModemAssigned"]}\",\"type\":\"success\"}}}}";
+        TempData["ToastMessage"] = _localizer["Toast.ModemAssigned"].Value;
+        TempData["ToastType"] = "success";
         Response.Headers["HX-Redirect"] = $"/UserDetail?id={userId}";
         return new EmptyResult();
     }
@@ -178,7 +180,8 @@ public class UserDetailModel : PageModel
         });
 
         await _db.SaveChangesAsync();
-        Response.Headers["HX-Trigger"] = $"{{\"showToast\":{{\"message\":\"{_localizer["Toast.WithdrawalCreated"]}\",\"type\":\"success\"}}}}";
+        TempData["ToastMessage"] = _localizer["Toast.WithdrawalCreated"].Value;
+        TempData["ToastType"] = "success";
         Response.Headers["HX-Redirect"] = $"/UserDetail?id={userId}";
         return new EmptyResult();
     }

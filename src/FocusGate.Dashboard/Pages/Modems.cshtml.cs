@@ -4,19 +4,23 @@ using FocusGate.Infrastructure.Data;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Localization;
+using FocusGate.Dashboard.Resources;
 
 namespace FocusGate.Dashboard.Pages;
 
 public class ModemsModel : PageModel
 {
     private readonly FocusGateDbContext _db;
+    private readonly IStringLocalizer<SharedResource> _localizer;
 
     public List<ModemRow> Modems { get; set; } = new();
     public List<ModemRow> AllModems { get; set; } = new();
 
-    public ModemsModel(FocusGateDbContext db)
+    public ModemsModel(FocusGateDbContext db, IStringLocalizer<SharedResource> localizer)
     {
         _db = db;
+        _localizer = localizer;
     }
 
     public async Task OnGetAsync(string? status = null)
@@ -75,6 +79,8 @@ public class ModemsModel : PageModel
             userModem.RemovedAt = DateTime.UtcNow;
             userModem.UpdatedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync();
+            TempData["ToastMessage"] = _localizer["Toast.ModemUnassigned"].Value;
+            TempData["ToastType"] = "success";
         }
 
         Response.Headers["HX-Redirect"] = "/Modems";
