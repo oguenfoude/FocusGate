@@ -100,8 +100,9 @@
                 var isModem = page.StartsWith("/Modem");
                 var isUser = page.StartsWith("/User");
                 var isWithdrawal = page == "/Withdrawals";
-                var isWarning = page == "/Warnings";
-            }
+    var isWarning = page == "/Warnings";
+            var isSettings = page == "/AdminSettings";
+        }
             <a href="/" class="sidebar-link relative flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium @(isHome ? "active" : "text-slate-300")">
                 <i class="fas fa-chart-pie w-5 text-center text-[13px]"></i>
                 @L["Nav.Dashboard"]
@@ -125,6 +126,11 @@
                 {
                     <span class="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
                 }
+            </a>
+            <div class="my-2 border-t border-sidebar-border"></div>
+            <a href="/AdminSettings" class="sidebar-link relative flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium @(isSettings ? "active" : "text-slate-300")">
+                <i class="fas fa-gear w-5 text-center text-[13px]"></i>
+                @L["Nav.Settings"]
             </a>
         </nav>
 

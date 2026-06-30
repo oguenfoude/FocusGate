@@ -126,4 +126,25 @@
   <data name="Toast.UserArchived"><value>تم أرشفة المستخدم بنجاح</value></data>
   <data name="Toast.UserRestored"><value>تم استعادة المستخدم بنجاح</value></data>
   <data name="Toast.UserCreated"><value>تم إنشاء المستخدم بنجاح</value></data>
+  <data name="Settings.Title"><value>إعدادات المسؤول</value></data>
+  <data name="Settings.AdminAccount"><value>حساب المسؤول</value></data>
+  <data name="Settings.NoDisplayName"><value>لم يتم تعيين اسم عرض</value></data>
+  <data name="Settings.ChangeUsername"><value>تغيير اسم المستخدم</value></data>
+  <data name="Settings.CurrentUsername"><value>اسم المستخدم الحالي</value></data>
+  <data name="Settings.NewUsername"><value>اسم المستخدم الجديد</value></data>
+  <data name="Settings.NewUsernamePlaceholder"><value>أدخل اسم المستخدم الجديد</value></data>
+  <data name="Settings.UpdateUsername"><value>تحديث اسم المستخدم</value></data>
+  <data name="Settings.ChangePassword"><value>تغيير كلمة المرور</value></data>
+  <data name="Settings.NewPassword"><value>كلمة المرور الجديدة</value></data>
+  <data name="Settings.NewPasswordPlaceholder"><value>أدخل كلمة المرور الجديدة</value></data>
+  <data name="Settings.ConfirmPassword"><value>تأكيد كلمة المرور</value></data>
+  <data name="Settings.ConfirmPasswordPlaceholder"><value>أعد إدخال كلمة المرور الجديدة</value></data>
+  <data name="Settings.UpdatePassword"><value>تحديث كلمة المرور</value></data>
+  <data name="Settings.UsernameRequired"><value>اسم المستخدم مطلوب</value></data>
+  <data name="Settings.UsernameTaken"><value>اسم المستخدم مستخدم بالفعل</value></data>
+  <data name="Settings.UsernameUpdated"><value>تم تحديث اسم المستخدم بنجاح</value></data>
+  <data name="Settings.PasswordRequired"><value>كلمة المرور مطلوبة</value></data>
+  <data name="Settings.PasswordMismatch"><value>كلمتا المرور غير متطابقتين</value></data>
+  <data name="Settings.PasswordUpdated"><value>تم تحديث كلمة المرور بنجاح</value></data>
+  <data name="Nav.Settings"><value>الإعدادات</value></data>
 </root>

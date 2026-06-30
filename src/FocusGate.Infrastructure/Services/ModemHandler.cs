@@ -332,6 +332,10 @@ public class ModemHandler : IDisposable
                 _log.LogWarning("Modem {Id}: HiLink unreachable, disconnecting for re-probe", _modemId);
                 await DisconnectAsync();
             }
+            else
+            {
+                await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.UpdateModemStatus, Data = new { ModemId = _modemId, Status = ModemStatus.Online } });
+            }
             return;
         }
 
@@ -342,6 +346,10 @@ public class ModemHandler : IDisposable
             {
                 _log.LogWarning("Modem {Id}: Watchdog AT failed -> disconnecting for re-probe", _modemId);
                 await DisconnectAsync();
+            }
+            else
+            {
+                await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.UpdateModemStatus, Data = new { ModemId = _modemId, Status = ModemStatus.Online } });
             }
         }
         catch (IOException) { await DisconnectAsync(); }

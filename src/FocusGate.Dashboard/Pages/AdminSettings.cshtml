@@ -1,0 +1,85 @@
+@page
+@model FocusGate.Dashboard.Pages.AdminSettingsModel
+@{
+    ViewData["Title"] = L["Settings.Title"];
+}
+
+<div class="max-w-2xl mx-auto space-y-6">
+
+    <!-- Current Info -->
+    <div class="card">
+        <div class="card-header">
+            <h3 class="text-sm font-semibold text-gray-900"><i class="fas fa-user-shield mr-2 text-brand-500"></i>@L["Settings.AdminAccount"]</h3>
+        </div>
+        <div class="card-body">
+            <div class="flex items-center gap-4">
+                <div class="w-12 h-12 bg-brand-50 text-brand-600 rounded-full flex items-center justify-center text-lg font-bold flex-shrink-0">
+                    @Model.CurrentUsername[0]
+                </div>
+                <div>
+                    <p class="text-sm font-semibold text-gray-900">@Model.CurrentUsername</p>
+                    <p class="text-xs text-gray-400">@(string.IsNullOrEmpty(Model.CurrentDisplayName) ? L["Settings.NoDisplayName"].Value : Model.CurrentDisplayName)</p>
+                </div>
+                <span class="badge badge-purple ml-auto">Admin</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Change Username -->
+    <div class="card">
+        <div class="card-header">
+            <h3 class="text-sm font-semibold text-gray-900"><i class="fas fa-pen mr-2 text-blue-500"></i>@L["Settings.ChangeUsername"]</h3>
+        </div>
+        <div class="card-body">
+            <form method="post" asp-page-handler="ChangeUsername">
+                <div class="space-y-3">
+                    <div>
+                        <label class="block text-xs font-medium text-gray-500 mb-1">@L["Settings.CurrentUsername"]</label>
+                        <input type="text" value="@Model.CurrentUsername" disabled class="input bg-gray-50 text-gray-400 cursor-not-allowed" />
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-500 mb-1">@L["Settings.NewUsername"]</label>
+                        <input type="text" name="NewUsername" required maxlength="50"
+                               placeholder="@L["Settings.NewUsernamePlaceholder"]"
+                               class="input" />
+                    </div>
+                    <div class="flex justify-end">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-check text-xs"></i> @L["Settings.UpdateUsername"]
+                        </button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Change Password -->
+    <div class="card">
+        <div class="card-header">
+            <h3 class="text-sm font-semibold text-gray-900"><i class="fas fa-lock mr-2 text-amber-500"></i>@L["Settings.ChangePassword"]</h3>
+        </div>
+        <div class="card-body">
+            <form method="post" asp-page-handler="ChangePassword">
+                <div class="space-y-3">
+                    <div>
+                        <label class="block text-xs font-medium text-gray-500 mb-1">@L["Settings.NewPassword"]</label>
+                        <input type="text" name="NewPassword" required maxlength="100"
+                               placeholder="@L["Settings.NewPasswordPlaceholder"]"
+                               class="input" />
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-500 mb-1">@L["Settings.ConfirmPassword"]</label>
+                        <input type="text" name="ConfirmPassword" required maxlength="100"
+                               placeholder="@L["Settings.ConfirmPasswordPlaceholder"]"
+                               class="input" />
+                    </div>
+                    <div class="flex justify-end">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-check text-xs"></i> @L["Settings.UpdatePassword"]
+                        </button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>

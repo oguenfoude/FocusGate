@@ -126,4 +126,25 @@
   <data name="Toast.UserArchived"><value>User archived successfully</value></data>
   <data name="Toast.UserRestored"><value>User restored successfully</value></data>
   <data name="Toast.UserCreated"><value>User created successfully</value></data>
+  <data name="Settings.Title"><value>Admin Settings</value></data>
+  <data name="Settings.AdminAccount"><value>Admin Account</value></data>
+  <data name="Settings.NoDisplayName"><value>No display name set</value></data>
+  <data name="Settings.ChangeUsername"><value>Change Username</value></data>
+  <data name="Settings.CurrentUsername"><value>Current username</value></data>
+  <data name="Settings.NewUsername"><value>New username</value></data>
+  <data name="Settings.NewUsernamePlaceholder"><value>Enter new username</value></data>
+  <data name="Settings.UpdateUsername"><value>Update Username</value></data>
+  <data name="Settings.ChangePassword"><value>Change Password</value></data>
+  <data name="Settings.NewPassword"><value>New password</value></data>
+  <data name="Settings.NewPasswordPlaceholder"><value>Enter new password</value></data>
+  <data name="Settings.ConfirmPassword"><value>Confirm password</value></data>
+  <data name="Settings.ConfirmPasswordPlaceholder"><value>Re-enter new password</value></data>
+  <data name="Settings.UpdatePassword"><value>Update Password</value></data>
+  <data name="Settings.UsernameRequired"><value>Username is required</value></data>
+  <data name="Settings.UsernameTaken"><value>Username is already taken</value></data>
+  <data name="Settings.UsernameUpdated"><value>Username updated successfully</value></data>
+  <data name="Settings.PasswordRequired"><value>Password is required</value></data>
+  <data name="Settings.PasswordMismatch"><value>Passwords do not match</value></data>
+  <data name="Settings.PasswordUpdated"><value>Password updated successfully</value></data>
+  <data name="Nav.Settings"><value>Settings</value></data>
 </root>
