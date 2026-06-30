@@ -55,7 +55,7 @@ Copy-Item dist\dashboard\wwwroot dist\hilink\wwwroot -Recurse
 ```powershell
 cd focusgate-web
 npm run dev      # Dev server (port 3000, --webpack flag required)
-npm run build    # Production build
+npm run build    # Production build (--webpack flag required)
 npm run lint     # ESLint
 npm start        # Production server
 ```

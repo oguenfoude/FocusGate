@@ -237,7 +237,7 @@ SQLite: `%APPDATA%\FocusGate\focusgate.db` — 8 tables. All tables have `Update
 | Modems | IMEI, ComPort, Status, Brand, Manufacturer, Model |
 | SimCards | IMSI, PhoneNumber, Balance, Status, VerifiedAt, LastSeen |
 | SmsRecords | SenderNumber, Content, ReceivedAt |
-| Users | Username, Password (SHA256), Role, Balance (wallet) |
+| Users | Username, Password (plain text), Role, Balance (wallet) |
 | UserModems | UserId ↔ ModemId assignment (with AssignedAt/RemovedAt) |
 | BalanceHistories | SimCard balance over time, Source (USSD/SMS/Settlement/Withdrawal), UserId (nullable) |
 | WithdrawalRequests | User withdrawal requests (Pending→Approved/Rejected) |

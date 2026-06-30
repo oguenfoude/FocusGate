@@ -38,3 +38,4 @@ packages.lock.json
 
 ## folders
 focusgate-web
+.playwright-mcp

@@ -105,7 +105,7 @@
 | `_id` | ObjectId | Auto-generated |
 | `Id` | long | Primary key |
 | `Username` | string | Unique, max 50 chars |
-| `Password` | string | SHA256 hash, max 100 chars |
+| `Password` | string | Plain text password, max 100 chars |
 | `DisplayName` | string | Max 100 chars |
 | `Role` | int | 0=User, 1=Admin |
 | `IsActive` | bool | Account active flag |
