@@ -458,11 +458,9 @@ public class MongoSyncService : BackgroundService
             var mongoDocs = await collection.Find(filter).ToListAsync(ct);
             if (mongoDocs.Count == 0) return 0;
 
-            var ids = mongoDocs.Select(getId).Distinct().ToList();
-            var localDocs = await db.Set<T>().IgnoreQueryFilters()
-                .Where(x => ids.Contains(getId(x)))
-                .ToListAsync(ct);
-            var localMap = localDocs.ToDictionary(getId);
+            var ids = new HashSet<long>(mongoDocs.Select(getId));
+            var localDocs = await db.Set<T>().IgnoreQueryFilters().ToListAsync(ct);
+            var localMap = localDocs.Where(x => ids.Contains(getId(x))).ToDictionary(getId);
 
             var count = 0;
             foreach (var m in mongoDocs)
