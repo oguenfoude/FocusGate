@@ -92,10 +92,23 @@ npm start        # Production server
 ## Data Flow
 
 ```
-USB Modems → .NET Gateway → SQLite (local) → MongoDB Atlas (cloud)
-                                                  ↓
-                                        Next.js Web App (reads MongoDB)
+USB Modems → .NET Gateway → SQLite (local) → MongoDB Atlas (cloud) ← Next.js Web App (writes users/withdrawals)
 ```
+
+### Data Ownership (who writes each collection)
+
+| Collection | Writer | Notes |
+|------------|--------|-------|
+| `modems` | .NET only | Status, IMEI, ComPort, Brand |
+| `simcards` | .NET only | Balance (from USSD), IMSI, PhoneNumber |
+| `smsrecords` | .NET only | SMS received by modems |
+| `users` | Next.js only | Created/edited by admin in web UI |
+| `usermodems` | Next.js only | Assign/remove modem-to-user |
+| `balancehistories` | .NET only | SIM balance change records (from USSD) |
+| `withdrawalrequests` | Next.js only | User requests, admin approve/reject |
+| `userbalancehistories` | Next.js only | Created on withdrawal approval |
+
+Both systems pull from MongoDB → SQLite. .NET pushes modem/SIM/SMS data. Next.js pushes user/assignment/withdrawal data.
 
 ## MongoDB Collections (8)
 

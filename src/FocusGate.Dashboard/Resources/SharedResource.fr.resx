@@ -126,4 +126,25 @@
   <data name="Toast.UserArchived"><value>Utilisateur archivé avec succès</value></data>
   <data name="Toast.UserRestored"><value>Utilisateur restauré avec succès</value></data>
   <data name="Toast.UserCreated"><value>Utilisateur créé avec succès</value></data>
+  <data name="Settings.Title"><value>Paramètres administrateur</value></data>
+  <data name="Settings.AdminAccount"><value>Compte administrateur</value></data>
+  <data name="Settings.NoDisplayName"><value>Aucun nom d'affichage défini</value></data>
+  <data name="Settings.ChangeUsername"><value>Changer le nom d'utilisateur</value></data>
+  <data name="Settings.CurrentUsername"><value>Nom d'utilisateur actuel</value></data>
+  <data name="Settings.NewUsername"><value>Nouveau nom d'utilisateur</value></data>
+  <data name="Settings.NewUsernamePlaceholder"><value>Entrez le nouveau nom d'utilisateur</value></data>
+  <data name="Settings.UpdateUsername"><value>Mettre à jour le nom d'utilisateur</value></data>
+  <data name="Settings.ChangePassword"><value>Changer le mot de passe</value></data>
+  <data name="Settings.NewPassword"><value>Nouveau mot de passe</value></data>
+  <data name="Settings.NewPasswordPlaceholder"><value>Entrez le nouveau mot de passe</value></data>
+  <data name="Settings.ConfirmPassword"><value>Confirmer le mot de passe</value></data>
+  <data name="Settings.ConfirmPasswordPlaceholder"><value>Ressaisissez le nouveau mot de passe</value></data>
+  <data name="Settings.UpdatePassword"><value>Mettre à jour le mot de passe</value></data>
+  <data name="Settings.UsernameRequired"><value>Le nom d'utilisateur est requis</value></data>
+  <data name="Settings.UsernameTaken"><value>Le nom d'utilisateur est déjà pris</value></data>
+  <data name="Settings.UsernameUpdated"><value>Nom d'utilisateur mis à jour avec succès</value></data>
+  <data name="Settings.PasswordRequired"><value>Le mot de passe est requis</value></data>
+  <data name="Settings.PasswordMismatch"><value>Les mots de passe ne correspondent pas</value></data>
+  <data name="Settings.PasswordUpdated"><value>Mot de passe mis à jour avec succès</value></data>
+  <data name="Nav.Settings"><value>Paramètres</value></data>
 </root>

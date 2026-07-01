@@ -326,6 +326,7 @@ public class MongoSyncService : BackgroundService
             s => s.Id, (local, s) =>
             {
                 local.IMSI = s.IMSI;
+                local.ModemId = s.ModemId;
                 local.PhoneNumber = s.PhoneNumber;
                 local.Balance = s.Balance;
                 local.VerifiedAt = s.VerifiedAt;
@@ -346,6 +347,7 @@ public class MongoSyncService : BackgroundService
         pulled += await PullCollectionAsync(db, _mongo.SmsRecords, smsFilter,
             s => s.Id, (local, s) =>
             {
+                local.SimCardId = s.SimCardId;
                 local.SenderNumber = s.SenderNumber;
                 local.Content = s.Content;
                 local.ReceivedAt = s.ReceivedAt;
@@ -361,6 +363,9 @@ public class MongoSyncService : BackgroundService
         pulled += await PullCollectionAsync(db, _mongo.BalanceHistories, balFilter,
             b => b.Id, (local, b) =>
             {
+                local.SimCardId = b.SimCardId;
+                local.ModemId = b.ModemId;
+                local.UserId = b.UserId;
                 local.Balance = b.Balance;
                 local.PreviousBalance = b.PreviousBalance;
                 local.Source = b.Source;
