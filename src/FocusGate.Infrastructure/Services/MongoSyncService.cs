@@ -263,12 +263,10 @@ public class MongoSyncService : BackgroundService
         var since = _lastSyncAt;
         var pulled = 0;
 
-        var machineFilter = Builders<Modem>.Filter.And(
-            Builders<Modem>.Filter.Eq(x => x.MachineId, _machineId),
-            since == DateTime.MinValue
-                ? FilterDefinition<Modem>.Empty
-                : Builders<Modem>.Filter.Gt(x => x.UpdatedAt, since));
-        var mongoModems = await _mongo.Modems.Find(machineFilter).ToListAsync(ct);
+        var modemPullFilter = since == DateTime.MinValue
+            ? FilterDefinition<Modem>.Empty
+            : Builders<Modem>.Filter.Gt(x => x.UpdatedAt, since);
+        var mongoModems = await _mongo.Modems.Find(modemPullFilter).ToListAsync(ct);
         foreach (var m in mongoModems)
         {
             var local = await db.Modems.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == m.Id, ct);
@@ -290,12 +288,10 @@ public class MongoSyncService : BackgroundService
         pulled += mongoModems.Count;
         await SafeSaveAsync(db, "modems", ct);
 
-        var simMachineFilter = Builders<SimCard>.Filter.And(
-            Builders<SimCard>.Filter.Eq(x => x.MachineId, _machineId),
-            since == DateTime.MinValue
-                ? FilterDefinition<SimCard>.Empty
-                : Builders<SimCard>.Filter.Gt(x => x.UpdatedAt, since));
-        var mongoSims = await _mongo.SimCards.Find(simMachineFilter).ToListAsync(ct);
+        var simPullFilter = since == DateTime.MinValue
+            ? FilterDefinition<SimCard>.Empty
+            : Builders<SimCard>.Filter.Gt(x => x.UpdatedAt, since);
+        var mongoSims = await _mongo.SimCards.Find(simPullFilter).ToListAsync(ct);
         foreach (var s in mongoSims)
         {
             var local = await db.SimCards.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == s.Id, ct);
@@ -323,12 +319,10 @@ public class MongoSyncService : BackgroundService
         }
         await SafeSaveAsync(db, "simcards", ct);
 
-        var smsMachineFilter = Builders<SmsRecord>.Filter.And(
-            Builders<SmsRecord>.Filter.Eq(x => x.MachineId, _machineId),
-            since == DateTime.MinValue
-                ? FilterDefinition<SmsRecord>.Empty
-                : Builders<SmsRecord>.Filter.Gt(x => x.UpdatedAt, since));
-        var mongoSms = await _mongo.SmsRecords.Find(smsMachineFilter).ToListAsync(ct);
+        var smsPullFilter = since == DateTime.MinValue
+            ? FilterDefinition<SmsRecord>.Empty
+            : Builders<SmsRecord>.Filter.Gt(x => x.UpdatedAt, since);
+        var mongoSms = await _mongo.SmsRecords.Find(smsPullFilter).ToListAsync(ct);
         foreach (var s in mongoSms)
         {
             var local = await db.SmsRecords.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == s.Id, ct);
@@ -350,12 +344,10 @@ public class MongoSyncService : BackgroundService
         }
         await SafeSaveAsync(db, "smsrecords", ct);
 
-        var balMachineFilter = Builders<BalanceHistory>.Filter.And(
-            Builders<BalanceHistory>.Filter.Eq(x => x.MachineId, _machineId),
-            since == DateTime.MinValue
-                ? FilterDefinition<BalanceHistory>.Empty
-                : Builders<BalanceHistory>.Filter.Gt(x => x.UpdatedAt, since));
-        var mongoBalances = await _mongo.BalanceHistories.Find(balMachineFilter).ToListAsync(ct);
+        var balPullFilter = since == DateTime.MinValue
+            ? FilterDefinition<BalanceHistory>.Empty
+            : Builders<BalanceHistory>.Filter.Gt(x => x.UpdatedAt, since);
+        var mongoBalances = await _mongo.BalanceHistories.Find(balPullFilter).ToListAsync(ct);
         foreach (var b in mongoBalances)
         {
             var local = await db.BalanceHistories.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == b.Id, ct);
@@ -377,12 +369,10 @@ public class MongoSyncService : BackgroundService
         }
         await SafeSaveAsync(db, "balancehistories", ct);
 
-        var userMachineFilter = Builders<User>.Filter.And(
-            Builders<User>.Filter.Eq(x => x.MachineId, _machineId),
-            since == DateTime.MinValue
-                ? FilterDefinition<User>.Empty
-                : Builders<User>.Filter.Gt(x => x.UpdatedAt, since));
-        var mongoUsers = await _mongo.Users.Find(userMachineFilter).ToListAsync(ct);
+        var userPullFilter = since == DateTime.MinValue
+            ? FilterDefinition<User>.Empty
+            : Builders<User>.Filter.Gt(x => x.UpdatedAt, since);
+        var mongoUsers = await _mongo.Users.Find(userPullFilter).ToListAsync(ct);
         foreach (var u in mongoUsers)
         {
             var local = await db.Users.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == u.Id, ct);
@@ -406,12 +396,10 @@ public class MongoSyncService : BackgroundService
         }
         await SafeSaveAsync(db, "users", ct);
 
-        var umMachineFilter = Builders<UserModem>.Filter.And(
-            Builders<UserModem>.Filter.Eq(x => x.MachineId, _machineId),
-            since == DateTime.MinValue
-                ? FilterDefinition<UserModem>.Empty
-                : Builders<UserModem>.Filter.Gt(x => x.UpdatedAt, since));
-        var mongoUserModems = await _mongo.UserModems.Find(umMachineFilter).ToListAsync(ct);
+        var umPullFilter = since == DateTime.MinValue
+            ? FilterDefinition<UserModem>.Empty
+            : Builders<UserModem>.Filter.Gt(x => x.UpdatedAt, since);
+        var mongoUserModems = await _mongo.UserModems.Find(umPullFilter).ToListAsync(ct);
         foreach (var um in mongoUserModems)
         {
             var local = await db.UserModems.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == um.Id, ct);
@@ -433,12 +421,10 @@ public class MongoSyncService : BackgroundService
         }
         await SafeSaveAsync(db, "usermodems", ct);
 
-        var wrMachineFilter = Builders<WithdrawalRequest>.Filter.And(
-            Builders<WithdrawalRequest>.Filter.Eq(x => x.MachineId, _machineId),
-            since == DateTime.MinValue
-                ? FilterDefinition<WithdrawalRequest>.Empty
-                : Builders<WithdrawalRequest>.Filter.Gt(x => x.UpdatedAt, since));
-        var mongoWithdrawals = await _mongo.WithdrawalRequests.Find(wrMachineFilter).ToListAsync(ct);
+        var wrPullFilter = since == DateTime.MinValue
+            ? FilterDefinition<WithdrawalRequest>.Empty
+            : Builders<WithdrawalRequest>.Filter.Gt(x => x.UpdatedAt, since);
+        var mongoWithdrawals = await _mongo.WithdrawalRequests.Find(wrPullFilter).ToListAsync(ct);
         foreach (var w in mongoWithdrawals)
         {
             var local = await db.WithdrawalRequests.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == w.Id, ct);
@@ -464,12 +450,10 @@ public class MongoSyncService : BackgroundService
         }
         await SafeSaveAsync(db, "withdrawalrequests", ct);
 
-        var ubhMachineFilter = Builders<UserBalanceHistory>.Filter.And(
-            Builders<UserBalanceHistory>.Filter.Eq(x => x.MachineId, _machineId),
-            since == DateTime.MinValue
-                ? FilterDefinition<UserBalanceHistory>.Empty
-                : Builders<UserBalanceHistory>.Filter.Gt(x => x.UpdatedAt, since));
-        var mongoUserBalances = await _mongo.UserBalanceHistories.Find(ubhMachineFilter).ToListAsync(ct);
+        var ubhPullFilter = since == DateTime.MinValue
+            ? FilterDefinition<UserBalanceHistory>.Empty
+            : Builders<UserBalanceHistory>.Filter.Gt(x => x.UpdatedAt, since);
+        var mongoUserBalances = await _mongo.UserBalanceHistories.Find(ubhPullFilter).ToListAsync(ct);
         foreach (var ub in mongoUserBalances)
         {
             var local = await db.UserBalanceHistories.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == ub.Id, ct);
