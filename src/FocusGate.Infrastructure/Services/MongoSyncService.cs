@@ -46,16 +46,55 @@ public class MongoSyncService : BackgroundService
         _intervalSeconds = intervalSeconds;
     }
 
+    private const int MaxRetryAttempts = 5;
+    private const int RetryDelaySeconds = 30;
+    private const int StartupDelaySeconds = 15;
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("MongoSync started (interval: {Interval}s, machine: {Machine})",
             _intervalSeconds, _machineId);
 
-        var connected = await _mongo.TestConnectionAsync();
-        if (!connected)
+        _logger.LogInformation("Waiting {Delay}s for modems to initialize before connecting to MongoDB...",
+            StartupDelaySeconds);
+        await Task.Delay(TimeSpan.FromSeconds(StartupDelaySeconds), stoppingToken);
+
+        var retryCount = 0;
+        while (retryCount < MaxRetryAttempts)
         {
-            _logger.LogWarning("MongoDB unavailable — sync disabled (app works without cloud)");
-            return;
+            try
+            {
+                var connected = await _mongo.TestConnectionAsync();
+                if (connected)
+                {
+                    _logger.LogInformation("MongoDB connected successfully (attempt {Attempt})", retryCount + 1);
+                    break;
+                }
+
+                retryCount++;
+                if (retryCount >= MaxRetryAttempts)
+                {
+                    _logger.LogWarning("MongoDB unavailable after {Attempts} attempts — sync disabled (app works without cloud)", retryCount);
+                    return;
+                }
+
+                _logger.LogWarning("MongoDB connection failed (attempt {Attempt}/{Max}), retrying in {Delay}s...",
+                    retryCount, MaxRetryAttempts, RetryDelaySeconds);
+                await Task.Delay(TimeSpan.FromSeconds(RetryDelaySeconds), stoppingToken);
+            }
+            catch (OperationCanceledException) { return; }
+            catch (Exception ex)
+            {
+                retryCount++;
+                _logger.LogWarning(ex, "MongoDB connection error (attempt {Attempt}/{Max}), retrying in {Delay}s...",
+                    retryCount, MaxRetryAttempts, RetryDelaySeconds);
+                if (retryCount >= MaxRetryAttempts)
+                {
+                    _logger.LogWarning("MongoDB unavailable after {Attempts} attempts — sync disabled (app works without cloud)", retryCount);
+                    return;
+                }
+                await Task.Delay(TimeSpan.FromSeconds(RetryDelaySeconds), stoppingToken);
+            }
         }
 
         while (!stoppingToken.IsCancellationRequested)
@@ -67,7 +106,7 @@ public class MongoSyncService : BackgroundService
                     await _mongo.TestConnectionAsync();
                     if (!_mongo.IsConnected)
                     {
-                        await Task.Delay(TimeSpan.FromSeconds(60), stoppingToken);
+                        await Task.Delay(TimeSpan.FromSeconds(RetryDelaySeconds), stoppingToken);
                         continue;
                     }
                     _logger.LogInformation("MongoDB now available — resuming sync");
@@ -90,7 +129,7 @@ public class MongoSyncService : BackgroundService
             catch (InvalidOperationException ex)
             {
                 _lastError = ex.Message;
-                _logger.LogWarning("MongoDB unavailable — retrying in 60s: {Error}", ex.Message);
+                _logger.LogWarning("MongoDB sync error — retrying in {Delay}s: {Error}", RetryDelaySeconds, ex.Message);
                 _mongo.IsConnected = false;
             }
             catch (Exception ex)
@@ -263,19 +302,11 @@ public class MongoSyncService : BackgroundService
         var since = _lastSyncAt;
         var pulled = 0;
 
-        var modemPullFilter = since == DateTime.MinValue
+        var modemFilter = since == DateTime.MinValue
             ? FilterDefinition<Modem>.Empty
             : Builders<Modem>.Filter.Gt(x => x.UpdatedAt, since);
-        var mongoModems = await _mongo.Modems.Find(modemPullFilter).ToListAsync(ct);
-        foreach (var m in mongoModems)
-        {
-            var local = await db.Modems.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == m.Id, ct);
-            if (local == null)
-            {
-                m.MachineId = _machineId;
-                db.Modems.Add(m);
-            }
-            else if (m.UpdatedAt > local.UpdatedAt)
+        pulled += await PullCollectionAsync(db, _mongo.Modems, modemFilter,
+            m => m.Id, (local, m) =>
             {
                 local.IMEI = m.IMEI;
                 local.ComPort = m.ComPort;
@@ -283,24 +314,13 @@ public class MongoSyncService : BackgroundService
                 local.UpdatedAt = m.UpdatedAt;
                 local.ArchivedAt = m.ArchivedAt;
                 local.MachineId = _machineId;
-            }
-        }
-        pulled += mongoModems.Count;
-        await SafeSaveAsync(db, "modems", ct);
+            }, "modems", ct);
 
-        var simPullFilter = since == DateTime.MinValue
+        var simFilter = since == DateTime.MinValue
             ? FilterDefinition<SimCard>.Empty
             : Builders<SimCard>.Filter.Gt(x => x.UpdatedAt, since);
-        var mongoSims = await _mongo.SimCards.Find(simPullFilter).ToListAsync(ct);
-        foreach (var s in mongoSims)
-        {
-            var local = await db.SimCards.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == s.Id, ct);
-            if (local == null)
-            {
-                s.MachineId = _machineId;
-                db.SimCards.Add(s);
-            }
-            else if (s.UpdatedAt > local.UpdatedAt)
+        pulled += await PullCollectionAsync(db, _mongo.SimCards, simFilter,
+            s => s.Id, (local, s) =>
             {
                 local.IMSI = s.IMSI;
                 local.PhoneNumber = s.PhoneNumber;
@@ -315,23 +335,13 @@ public class MongoSyncService : BackgroundService
                 local.UpdatedAt = s.UpdatedAt;
                 local.ArchivedAt = s.ArchivedAt;
                 local.MachineId = _machineId;
-            }
-        }
-        await SafeSaveAsync(db, "simcards", ct);
+            }, "simcards", ct);
 
-        var smsPullFilter = since == DateTime.MinValue
+        var smsFilter = since == DateTime.MinValue
             ? FilterDefinition<SmsRecord>.Empty
             : Builders<SmsRecord>.Filter.Gt(x => x.UpdatedAt, since);
-        var mongoSms = await _mongo.SmsRecords.Find(smsPullFilter).ToListAsync(ct);
-        foreach (var s in mongoSms)
-        {
-            var local = await db.SmsRecords.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == s.Id, ct);
-            if (local == null)
-            {
-                s.MachineId = _machineId;
-                db.SmsRecords.Add(s);
-            }
-            else if (s.UpdatedAt > local.UpdatedAt)
+        pulled += await PullCollectionAsync(db, _mongo.SmsRecords, smsFilter,
+            s => s.Id, (local, s) =>
             {
                 local.SenderNumber = s.SenderNumber;
                 local.Content = s.Content;
@@ -340,23 +350,13 @@ public class MongoSyncService : BackgroundService
                 local.UpdatedAt = s.UpdatedAt;
                 local.ArchivedAt = s.ArchivedAt;
                 local.MachineId = _machineId;
-            }
-        }
-        await SafeSaveAsync(db, "smsrecords", ct);
+            }, "smsrecords", ct);
 
-        var balPullFilter = since == DateTime.MinValue
+        var balFilter = since == DateTime.MinValue
             ? FilterDefinition<BalanceHistory>.Empty
             : Builders<BalanceHistory>.Filter.Gt(x => x.UpdatedAt, since);
-        var mongoBalances = await _mongo.BalanceHistories.Find(balPullFilter).ToListAsync(ct);
-        foreach (var b in mongoBalances)
-        {
-            var local = await db.BalanceHistories.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == b.Id, ct);
-            if (local == null)
-            {
-                b.MachineId = _machineId;
-                db.BalanceHistories.Add(b);
-            }
-            else if (b.UpdatedAt > local.UpdatedAt)
+        pulled += await PullCollectionAsync(db, _mongo.BalanceHistories, balFilter,
+            b => b.Id, (local, b) =>
             {
                 local.Balance = b.Balance;
                 local.PreviousBalance = b.PreviousBalance;
@@ -365,23 +365,13 @@ public class MongoSyncService : BackgroundService
                 local.UpdatedAt = b.UpdatedAt;
                 local.ArchivedAt = b.ArchivedAt;
                 local.MachineId = _machineId;
-            }
-        }
-        await SafeSaveAsync(db, "balancehistories", ct);
+            }, "balancehistories", ct);
 
-        var userPullFilter = since == DateTime.MinValue
+        var userFilter = since == DateTime.MinValue
             ? FilterDefinition<User>.Empty
             : Builders<User>.Filter.Gt(x => x.UpdatedAt, since);
-        var mongoUsers = await _mongo.Users.Find(userPullFilter).ToListAsync(ct);
-        foreach (var u in mongoUsers)
-        {
-            var local = await db.Users.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == u.Id, ct);
-            if (local == null)
-            {
-                u.MachineId = _machineId;
-                db.Users.Add(u);
-            }
-            else if (u.UpdatedAt > local.UpdatedAt)
+        pulled += await PullCollectionAsync(db, _mongo.Users, userFilter,
+            u => u.Id, (local, u) =>
             {
                 local.Username = u.Username;
                 local.Password = u.Password;
@@ -392,23 +382,13 @@ public class MongoSyncService : BackgroundService
                 local.UpdatedAt = u.UpdatedAt;
                 local.ArchivedAt = u.ArchivedAt;
                 local.MachineId = _machineId;
-            }
-        }
-        await SafeSaveAsync(db, "users", ct);
+            }, "users", ct);
 
-        var umPullFilter = since == DateTime.MinValue
+        var umFilter = since == DateTime.MinValue
             ? FilterDefinition<UserModem>.Empty
             : Builders<UserModem>.Filter.Gt(x => x.UpdatedAt, since);
-        var mongoUserModems = await _mongo.UserModems.Find(umPullFilter).ToListAsync(ct);
-        foreach (var um in mongoUserModems)
-        {
-            var local = await db.UserModems.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == um.Id, ct);
-            if (local == null)
-            {
-                um.MachineId = _machineId;
-                db.UserModems.Add(um);
-            }
-            else if (um.UpdatedAt > local.UpdatedAt)
+        pulled += await PullCollectionAsync(db, _mongo.UserModems, umFilter,
+            um => um.Id, (local, um) =>
             {
                 local.UserId = um.UserId;
                 local.ModemId = um.ModemId;
@@ -417,23 +397,13 @@ public class MongoSyncService : BackgroundService
                 local.UpdatedAt = um.UpdatedAt;
                 local.ArchivedAt = um.ArchivedAt;
                 local.MachineId = _machineId;
-            }
-        }
-        await SafeSaveAsync(db, "usermodems", ct);
+            }, "usermodems", ct);
 
-        var wrPullFilter = since == DateTime.MinValue
+        var wrFilter = since == DateTime.MinValue
             ? FilterDefinition<WithdrawalRequest>.Empty
             : Builders<WithdrawalRequest>.Filter.Gt(x => x.UpdatedAt, since);
-        var mongoWithdrawals = await _mongo.WithdrawalRequests.Find(wrPullFilter).ToListAsync(ct);
-        foreach (var w in mongoWithdrawals)
-        {
-            var local = await db.WithdrawalRequests.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == w.Id, ct);
-            if (local == null)
-            {
-                w.MachineId = _machineId;
-                db.WithdrawalRequests.Add(w);
-            }
-            else if (w.UpdatedAt > local.UpdatedAt)
+        pulled += await PullCollectionAsync(db, _mongo.WithdrawalRequests, wrFilter,
+            w => w.Id, (local, w) =>
             {
                 local.UserId = w.UserId;
                 local.Amount = w.Amount;
@@ -446,23 +416,13 @@ public class MongoSyncService : BackgroundService
                 local.UpdatedAt = w.UpdatedAt;
                 local.ArchivedAt = w.ArchivedAt;
                 local.MachineId = _machineId;
-            }
-        }
-        await SafeSaveAsync(db, "withdrawalrequests", ct);
+            }, "withdrawalrequests", ct);
 
-        var ubhPullFilter = since == DateTime.MinValue
+        var ubhFilter = since == DateTime.MinValue
             ? FilterDefinition<UserBalanceHistory>.Empty
             : Builders<UserBalanceHistory>.Filter.Gt(x => x.UpdatedAt, since);
-        var mongoUserBalances = await _mongo.UserBalanceHistories.Find(ubhPullFilter).ToListAsync(ct);
-        foreach (var ub in mongoUserBalances)
-        {
-            var local = await db.UserBalanceHistories.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == ub.Id, ct);
-            if (local == null)
-            {
-                ub.MachineId = _machineId;
-                db.UserBalanceHistories.Add(ub);
-            }
-            else if (ub.UpdatedAt > local.UpdatedAt)
+        pulled += await PullCollectionAsync(db, _mongo.UserBalanceHistories, ubhFilter,
+            ub => ub.Id, (local, ub) =>
             {
                 local.UserId = ub.UserId;
                 local.Amount = ub.Amount;
@@ -474,13 +434,57 @@ public class MongoSyncService : BackgroundService
                 local.UpdatedAt = ub.UpdatedAt;
                 local.ArchivedAt = ub.ArchivedAt;
                 local.MachineId = _machineId;
-            }
-        }
-        await SafeSaveAsync(db, "userbalancehistories", ct);
+            }, "userbalancehistories", ct);
 
         if (pulled > 0)
             _logger.LogInformation("Pulled {Count} records from MongoDB (machine: {Machine})", pulled, _machineId);
         _totalPulled += pulled;
+    }
+
+    private async Task<int> PullCollectionAsync<T>(
+        FocusGateDbContext db,
+        IMongoCollection<T> collection,
+        FilterDefinition<T> filter,
+        Func<T, long> getId,
+        Action<T, T> updateFields,
+        string collectionName,
+        CancellationToken ct) where T : class, new()
+    {
+        try
+        {
+            var mongoDocs = await collection.Find(filter).ToListAsync(ct);
+            if (mongoDocs.Count == 0) return 0;
+
+            var ids = mongoDocs.Select(getId).Distinct().ToList();
+            var localDocs = await db.Set<T>().IgnoreQueryFilters()
+                .Where(x => ids.Contains(getId(x)))
+                .ToListAsync(ct);
+            var localMap = localDocs.ToDictionary(getId);
+
+            var count = 0;
+            foreach (var m in mongoDocs)
+            {
+                var id = getId(m);
+                if (localMap.TryGetValue(id, out var local))
+                {
+                    updateFields(local, m);
+                }
+                else
+                {
+                    db.Set<T>().Add(m);
+                    localMap[id] = m;
+                }
+                count++;
+            }
+            await SafeSaveAsync(db, collectionName, ct);
+            return count;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Pull from {Collection} skipped — will retry next cycle", collectionName);
+            db.ChangeTracker.Clear();
+            return 0;
+        }
     }
 
     private async Task SafeSaveAsync(FocusGateDbContext db, string collection, CancellationToken ct)

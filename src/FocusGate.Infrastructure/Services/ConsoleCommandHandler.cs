@@ -17,15 +17,18 @@ public class ConsoleCommandHandler : BackgroundService
     private readonly DatabaseWriteChannel _writeChannel;
     private readonly ILogger<ConsoleCommandHandler> _log;
     private readonly IHostApplicationLifetime _lifetime;
+    private readonly MongoSyncService? _mongoSync;
     private CancellationToken _ct;
 
     public ConsoleCommandHandler(IServiceScopeFactory scopeFactory, DatabaseWriteChannel writeChannel,
-        ILogger<ConsoleCommandHandler> log, IHostApplicationLifetime lifetime)
+        ILogger<ConsoleCommandHandler> log, IHostApplicationLifetime lifetime,
+        MongoSyncService? mongoSync = null)
     {
         _scopeFactory = scopeFactory;
         _writeChannel = writeChannel;
         _log = log;
         _lifetime = lifetime;
+        _mongoSync = mongoSync;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -163,6 +166,16 @@ public class ConsoleCommandHandler : BackgroundService
         Console.WriteLine($"  Modems: {modems.Count} total, {online} online, {offline} offline");
         Console.WriteLine($"  SMS: {totalSms} total");
         Console.WriteLine($"  Balance: {totalBalance:F2} DZD");
+        if (_mongoSync != null)
+        {
+            var mongoStatus = _mongoSync.IsConnected ? "Connected" : "Disconnected";
+            var lastSync = _mongoSync.LastSyncCompleted > DateTime.MinValue
+                ? _mongoSync.LastSyncCompleted.ToLocalTime().ToString("HH:mm:ss")
+                : "never";
+            Console.WriteLine($"  MongoDB: {mongoStatus} | Last sync: {lastSync} | Pushed: {_mongoSync.TotalPushed} | Pulled: {_mongoSync.TotalPulled}");
+            if (!string.IsNullOrEmpty(_mongoSync.LastError))
+                Console.WriteLine($"  MongoDB error: {_mongoSync.LastError}");
+        }
         Console.WriteLine();
 
         var lowThreshold = GetLowBalanceThreshold();
@@ -443,8 +456,10 @@ public class ConsoleCommandHandler : BackgroundService
     {
         if (args.Length < 1)
         {
-            Console.WriteLine("Usage: setmongo <mongodb+srv://...>");
+            Console.WriteLine("Usage: setmongo <mongodb://...>");
             Console.WriteLine("  Sets the MongoDB URI in config.json");
+            Console.WriteLine("  Use direct connection string (mongodb://) for best reliability.");
+            Console.WriteLine("  Example: setmongo mongodb://admin:admin@host1:27017,host2:27017/db?ssl=true&...");
             return;
         }
 

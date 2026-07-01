@@ -1,7 +1,7 @@
 # FocusGate MongoDB Schema Reference
 
 > Reference document for the 8 MongoDB Atlas collections synced by `MongoSyncService`.
-> Used by the future Next.js cloud dashboard.
+> Used by the Next.js cloud dashboard.
 
 ## Conventions
 
@@ -11,9 +11,10 @@
 | **Sync interval** | 30 seconds (configurable via `sync.interval_seconds`) |
 | **Machine scoping** | Every document has `MachineId` field — isolates one gateway machine's data |
 | **Soft delete** | `ArchivedAt: null` = active; `ArchivedAt: ISODate(...)` = archived |
-| **Upsert key** | Compound: `{ Id, MachineId }` |
+| **Upsert key** | Compound: `{ _id, MachineId }` |
 | **Date format** | All dates stored as MongoDB `ISODate` (UTC) |
 | **Enum storage** | Stored as integers (C# enum backing type) |
+| **_id type** | **Number (long)** — NOT ObjectId. The C# `Id` property maps directly to MongoDB `_id` via `BsonClassMap.MapIdMember`. Never use MongoDB auto-generated ObjectId. |
 
 ---
 
@@ -23,8 +24,7 @@
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `_id` | ObjectId | Auto-generated |
-| `Id` | int | Primary key |
+| `_id` | Number (long) | Primary key — C# `Modem.Id` maps here |
 | `IMEI` | string | Unique IMEI, max 20 chars |
 | `ComPort` | string | COM port (AT modems) or null |
 | `Status` | int | 0=Offline, 1=Online, 2=Pending, etc. |
@@ -42,8 +42,7 @@
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `_id` | ObjectId | Auto-generated |
-| `Id` | long | Primary key |
+| `_id` | Number (long) | Primary key — C# `SimCard.Id` maps here |
 | `ModemId` | int | FK → modems.Id |
 | `IMSI` | string | Max 20 chars |
 | `PhoneNumber` | long | Phone number (no country code) |
@@ -66,8 +65,7 @@
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `_id` | ObjectId | Auto-generated |
-| `Id` | long | Primary key |
+| `_id` | Number (long) | Primary key — C# `SmsRecord.Id` maps here |
 | `SimCardId` | long | FK → simcards.Id |
 | `SenderNumber` | string | Sender phone/shortcode, max 20 chars |
 | `Content` | string | Full SMS text |
@@ -83,8 +81,7 @@
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `_id` | ObjectId | Auto-generated |
-| `Id` | long | Primary key |
+| `_id` | Number (long) | Primary key — C# `BalanceHistory.Id` maps here |
 | `SimCardId` | long | FK → simcards.Id (nullable) |
 | `ModemId` | int | FK → modems.Id (nullable) |
 | `UserId` | long | FK → users.Id (nullable) |
@@ -102,8 +99,7 @@
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `_id` | ObjectId | Auto-generated |
-| `Id` | long | Primary key |
+| `_id` | Number (long) | Primary key — C# `User.Id` maps here |
 | `Username` | string | Unique, max 50 chars |
 | `Password` | string | Plain text password, max 100 chars |
 | `DisplayName` | string | Max 100 chars |
@@ -121,8 +117,7 @@
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `_id` | ObjectId | Auto-generated |
-| `Id` | long | Primary key |
+| `_id` | Number (long) | Primary key — C# `UserModem.Id` maps here |
 | `UserId` | long | FK → users.Id |
 | `ModemId` | int | FK → modems.Id |
 | `AssignedAt` | ISODate | When modem was assigned to user |
@@ -137,8 +132,7 @@
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `_id` | ObjectId | Auto-generated |
-| `Id` | long | Primary key |
+| `_id` | Number (long) | Primary key — C# `WithdrawalRequest.Id` maps here |
 | `UserId` | long | FK → users.Id |
 | `Amount` | decimal | Withdrawal amount in DZD |
 | `Status` | int | 0=Pending, 1=Approved, 2=Rejected |
@@ -158,8 +152,7 @@
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `_id` | ObjectId | Auto-generated |
-| `Id` | long | Primary key |
+| `_id` | Number (long) | Primary key — C# `UserBalanceHistory.Id` maps here |
 | `UserId` | long | FK → users.Id |
 | `Amount` | decimal | Amount (positive=credit, negative=withdrawal) |
 | `BalanceAfter` | decimal | User balance after this transaction |

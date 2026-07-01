@@ -53,10 +53,13 @@ public static class DependencyInjection
         }
         else
         {
+            var masked = mongoUri.Length > 40 ? mongoUri[..40] + "..." : mongoUri;
+            Console.WriteLine($"[*] MongoDB URI: {masked}");
+
             if (!mongoUri.Contains("connectTimeoutMS"))
             {
                 var separator = mongoUri.Contains('?') ? '&' : '?';
-                mongoUri += $"{separator}connectTimeoutMS=5000&serverSelectionTimeoutMS=5000";
+                mongoUri += $"{separator}connectTimeoutMS=10000&serverSelectionTimeoutMS=15000";
             }
         }
 
