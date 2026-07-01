@@ -14,7 +14,7 @@ namespace FocusGate.AT.Services;
 
 public class AtModemOrchestrator : BackgroundService
 {
-    private const int MaxModems = 10;
+    private const int MaxModems = 15;
     private readonly IServiceProvider _services;
     private readonly DatabaseWriteChannel _db;
     private readonly ILogger<AtModemOrchestrator> _log;

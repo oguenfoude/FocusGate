@@ -13,7 +13,7 @@ namespace FocusGate.HiLink.Services;
 
 public class HiLinkModemOrchestrator : BackgroundService
 {
-    private const int MaxModems = 10;
+    private const int MaxModems = 15;
     private readonly IServiceProvider _services;
     private readonly DatabaseWriteChannel _db;
     private readonly ILogger<HiLinkModemOrchestrator> _log;
