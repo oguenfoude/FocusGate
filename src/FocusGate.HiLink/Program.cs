@@ -14,10 +14,8 @@ System.Diagnostics.Process? dashboardProcess = null;
 
 Console.CancelKeyPress += (_, e) =>
 {
-    e.Cancel = true;
-    Console.WriteLine();
     Console.WriteLine("[*] Shutting down gracefully...");
-    e.Cancel = false;
+    e.Cancel = true;
 };
 
 using var appCts = new CancellationTokenSource();

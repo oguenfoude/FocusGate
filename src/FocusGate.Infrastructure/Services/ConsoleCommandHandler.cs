@@ -1,9 +1,7 @@
-using System.Text;
 using FocusGate.Core.Enums;
 using FocusGate.Core.Models;
 using FocusGate.Core.Services;
 using FocusGate.Infrastructure.Data;
-using FocusGate.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;

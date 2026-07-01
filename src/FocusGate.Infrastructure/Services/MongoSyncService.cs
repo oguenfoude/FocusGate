@@ -310,6 +310,9 @@ public class MongoSyncService : BackgroundService
             {
                 local.IMEI = m.IMEI;
                 local.ComPort = m.ComPort;
+                local.Brand = m.Brand;
+                local.Manufacturer = m.Manufacturer;
+                local.Model = m.Model;
                 local.Status = m.Status;
                 local.UpdatedAt = m.UpdatedAt;
                 local.ArchivedAt = m.ArchivedAt;

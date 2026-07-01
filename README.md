@@ -1,6 +1,6 @@
 # FocusGate — USB Modem SMS Gateway
 
-Automated SMS credit transfer gateway for Mobilis Algeria. Supports both **COM port modems (AT)** and **Huawei HiLink modems (HTTP)**. 1-10 modems, SMS reception with consecutive-index merge, balance tracking via *222# USSD confirmation, user wallet system, MongoDB cloud sync. Windows 10/11 only, SQLite, no web API.
+Automated SMS credit transfer gateway for Mobilis Algeria. Supports both **COM port modems (AT)** and **Huawei HiLink modems (HTTP)**. 1-5 modems, SMS reception with consecutive-index merge, balance tracking via *222# USSD confirmation, user wallet system, MongoDB cloud sync. Windows 10/11 only, SQLite, no web API.
 
 ---
 
@@ -94,7 +94,7 @@ dist/dashboard/FocusGate.Dashboard.exe
 1. App auto-creates config in `%APPDATA%\FocusGate\config.json`
 2. Default admin user seeded: `admin` / `admin`
 3. Set MongoDB URI: type `setmongo <uri>` at console, then `exit` and restart
-4. 10 modems auto-detected, all balances fetched via *222#
+4. 5 modems auto-detected, all balances fetched via *222#
 
 ---
 
@@ -524,7 +524,7 @@ dist/
 | File | Description |
 |------|-------------|
 | Program.cs | Entry point, DI, mutex `Global\FocusGate_HiLink` (return on contention) |
-| Services/HiLinkModemOrchestrator.cs | Network scanning every 30s, max 10 modems |
+| Services/HiLinkModemOrchestrator.cs | Network scanning every 30s, max 5 modems |
 
 ### FocusGate.Dashboard
 

@@ -1,4 +1,3 @@
-using FocusGate.Core.Enums;
 using FocusGate.Core.Models;
 using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
@@ -75,6 +74,7 @@ public class FocusGateMongoClient
             cm.AutoMap();
             cm.SetIgnoreExtraElements(true);
             cm.MapIdMember(m => m.Id);
+            cm.UnmapMember(m => m.SimCards);
         });
 
         BsonClassMap.RegisterClassMap<SimCard>(cm =>
@@ -110,6 +110,9 @@ public class FocusGateMongoClient
             cm.SetIgnoreExtraElements(true);
             cm.MapIdMember(u => u.Id);
             cm.UnmapMember(u => u.UserModems);
+            cm.UnmapMember(u => u.BalanceHistories);
+            cm.UnmapMember(u => u.WithdrawalRequests);
+            cm.UnmapMember(u => u.UserBalanceHistories);
         });
 
         BsonClassMap.RegisterClassMap<UserModem>(cm =>

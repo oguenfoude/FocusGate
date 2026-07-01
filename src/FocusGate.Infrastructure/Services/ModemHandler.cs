@@ -81,10 +81,10 @@ public class ModemHandler : IDisposable
             _log.LogInformation("Modem {Id}: IMSI={IMSI}", _modemId, imsi);
 
             NetworkRegistration netReg = NetworkRegistration.Unknown;
-            for (int i = 1; i <= 10; i++)
+            for (int i = 1; i <= 5; i++)
             {
                 netReg = await _at.GetNetworkRegistrationAsync();
-                _log.LogInformation("Modem {Id}: Network {Attempt}/10 - {Status}", _modemId, i, netReg);
+                _log.LogInformation("Modem {Id}: Network {Attempt}/5 - {Status}", _modemId, i, netReg);
                 if (netReg == NetworkRegistration.Registered) break;
                 await Task.Delay(5000, ct);
             }
