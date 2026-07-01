@@ -71,11 +71,15 @@ public class WithdrawalsModel : PageModel
             return new EmptyResult();
         }
 
+        var admin = await _db.Users.AsNoTracking()
+            .FirstOrDefaultAsync(u => u.Role == UserRole.Admin);
+
         user.Balance -= request.Amount;
         user.UpdatedAt = DateTime.UtcNow;
 
         request.Status = WithdrawalStatus.Approved;
         request.ProcessedAt = DateTime.UtcNow;
+        request.ProcessedByAdminId = admin?.Id;
         request.UpdatedAt = DateTime.UtcNow;
 
         _db.UserBalanceHistories.Add(new UserBalanceHistory
@@ -117,8 +121,12 @@ public class WithdrawalsModel : PageModel
             return new EmptyResult();
         }
 
+        var admin = await _db.Users.AsNoTracking()
+            .FirstOrDefaultAsync(u => u.Role == UserRole.Admin);
+
         request.Status = WithdrawalStatus.Rejected;
         request.ProcessedAt = DateTime.UtcNow;
+        request.ProcessedByAdminId = admin?.Id;
         request.UpdatedAt = DateTime.UtcNow;
 
         await _db.SaveChangesAsync();
