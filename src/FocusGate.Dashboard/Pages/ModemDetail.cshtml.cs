@@ -1,3 +1,4 @@
+using FocusGate.Core.Enums;
 using FocusGate.Core.Models;
 using FocusGate.Infrastructure.Data;
 using Microsoft.AspNetCore.Mvc;
@@ -16,6 +17,8 @@ public class ModemDetailModel : PageModel
     public List<BalanceHistory> BalanceHistory { get; set; } = new();
     public List<SmsRecord> SmsRecords { get; set; } = new();
     public int SmsCount { get; set; }
+    public bool IsOnline { get; set; }
+    public string StatusLabel { get; set; } = "";
 
     public ModemDetailModel(FocusGateDbContext db)
     {
@@ -30,6 +33,21 @@ public class ModemDetailModel : PageModel
             .FirstOrDefaultAsync(m => m.Id == id);
 
         if (Modem == null) return;
+
+        var cutoff = DateTime.UtcNow.AddMinutes(-5);
+        IsOnline = Modem.Status == ModemStatus.Online && Modem.UpdatedAt >= cutoff;
+
+        StatusLabel = Modem.Status switch
+        {
+            ModemStatus.Online => "Online",
+            ModemStatus.Offline => "Offline",
+            ModemStatus.Error => "Error",
+            ModemStatus.PendingNetwork => "Pending Network",
+            ModemStatus.Connecting => "Connecting",
+            ModemStatus.Initializing => "Initializing",
+            ModemStatus.Detected => "Detected",
+            _ => "Unknown"
+        };
 
         Sim = Modem.SimCards.FirstOrDefault(s => s.IsActive);
 

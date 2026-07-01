@@ -19,20 +19,21 @@ else
 {
     <div class="card mb-5">
         <div class="card-body flex items-center gap-5">
-            <div class="w-14 h-14 rounded-xl flex items-center justify-center flex-shrink-0 @(Model.Modem.Status == FocusGate.Core.Enums.ModemStatus.Online ? "bg-brand-50" : "bg-gray-100")">
-                <i class="fas fa-tower-broadcast text-xl @(Model.Modem.Status == FocusGate.Core.Enums.ModemStatus.Online ? "text-brand-500" : "text-gray-400")"></i>
+            <div class="w-14 h-14 rounded-xl flex items-center justify-center flex-shrink-0 @(Model.IsOnline ? "bg-brand-50" : "bg-gray-100")">
+                <i class="fas fa-tower-broadcast text-xl @(Model.IsOnline ? "text-brand-500" : "text-gray-400")"></i>
             </div>
             <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-3">
                     <h3 class="text-lg font-bold text-gray-900">@(Model.Sim != null ? Model.Sim.PhoneNumber : Model.Modem.IMEI)</h3>
-                    @if (Model.Modem.Status == FocusGate.Core.Enums.ModemStatus.Online)
+                    @if (Model.IsOnline)
                     {
                         <span class="badge badge-success"><span class="pulse-dot relative" style="width:5px;height:5px;"></span> @L["Common.Online"]</span>
                     }
                     else
                     {
-                        <span class="badge badge-danger">@Model.Modem.Status</span>
+                        <span class="badge badge-danger">@L["Common.Offline"]</span>
                     }
+                    <span class="text-[10px] text-gray-300 font-mono">@Model.StatusLabel</span>
                 </div>
                 <p class="text-xs text-gray-400 mt-1">@Model.Modem.Brand @Model.Modem.Model &middot; @(Model.Modem.ComPort ?? "N/A") &middot; @Model.Modem.MachineId?[..8]</p>
             </div>
