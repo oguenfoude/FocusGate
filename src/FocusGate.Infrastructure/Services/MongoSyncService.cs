@@ -313,8 +313,8 @@ public class MongoSyncService : BackgroundService
                 local.Brand = m.Brand;
                 local.Manufacturer = m.Manufacturer;
                 local.Model = m.Model;
-                local.Status = m.Status;
-                local.UpdatedAt = m.UpdatedAt;
+                if (m.UpdatedAt > local.UpdatedAt) local.Status = m.Status;
+                if (m.UpdatedAt > local.UpdatedAt) local.UpdatedAt = m.UpdatedAt;
                 local.ArchivedAt = m.ArchivedAt;
                 local.MachineId = _machineId;
             }, "modems", ct);
@@ -336,7 +336,7 @@ public class MongoSyncService : BackgroundService
                 local.LastSeen = s.LastSeen;
                 local.RemovedAt = s.RemovedAt;
                 local.ReplacedAt = s.ReplacedAt;
-                local.UpdatedAt = s.UpdatedAt;
+                if (s.UpdatedAt > local.UpdatedAt) local.UpdatedAt = s.UpdatedAt;
                 local.ArchivedAt = s.ArchivedAt;
                 local.MachineId = _machineId;
             }, "simcards", ct);
@@ -352,7 +352,7 @@ public class MongoSyncService : BackgroundService
                 local.Content = s.Content;
                 local.ReceivedAt = s.ReceivedAt;
                 local.ProcessedAt = s.ProcessedAt;
-                local.UpdatedAt = s.UpdatedAt;
+                if (s.UpdatedAt > local.UpdatedAt) local.UpdatedAt = s.UpdatedAt;
                 local.ArchivedAt = s.ArchivedAt;
                 local.MachineId = _machineId;
             }, "smsrecords", ct);
@@ -370,7 +370,7 @@ public class MongoSyncService : BackgroundService
                 local.PreviousBalance = b.PreviousBalance;
                 local.Source = b.Source;
                 local.RecordedAt = b.RecordedAt;
-                local.UpdatedAt = b.UpdatedAt;
+                if (b.UpdatedAt > local.UpdatedAt) local.UpdatedAt = b.UpdatedAt;
                 local.ArchivedAt = b.ArchivedAt;
                 local.MachineId = _machineId;
             }, "balancehistories", ct);
@@ -387,7 +387,7 @@ public class MongoSyncService : BackgroundService
                 local.Role = u.Role;
                 local.IsActive = u.IsActive;
                 local.Balance = u.Balance;
-                local.UpdatedAt = u.UpdatedAt;
+                if (u.UpdatedAt > local.UpdatedAt) local.UpdatedAt = u.UpdatedAt;
                 local.ArchivedAt = u.ArchivedAt;
                 local.MachineId = _machineId;
             }, "users", ct);
@@ -402,7 +402,7 @@ public class MongoSyncService : BackgroundService
                 local.ModemId = um.ModemId;
                 local.AssignedAt = um.AssignedAt;
                 local.RemovedAt = um.RemovedAt;
-                local.UpdatedAt = um.UpdatedAt;
+                if (um.UpdatedAt > local.UpdatedAt) local.UpdatedAt = um.UpdatedAt;
                 local.ArchivedAt = um.ArchivedAt;
                 local.MachineId = _machineId;
             }, "usermodems", ct);
@@ -421,7 +421,7 @@ public class MongoSyncService : BackgroundService
                 local.ProcessedByAdminId = w.ProcessedByAdminId;
                 local.RequestedAt = w.RequestedAt;
                 local.ProcessedAt = w.ProcessedAt;
-                local.UpdatedAt = w.UpdatedAt;
+                if (w.UpdatedAt > local.UpdatedAt) local.UpdatedAt = w.UpdatedAt;
                 local.ArchivedAt = w.ArchivedAt;
                 local.MachineId = _machineId;
             }, "withdrawalrequests", ct);
@@ -439,7 +439,7 @@ public class MongoSyncService : BackgroundService
                 local.SimCardId = ub.SimCardId;
                 local.Note = ub.Note;
                 local.RecordedAt = ub.RecordedAt;
-                local.UpdatedAt = ub.UpdatedAt;
+                if (ub.UpdatedAt > local.UpdatedAt) local.UpdatedAt = ub.UpdatedAt;
                 local.ArchivedAt = ub.ArchivedAt;
                 local.MachineId = _machineId;
             }, "userbalancehistories", ct);

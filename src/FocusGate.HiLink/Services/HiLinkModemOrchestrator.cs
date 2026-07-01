@@ -20,6 +20,7 @@ public class HiLinkModemOrchestrator : BackgroundService
     private readonly IConfigProvider _config;
     private readonly ConcurrentDictionary<string, (ModemHandler handler, string imei)> _handlers = new();
     private readonly ConcurrentDictionary<string, byte> _activeImeis = new();
+    private readonly ConcurrentDictionary<string, DateTime> _blacklistedIps = new();
 
     public HiLinkModemOrchestrator(IServiceProvider services, DatabaseWriteChannel db,
         ILogger<HiLinkModemOrchestrator> log, IConfigProvider config)
@@ -82,6 +83,7 @@ public class HiLinkModemOrchestrator : BackgroundService
             _log.LogWarning("{Ip}: Handler dead, freeing IMEI {IMEI} — will re-probe next cycle", kv.Key, imei);
             _handlers.TryRemove(kv.Key, out _);
             _activeImeis.TryRemove(imei, out _);
+            _blacklistedIps.TryRemove(kv.Key, out _);
             try { handler.Dispose(); } catch { }
         }
 
@@ -101,7 +103,11 @@ public class HiLinkModemOrchestrator : BackgroundService
             allIps = HiLinkDiscovery.DiscoverGatewayIps();
         }
 
-        var toScan = allIps.Where(ip => !_handlers.ContainsKey(ip)).ToArray();
+        var toScan = allIps.Where(ip =>
+            !_handlers.ContainsKey(ip) &&
+            (!_blacklistedIps.TryGetValue(ip, out var blacklisted) ||
+             (DateTime.UtcNow - blacklisted).TotalMinutes >= 10)
+        ).ToArray();
 
         if (toScan.Length == 0) return;
 
@@ -110,6 +116,19 @@ public class HiLinkModemOrchestrator : BackgroundService
         var discovery = new HiLinkDiscovery(discoveryLog);
         var probeTimeout = int.TryParse(_config.Get("hilink.probe_timeout_ms", "2000"), out var t) ? t : 2000;
         var devices = await discovery.DiscoverAsync(toScan, probeTimeout);
+
+        var foundIps = new HashSet<string>(devices.Select(d => d.Ip), StringComparer.OrdinalIgnoreCase);
+        foreach (var ip in toScan)
+        {
+            if (!foundIps.Contains(ip))
+            {
+                _blacklistedIps[ip] = DateTime.UtcNow;
+            }
+            else
+            {
+                _blacklistedIps.TryRemove(ip, out _);
+            }
+        }
 
         foreach (var device in devices)
         {
