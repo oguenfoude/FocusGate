@@ -46,8 +46,15 @@ dotnet publish src/FocusGate.HiLink -c Release -r win-x64 --self-contained -o di
 dotnet publish src/FocusGate.AT -c Release -r win-x64 --self-contained -o dist/at
 dotnet publish src/FocusGate.Dashboard -c Release -r win-x64 --self-contained -o dist/dashboard
 
-# After publishing Dashboard, copy wwwroot to hilink dist:
-Copy-Item dist\dashboard\wwwroot dist\hilink\wwwroot -Recurse
+# After publishing Dashboard, copy to hilink dist:
+Copy-Item dist\dashboard\FocusGate.Dashboard.exe dist\hilink\ -Force
+Copy-Item dist\dashboard\FocusGate.Dashboard.dll dist\hilink\ -Force
+Copy-Item dist\dashboard\FocusGate.Dashboard.pdb dist\hilink\ -Force
+Copy-Item dist\dashboard\FocusGate.Dashboard.deps.json dist\hilink\ -Force
+Copy-Item dist\dashboard\FocusGate.Dashboard.runtimeconfig.json dist\hilink\ -Force
+Copy-Item dist\dashboard\FocusGate.Dashboard.staticwebassets.endpoints.json dist\hilink\ -Force
+Copy-Item dist\dashboard\appsettings.json dist\hilink\ -Force
+Copy-Item dist\dashboard\wwwroot dist\hilink\wwwroot -Recurse -Force
 ```
 
 ### Next.js Web App
@@ -76,7 +83,7 @@ npm start        # Production server
 - **MongoDB collection names are ALL lowercase** — .NET `FocusGateMongoClient.cs` uses `"modems"`, `"simcards"`, etc. Next.js Mongoose models must match.
 - **MongoDB `_id` is Number (long)** — NOT ObjectId. `BsonClassMap.MapIdMember(m => m.Id)` maps C# `long Id` to MongoDB `_id`.
 - **Balance architecture:** SMS from Mobilis is a TRIGGER only. Never parse amounts from SMS text. `*222#` USSD is the single source of truth for `SimCard.Balance`.
-- **MachineId:** Each machine has a unique ID from `MachineInfoService`. Used for MongoDB sync filtering. Dev machine: `d26b1c221259fb12`. Client (BERRAR): `419c0cfc97666753`.
+- **MachineId:** Each machine has a unique ID from `MachineInfoService`. Dev machine: `d26b1c221259fb12`. Client (BERRAR): `419c0cfc97666753`.
 - **HTMX in Dashboard:** POST handlers must use `Response.Headers["HX-Redirect"]` + `return new EmptyResult()` — NOT `RedirectToPage()`. `_ViewStart.cshtml` sets `Layout = null` for `HX-Request` header.
 - **Dashboard DI:** Uses `AddFocusGateDashboard()` (lightweight — no MongoSync, no ConsoleCommandHandler, no RestartService).
 - **Safe shutdown:** `writeChannel.CompleteAsync()` in `ApplicationStopping`. Dashboard process tracked and killed in `ApplicationStopped`.

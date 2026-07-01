@@ -9,9 +9,9 @@
 |------------|-------|
 | **Sync direction** | Bidirectional (push + pull) |
 | **Sync interval** | 30 seconds (configurable via `sync.interval_seconds`) |
-| **Machine scoping** | Every document has `MachineId` field — isolates one gateway machine's data |
+| **Machine scoping** | `MachineId` is present on all documents but sync pull no longer filters by it — Web-created records sync to ALL gateways |
 | **Soft delete** | `ArchivedAt: null` = active; `ArchivedAt: ISODate(...)` = archived |
-| **Upsert key** | Compound: `{ _id, MachineId }` |
+| **Upsert key** | `{ _id }` — Match by `_id` only; MachineId not used for filtering |
 | **Date format** | All dates stored as MongoDB `ISODate` (UTC) |
 | **Enum storage** | Stored as integers (C# enum backing type) |
 | **_id type** | **Number (long)** — NOT ObjectId. The C# `Id` property maps directly to MongoDB `_id` via `BsonClassMap.MapIdMember`. Never use MongoDB auto-generated ObjectId. |
@@ -180,7 +180,7 @@ simcards 1──N balancehistories
 
 ## Querying Tips
 
-- Always filter by `MachineId` to scope to a specific gateway
 - Use `ArchivedAt: null` to get only active records
 - Use `UpdatedAt` for incremental sync (only changed records)
 - Balance changes are tracked in both `balancehistories` (SIM-level) and `userbalancehistories` (user-level)
+- `MachineId` is present on documents for reference but is NOT used for sync filtering — all records sync to all gateways
