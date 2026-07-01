@@ -147,4 +147,14 @@
   <data name="Settings.PasswordMismatch"><value>Passwords do not match</value></data>
   <data name="Settings.PasswordUpdated"><value>Password updated successfully</value></data>
   <data name="Nav.Settings"><value>Settings</value></data>
+  <data name="ModemDetail.ComPort"><value>ComPort</value></data>
+  <data name="ModemDetail.BrandModel"><value>Brand / Model</value></data>
+  <data name="ModemDetail.Inactive"><value>Inactive</value></data>
+  <data name="ModemDetail.UnassignConfirm"><value>Unassign this modem?</value></data>
+  <data name="ModemDetail.Was"><value>was</value></data>
+  <data name="ModemDetail.NoBalanceHistory"><value>No balance history</value></data>
+  <data name="Dashboard.Messages"><value>messages</value></data>
+  <data name="Warnings.AllNormal"><value>All modem balances are within normal limits.</value></data>
+  <data name="Layout.Subtitle"><value>Gateway Dashboard</value></data>
+  <data name="Layout.Language"><value>Language</value></data>
 </root>

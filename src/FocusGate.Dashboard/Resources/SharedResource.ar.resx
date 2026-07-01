@@ -147,4 +147,14 @@
   <data name="Settings.PasswordMismatch"><value>كلمتا المرور غير متطابقتين</value></data>
   <data name="Settings.PasswordUpdated"><value>تم تحديث كلمة المرور بنجاح</value></data>
   <data name="Nav.Settings"><value>الإعدادات</value></data>
+  <data name="ModemDetail.ComPort"><value>منفذ COM</value></data>
+  <data name="ModemDetail.BrandModel"><value>العلامة التجارية / الطراز</value></data>
+  <data name="ModemDetail.Inactive"><value>غير نشط</value></data>
+  <data name="ModemDetail.UnassignConfirm"><value>إلغاء تخصيص هذا المودم؟</value></data>
+  <data name="ModemDetail.Was"><value>كان</value></data>
+  <data name="ModemDetail.NoBalanceHistory"><value>لا يوجد سجل أرصدة</value></data>
+  <data name="Dashboard.Messages"><value>رسائل</value></data>
+  <data name="Warnings.AllNormal"><value>جميع أرصدة المودمات ضمن الحدود الطبيعية.</value></data>
+  <data name="Layout.Subtitle"><value>لوحة تحكم البوابة</value></data>
+  <data name="Layout.Language"><value>اللغة</value></data>
 </root>

@@ -20,4 +20,17 @@
     <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Update="Resources\SharedResource.resx" />
+    <EmbeddedResource Update="Resources\SharedResource.en.resx">
+      <DependentUpon>SharedResource.resx</DependentUpon>
+    </EmbeddedResource>
+    <EmbeddedResource Update="Resources\SharedResource.fr.resx">
+      <DependentUpon>SharedResource.resx</DependentUpon>
+    </EmbeddedResource>
+    <EmbeddedResource Update="Resources\SharedResource.ar.resx">
+      <DependentUpon>SharedResource.resx</DependentUpon>
+    </EmbeddedResource>
+  </ItemGroup>
+
 </Project>

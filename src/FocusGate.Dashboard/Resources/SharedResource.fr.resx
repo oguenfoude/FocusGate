@@ -147,4 +147,14 @@
   <data name="Settings.PasswordMismatch"><value>Les mots de passe ne correspondent pas</value></data>
   <data name="Settings.PasswordUpdated"><value>Mot de passe mis à jour avec succès</value></data>
   <data name="Nav.Settings"><value>Paramètres</value></data>
+  <data name="ModemDetail.ComPort"><value>Port COM</value></data>
+  <data name="ModemDetail.BrandModel"><value>Marque / Modèle</value></data>
+  <data name="ModemDetail.Inactive"><value>Inactif</value></data>
+  <data name="ModemDetail.UnassignConfirm"><value>Désassigner ce modem?</value></data>
+  <data name="ModemDetail.Was"><value>était</value></data>
+  <data name="ModemDetail.NoBalanceHistory"><value>Aucun historique de solde</value></data>
+  <data name="Dashboard.Messages"><value>messages</value></data>
+  <data name="Warnings.AllNormal"><value>Tous les soldes des modems sont dans les limites normales.</value></data>
+  <data name="Layout.Subtitle"><value>Tableau de bord de la passerelle</value></data>
+  <data name="Layout.Language"><value>Langue</value></data>
 </root>
