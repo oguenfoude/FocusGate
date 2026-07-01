@@ -54,6 +54,10 @@ Copy-Item dist\dashboard\FocusGate.Dashboard.deps.json dist\hilink\ -Force
 Copy-Item dist\dashboard\FocusGate.Dashboard.runtimeconfig.json dist\hilink\ -Force
 Copy-Item dist\dashboard\FocusGate.Dashboard.staticwebassets.endpoints.json dist\hilink\ -Force
 Copy-Item dist\dashboard\appsettings.json dist\hilink\ -Force
+Copy-Item dist\dashboard\web.config dist\hilink\ -Force
+Copy-Item dist\dashboard\en dist\hilink\en -Recurse -Force
+Copy-Item dist\dashboard\fr dist\hilink\fr -Recurse -Force
+Copy-Item dist\dashboard\ar dist\hilink\ar -Recurse -Force
 Copy-Item dist\dashboard\wwwroot dist\hilink\wwwroot -Recurse -Force
 ```
 
