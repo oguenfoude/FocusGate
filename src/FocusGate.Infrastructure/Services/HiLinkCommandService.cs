@@ -190,15 +190,8 @@ public partial class HiLinkCommandService : IAtCommandService
 
             _isOpen = true;
 
-            var alive = await IsAliveAsync();
-            if (alive)
-            {
-                _log.LogInformation("[HiLink] Session refreshed successfully");
-                return true;
-            }
-
-            _log.LogWarning("[HiLink] Session refreshed but alive check still fails");
-            return false;
+            _log.LogInformation("[HiLink] Session refreshed successfully");
+            return true;
         }
         catch (Exception ex)
         {

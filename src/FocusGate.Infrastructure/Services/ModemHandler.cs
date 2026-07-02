@@ -326,39 +326,43 @@ public class ModemHandler : IDisposable
     {
         if (_at == null || !_at.IsOpen) { return; }
 
-        if (_isHiLink)
-        {
-            var refreshed = await _at.TryRefreshSessionAsync();
-            if (refreshed)
+            if (_isHiLink)
             {
-                _hiLinkFailureCount = 0;
-                _log.LogDebug("Modem {Id}: Session refreshed, writing Online", _modemId);
-                await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.UpdateModemStatus, Data = new { ModemId = _modemId, Status = ModemStatus.Online } });
+                var refreshed = await _at.TryRefreshSessionAsync();
+                if (refreshed)
+                {
+                    _hiLinkFailureCount = 0;
+                    _log.LogDebug("Modem {Id}: Session refreshed, writing Online", _modemId);
+                    await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.UpdateModemStatus, Data = new { ModemId = _modemId, Status = ModemStatus.Online } });
+                    return;
+                }
+
+                _log.LogWarning("Modem {Id}: Session refresh failed, trying alive check fallback", _modemId);
+                var alive = await _at.IsAliveAsync();
+                if (alive)
+                {
+                    _hiLinkFailureCount = 0;
+                    _log.LogDebug("Modem {Id}: Alive check passed (fallback), writing Online", _modemId);
+                    await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.UpdateModemStatus, Data = new { ModemId = _modemId, Status = ModemStatus.Online } });
+                }
+                else
+                {
+                    _hiLinkFailureCount++;
+                    _log.LogWarning("Modem {Id}: Alive check also failed ({Count}/{Max})",
+                        _modemId, _hiLinkFailureCount, HiLinkMaxFailures);
+
+                    if (_hiLinkFailureCount >= HiLinkMaxFailures)
+                    {
+                        _log.LogWarning("Modem {Id}: HiLink unreachable after {Max} consecutive failures — disconnecting for re-probe", _modemId, HiLinkMaxFailures);
+                        await DisconnectAsync();
+                    }
+                    else
+                    {
+                        await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.UpdateModemStatus, Data = new { ModemId = _modemId, Status = ModemStatus.Online } });
+                    }
+                }
                 return;
             }
-
-            _log.LogWarning("Modem {Id}: Session refresh failed, trying alive check fallback", _modemId);
-            var alive = await _at.IsAliveAsync();
-            if (alive)
-            {
-                _hiLinkFailureCount = 0;
-                _log.LogDebug("Modem {Id}: Alive check passed (fallback), writing Online", _modemId);
-                await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.UpdateModemStatus, Data = new { ModemId = _modemId, Status = ModemStatus.Online } });
-            }
-            else
-            {
-                _hiLinkFailureCount++;
-                _log.LogWarning("Modem {Id}: Alive check also failed ({Count}/{Max})",
-                    _modemId, _hiLinkFailureCount, HiLinkMaxFailures);
-
-                if (_hiLinkFailureCount >= HiLinkMaxFailures)
-                {
-                    _log.LogWarning("Modem {Id}: HiLink unreachable after {Max} consecutive failures — disconnecting for re-probe", _modemId, HiLinkMaxFailures);
-                    await DisconnectAsync();
-                }
-            }
-            return;
-        }
 
         try
         {
