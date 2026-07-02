@@ -805,6 +805,8 @@ public partial class AtCommandService : IAtCommandService
         return resp.Contains("OK");
     }
 
+    public Task<bool> TryRefreshSessionAsync() => Task.FromResult(false);
+
     public void Dispose()
     {
         if (_disposed) return;

@@ -459,16 +459,21 @@ public class DatabaseWriteChannel
             .Where(m => m.Status != ModemStatus.Offline && m.Status != ModemStatus.Error && m.Status != ModemStatus.Detected)
             .ToListAsync(ct);
 
+        var orphaned = 0;
         foreach (var modem in online)
         {
             if (!activeImeis.Contains(modem.IMEI))
             {
-                _logger.LogWarning("Modem {Id} ({IMEI}) orphaned -> Offline", modem.Id, modem.IMEI);
+                _logger.LogWarning("Modem {Id} ({IMEI}) orphaned -> Offline (active: {ActiveCount}, checked: {CheckedCount})",
+                    modem.Id, modem.IMEI, activeImeis.Count, online.Count);
                 modem.Status = ModemStatus.Offline;
                 modem.ComPort = null;
                 modem.UpdatedAt = DateTime.UtcNow;
+                orphaned++;
             }
         }
+        if (online.Count > 0)
+            _logger.LogDebug("Orphan check: {Orphaned}/{Total} modems orphaned (active IMEIs: {ActiveCount})", orphaned, online.Count, activeImeis.Count);
         await db.SaveChangesAsync(ct);
     }
 

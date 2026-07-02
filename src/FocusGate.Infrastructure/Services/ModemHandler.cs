@@ -25,6 +25,8 @@ public class ModemHandler : IDisposable
     private Task? _networkRetryLoop;
     private readonly SemaphoreSlim _atLock = new(1, 1);
     private DateTime? _ussdUnavailableSince;
+    private int _hiLinkFailureCount;
+    private const int HiLinkMaxFailures = 5;
 
     public bool IsAlive => _at?.IsOpen == true;
 
@@ -326,15 +328,34 @@ public class ModemHandler : IDisposable
 
         if (_isHiLink)
         {
-            var alive = await _at.IsAliveAsync();
-            if (!alive)
+            var refreshed = await _at.TryRefreshSessionAsync();
+            if (refreshed)
             {
-                _log.LogWarning("Modem {Id}: HiLink unreachable, disconnecting for re-probe", _modemId);
-                await DisconnectAsync();
+                _hiLinkFailureCount = 0;
+                _log.LogDebug("Modem {Id}: Session refreshed, writing Online", _modemId);
+                await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.UpdateModemStatus, Data = new { ModemId = _modemId, Status = ModemStatus.Online } });
+                return;
+            }
+
+            _log.LogWarning("Modem {Id}: Session refresh failed, trying alive check fallback", _modemId);
+            var alive = await _at.IsAliveAsync();
+            if (alive)
+            {
+                _hiLinkFailureCount = 0;
+                _log.LogDebug("Modem {Id}: Alive check passed (fallback), writing Online", _modemId);
+                await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.UpdateModemStatus, Data = new { ModemId = _modemId, Status = ModemStatus.Online } });
             }
             else
             {
-                await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.UpdateModemStatus, Data = new { ModemId = _modemId, Status = ModemStatus.Online } });
+                _hiLinkFailureCount++;
+                _log.LogWarning("Modem {Id}: Alive check also failed ({Count}/{Max})",
+                    _modemId, _hiLinkFailureCount, HiLinkMaxFailures);
+
+                if (_hiLinkFailureCount >= HiLinkMaxFailures)
+                {
+                    _log.LogWarning("Modem {Id}: HiLink unreachable after {Max} consecutive failures — disconnecting for re-probe", _modemId, HiLinkMaxFailures);
+                    await DisconnectAsync();
+                }
             }
             return;
         }

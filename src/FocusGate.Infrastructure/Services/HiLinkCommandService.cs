@@ -156,7 +156,53 @@ public partial class HiLinkCommandService : IAtCommandService
         }
         catch
         {
-            _isOpen = false;
+            return false;
+        }
+    }
+
+    public async Task<bool> TryRefreshSessionAsync()
+    {
+        if (string.IsNullOrEmpty(_baseUrl)) return false;
+        try
+        {
+            var response = await _http.GetAsync($"{_baseUrl}/api/webserver/SesTokInfo");
+            if (!response.IsSuccessStatusCode)
+            {
+                _log.LogWarning("[HiLink] SesTokInfo returned {StatusCode}", response.StatusCode);
+                return false;
+            }
+            var xml = await response.Content.ReadAsStringAsync();
+            var doc = XDocument.Parse(xml);
+            var root = doc.Root!;
+
+            var sesInfo = GetElement(root, "SesInfo");
+            var tokInfo = GetElement(root, "TokInfo");
+
+            if (string.IsNullOrEmpty(sesInfo))
+            {
+                _log.LogWarning("[HiLink] Session refresh: no SesInfo in response");
+                return false;
+            }
+
+            _sessionCookie = sesInfo;
+            if (!string.IsNullOrEmpty(tokInfo))
+                _csrfToken = tokInfo;
+
+            _isOpen = true;
+
+            var alive = await IsAliveAsync();
+            if (alive)
+            {
+                _log.LogInformation("[HiLink] Session refreshed successfully");
+                return true;
+            }
+
+            _log.LogWarning("[HiLink] Session refreshed but alive check still fails");
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "[HiLink] Session refresh failed");
             return false;
         }
     }

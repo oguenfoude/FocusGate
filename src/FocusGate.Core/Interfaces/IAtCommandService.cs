@@ -18,6 +18,7 @@ public interface IAtCommandService : IDisposable
     Task                   DeleteAllSmsAsync();
     Task<string>           SendUssdAsync(string code, int timeoutMs = 15000);
     Task<bool>             TrySetCharsetAsync(string charset);
+    Task<bool>             TryRefreshSessionAsync();
     bool                   IsOpen { get; }
     string?                ComPort { get; }
 }

@@ -20,7 +20,10 @@ public class HiLinkModemOrchestrator : BackgroundService
     private readonly IConfigProvider _config;
     private readonly ConcurrentDictionary<string, (ModemHandler handler, string imei)> _handlers = new();
     private readonly ConcurrentDictionary<string, byte> _activeImeis = new();
-    private readonly ConcurrentDictionary<string, DateTime> _blacklistedIps = new();
+    private readonly ConcurrentDictionary<string, int> _blacklistedIps = new();
+    private readonly HashSet<string> _knownModemIps = new(StringComparer.OrdinalIgnoreCase);
+    private const int MaxIpFailures = 3;
+    private const int ModemIpCooldownMinutes = 5;
 
     public HiLinkModemOrchestrator(IServiceProvider services, DatabaseWriteChannel db,
         ILogger<HiLinkModemOrchestrator> log, IConfigProvider config)
@@ -83,6 +86,7 @@ public class HiLinkModemOrchestrator : BackgroundService
             _log.LogWarning("{Ip}: Handler dead, freeing IMEI {IMEI} — will re-probe next cycle", kv.Key, imei);
             _handlers.TryRemove(kv.Key, out _);
             _activeImeis.TryRemove(imei, out _);
+            _knownModemIps.Add(kv.Key);
             _blacklistedIps.TryRemove(kv.Key, out _);
             try { handler.Dispose(); } catch { }
         }
@@ -90,24 +94,41 @@ public class HiLinkModemOrchestrator : BackgroundService
         if (_handlers.Count >= MaxModems) return;
 
         var ipsRaw = _config.Get("hilink.scan_ips", "");
-        string[] allIps;
+        string[] discoveredIps;
 
         if (!string.IsNullOrWhiteSpace(ipsRaw))
         {
-            allIps = ipsRaw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            discoveredIps = ipsRaw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
         }
         else
         {
-            allIps = HiLinkDiscovery.DiscoverGatewayIps();
+            discoveredIps = HiLinkDiscovery.DiscoverGatewayIps();
         }
 
+        var allIps = discoveredIps.Concat(_knownModemIps)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        var now = DateTime.UtcNow;
         var toScan = allIps.Where(ip =>
-            !_handlers.ContainsKey(ip) &&
-            (!_blacklistedIps.TryGetValue(ip, out var blacklisted) ||
-             (DateTime.UtcNow - blacklisted).TotalMinutes >= 10)
-        ).ToArray();
+        {
+            if (_handlers.ContainsKey(ip)) return false;
+
+            if (_blacklistedIps.TryGetValue(ip, out var failCount))
+            {
+                if (failCount >= MaxIpFailures && !_knownModemIps.Contains(ip))
+                    return false;
+
+                if (_knownModemIps.Contains(ip))
+                    return true;
+
+                return false;
+            }
+
+            return true;
+        }).ToArray();
 
         if (toScan.Length == 0) return;
 
@@ -122,11 +143,32 @@ public class HiLinkModemOrchestrator : BackgroundService
         {
             if (!foundIps.Contains(ip))
             {
-                _blacklistedIps[ip] = DateTime.UtcNow;
+                if (_blacklistedIps.TryGetValue(ip, out var count))
+                {
+                    var newCount = count + 1;
+                    _blacklistedIps[ip] = newCount;
+
+                    if (_knownModemIps.Contains(ip))
+                        _log.LogWarning("{Ip}: Known modem probe failed ({Count}/{Max}) — will retry in {Cooldown}min", ip, newCount, MaxIpFailures, ModemIpCooldownMinutes);
+                    else if (newCount >= MaxIpFailures)
+                        _log.LogWarning("{Ip}: Permanently blacklisted after {Count} failures — never connected", ip, newCount);
+                    else
+                        _log.LogWarning("{Ip}: Probe failed ({Count}/{Max}) — blacklisted", ip, newCount, MaxIpFailures);
+                }
+                else
+                {
+                    _blacklistedIps[ip] = 1;
+
+                    if (_knownModemIps.Contains(ip))
+                        _log.LogWarning("{Ip}: Known modem probe failed (1/{Max}) — will retry", ip, MaxIpFailures);
+                    else
+                        _log.LogWarning("{Ip}: Probe failed (1/{Max}) — blacklisted", ip, MaxIpFailures);
+                }
             }
             else
             {
                 _blacklistedIps.TryRemove(ip, out _);
+                _knownModemIps.Add(ip);
             }
         }
 

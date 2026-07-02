@@ -309,7 +309,7 @@ public class MongoSyncService : BackgroundService
             m => m.Id, (local, m) =>
             {
                 local.IMEI = m.IMEI;
-                local.ComPort = m.ComPort;
+                if (m.UpdatedAt > local.UpdatedAt) local.ComPort = m.ComPort;
                 local.Brand = m.Brand;
                 local.Manufacturer = m.Manufacturer;
                 local.Model = m.Model;
