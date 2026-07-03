@@ -207,7 +207,6 @@ public class MongoSyncService : BackgroundService
         var modems = await db.Modems.IgnoreQueryFilters().Where(m => m.UpdatedAt > since).ToListAsync(ct);
         foreach (var m in modems)
         {
-            m.MachineId = _machineId;
             if (!await SafeUpsertAsync(_mongo.Modems, m, ct)) skipped++;
         }
         pushed += modems.Count;
@@ -215,7 +214,6 @@ public class MongoSyncService : BackgroundService
         var sims = await db.SimCards.IgnoreQueryFilters().Where(s => s.UpdatedAt > since).ToListAsync(ct);
         foreach (var s in sims)
         {
-            s.MachineId = _machineId;
             if (!await SafeUpsertAsync(_mongo.SimCards, s, ct)) skipped++;
         }
         pushed += sims.Count;
@@ -223,7 +221,6 @@ public class MongoSyncService : BackgroundService
         var sms = await db.SmsRecords.IgnoreQueryFilters().Where(s => s.UpdatedAt > since).ToListAsync(ct);
         foreach (var s in sms)
         {
-            s.MachineId = _machineId;
             if (!await SafeUpsertAsync(_mongo.SmsRecords, s, ct)) skipped++;
         }
         pushed += sms.Count;
@@ -231,7 +228,6 @@ public class MongoSyncService : BackgroundService
         var balances = await db.BalanceHistories.IgnoreQueryFilters().Where(b => b.UpdatedAt > since).ToListAsync(ct);
         foreach (var b in balances)
         {
-            b.MachineId = _machineId;
             if (!await SafeUpsertAsync(_mongo.BalanceHistories, b, ct)) skipped++;
         }
         pushed += balances.Count;
@@ -239,7 +235,6 @@ public class MongoSyncService : BackgroundService
         var users = await db.Users.IgnoreQueryFilters().Where(u => u.UpdatedAt > since).ToListAsync(ct);
         foreach (var u in users)
         {
-            u.MachineId = _machineId;
             if (!await SafeUpsertAsync(_mongo.Users, u, ct)) skipped++;
         }
         pushed += users.Count;
@@ -247,7 +242,6 @@ public class MongoSyncService : BackgroundService
         var userModems = await db.UserModems.IgnoreQueryFilters().Where(um => um.UpdatedAt > since).ToListAsync(ct);
         foreach (var um in userModems)
         {
-            um.MachineId = _machineId;
             if (!await SafeUpsertAsync(_mongo.UserModems, um, ct)) skipped++;
         }
         pushed += userModems.Count;
@@ -255,7 +249,6 @@ public class MongoSyncService : BackgroundService
         var withdrawalRequests = await db.WithdrawalRequests.IgnoreQueryFilters().Where(w => w.UpdatedAt > since).ToListAsync(ct);
         foreach (var w in withdrawalRequests)
         {
-            w.MachineId = _machineId;
             if (!await SafeUpsertAsync(_mongo.WithdrawalRequests, w, ct)) skipped++;
         }
         pushed += withdrawalRequests.Count;
@@ -263,7 +256,6 @@ public class MongoSyncService : BackgroundService
         var userBalanceHistories = await db.UserBalanceHistories.IgnoreQueryFilters().Where(ub => ub.UpdatedAt > since).ToListAsync(ct);
         foreach (var ub in userBalanceHistories)
         {
-            ub.MachineId = _machineId;
             if (!await SafeUpsertAsync(_mongo.UserBalanceHistories, ub, ct)) skipped++;
         }
         pushed += userBalanceHistories.Count;
@@ -326,15 +318,17 @@ public class MongoSyncService : BackgroundService
         var modemPulled = await PullCollectionAsync(db, _mongo.Modems, modemFilter,
             m => m.Id, (local, m) =>
             {
-                local.IMEI = m.IMEI;
-                if (m.UpdatedAt > local.UpdatedAt) local.ComPort = m.ComPort;
-                local.Brand = m.Brand;
-                local.Manufacturer = m.Manufacturer;
-                local.Model = m.Model;
-                if (m.UpdatedAt > local.UpdatedAt) local.Status = m.Status;
-                if (m.UpdatedAt > local.UpdatedAt) local.UpdatedAt = m.UpdatedAt;
+                if (m.UpdatedAt > local.UpdatedAt)
+                {
+                    local.IMEI = m.IMEI;
+                    local.ComPort = m.ComPort;
+                    local.Brand = m.Brand;
+                    local.Manufacturer = m.Manufacturer;
+                    local.Model = m.Model;
+                    local.Status = m.Status;
+                    local.UpdatedAt = m.UpdatedAt;
+                }
                 local.ArchivedAt = m.ArchivedAt;
-                local.MachineId = _machineId;
             }, "modems", ct);
         pulled += modemPulled;
 
@@ -344,20 +338,21 @@ public class MongoSyncService : BackgroundService
         var simPulled = await PullCollectionAsync(db, _mongo.SimCards, simFilter,
             s => s.Id, (local, s) =>
             {
-                local.IMSI = s.IMSI;
-                local.ModemId = s.ModemId;
-                local.PhoneNumber = s.PhoneNumber;
-                if (s.UpdatedAt > local.UpdatedAt) local.Balance = s.Balance;
-                local.VerifiedAt = s.VerifiedAt;
-                local.IsActive = s.IsActive;
-                local.Status = s.Status;
-                local.FirstSeen = s.FirstSeen;
-                local.LastSeen = s.LastSeen;
-                local.RemovedAt = s.RemovedAt;
-                local.ReplacedAt = s.ReplacedAt;
-                if (s.UpdatedAt > local.UpdatedAt) local.UpdatedAt = s.UpdatedAt;
+                if (s.UpdatedAt > local.UpdatedAt)
+                {
+                    local.IMSI = s.IMSI;
+                    local.ModemId = s.ModemId;
+                    local.PhoneNumber = s.PhoneNumber;
+                    local.VerifiedAt = s.VerifiedAt;
+                    local.IsActive = s.IsActive;
+                    local.Status = s.Status;
+                    local.FirstSeen = s.FirstSeen;
+                    local.LastSeen = s.LastSeen;
+                    local.RemovedAt = s.RemovedAt;
+                    local.ReplacedAt = s.ReplacedAt;
+                    local.UpdatedAt = s.UpdatedAt;
+                }
                 local.ArchivedAt = s.ArchivedAt;
-                local.MachineId = _machineId;
             }, "simcards", ct);
         pulled += simPulled;
 
@@ -367,14 +362,16 @@ public class MongoSyncService : BackgroundService
         var smsPulled = await PullCollectionAsync(db, _mongo.SmsRecords, smsFilter,
             s => s.Id, (local, s) =>
             {
-                local.SimCardId = s.SimCardId;
-                local.SenderNumber = s.SenderNumber;
-                local.Content = s.Content;
-                local.ReceivedAt = s.ReceivedAt;
-                local.ProcessedAt = s.ProcessedAt;
-                if (s.UpdatedAt > local.UpdatedAt) local.UpdatedAt = s.UpdatedAt;
+                if (s.UpdatedAt > local.UpdatedAt)
+                {
+                    local.SimCardId = s.SimCardId;
+                    local.SenderNumber = s.SenderNumber;
+                    local.Content = s.Content;
+                    local.ReceivedAt = s.ReceivedAt;
+                    local.ProcessedAt = s.ProcessedAt;
+                    local.UpdatedAt = s.UpdatedAt;
+                }
                 local.ArchivedAt = s.ArchivedAt;
-                local.MachineId = _machineId;
             }, "smsrecords", ct);
         pulled += smsPulled;
 
@@ -384,16 +381,18 @@ public class MongoSyncService : BackgroundService
         var balPulled = await PullCollectionAsync(db, _mongo.BalanceHistories, balFilter,
             b => b.Id, (local, b) =>
             {
-                local.SimCardId = b.SimCardId;
-                local.ModemId = b.ModemId;
-                local.UserId = b.UserId;
-                local.Balance = b.Balance;
-                local.PreviousBalance = b.PreviousBalance;
-                local.Source = b.Source;
-                local.RecordedAt = b.RecordedAt;
-                if (b.UpdatedAt > local.UpdatedAt) local.UpdatedAt = b.UpdatedAt;
+                if (b.UpdatedAt > local.UpdatedAt)
+                {
+                    local.SimCardId = b.SimCardId;
+                    local.ModemId = b.ModemId;
+                    local.UserId = b.UserId;
+                    local.Balance = b.Balance;
+                    local.PreviousBalance = b.PreviousBalance;
+                    local.Source = b.Source;
+                    local.RecordedAt = b.RecordedAt;
+                    local.UpdatedAt = b.UpdatedAt;
+                }
                 local.ArchivedAt = b.ArchivedAt;
-                local.MachineId = _machineId;
             }, "balancehistories", ct);
         pulled += balPulled;
 
@@ -403,15 +402,17 @@ public class MongoSyncService : BackgroundService
         var userPulled = await PullCollectionAsync(db, _mongo.Users, userFilter,
             u => u.Id, (local, u) =>
             {
-                local.Username = u.Username;
-                local.Password = u.Password;
-                local.DisplayName = u.DisplayName;
-                local.Role = u.Role;
-                local.IsActive = u.IsActive;
-                local.Balance = u.Balance;
-                if (u.UpdatedAt > local.UpdatedAt) local.UpdatedAt = u.UpdatedAt;
+                if (u.UpdatedAt > local.UpdatedAt)
+                {
+                    local.Username = u.Username;
+                    local.Password = u.Password;
+                    local.DisplayName = u.DisplayName;
+                    local.Role = u.Role;
+                    local.IsActive = u.IsActive;
+                    local.Balance = u.Balance;
+                    local.UpdatedAt = u.UpdatedAt;
+                }
                 local.ArchivedAt = u.ArchivedAt;
-                local.MachineId = _machineId;
             }, "users", ct);
         pulled += userPulled;
 
@@ -421,13 +422,15 @@ public class MongoSyncService : BackgroundService
         var umPulled = await PullCollectionAsync(db, _mongo.UserModems, umFilter,
             um => um.Id, (local, um) =>
             {
-                local.UserId = um.UserId;
-                local.ModemId = um.ModemId;
-                local.AssignedAt = um.AssignedAt;
-                local.RemovedAt = um.RemovedAt;
-                if (um.UpdatedAt > local.UpdatedAt) local.UpdatedAt = um.UpdatedAt;
+                if (um.UpdatedAt > local.UpdatedAt)
+                {
+                    local.UserId = um.UserId;
+                    local.ModemId = um.ModemId;
+                    local.AssignedAt = um.AssignedAt;
+                    local.RemovedAt = um.RemovedAt;
+                    local.UpdatedAt = um.UpdatedAt;
+                }
                 local.ArchivedAt = um.ArchivedAt;
-                local.MachineId = _machineId;
             }, "usermodems", ct);
         pulled += umPulled;
 
@@ -437,17 +440,19 @@ public class MongoSyncService : BackgroundService
         var wrPulled = await PullCollectionAsync(db, _mongo.WithdrawalRequests, wrFilter,
             w => w.Id, (local, w) =>
             {
-                local.UserId = w.UserId;
-                local.Amount = w.Amount;
-                local.Status = w.Status;
-                local.Note = w.Note;
-                local.AdminNote = w.AdminNote;
-                local.ProcessedByAdminId = w.ProcessedByAdminId;
-                local.RequestedAt = w.RequestedAt;
-                local.ProcessedAt = w.ProcessedAt;
-                if (w.UpdatedAt > local.UpdatedAt) local.UpdatedAt = w.UpdatedAt;
+                if (w.UpdatedAt > local.UpdatedAt)
+                {
+                    local.UserId = w.UserId;
+                    local.Amount = w.Amount;
+                    local.Status = w.Status;
+                    local.Note = w.Note;
+                    local.AdminNote = w.AdminNote;
+                    local.ProcessedByAdminId = w.ProcessedByAdminId;
+                    local.RequestedAt = w.RequestedAt;
+                    local.ProcessedAt = w.ProcessedAt;
+                    local.UpdatedAt = w.UpdatedAt;
+                }
                 local.ArchivedAt = w.ArchivedAt;
-                local.MachineId = _machineId;
             }, "withdrawalrequests", ct);
         pulled += wrPulled;
 
@@ -457,16 +462,18 @@ public class MongoSyncService : BackgroundService
         var ubhPulled = await PullCollectionAsync(db, _mongo.UserBalanceHistories, ubhFilter,
             ub => ub.Id, (local, ub) =>
             {
-                local.UserId = ub.UserId;
-                local.Amount = ub.Amount;
-                local.BalanceAfter = ub.BalanceAfter;
-                local.Type = ub.Type;
-                local.SimCardId = ub.SimCardId;
-                local.Note = ub.Note;
-                local.RecordedAt = ub.RecordedAt;
-                if (ub.UpdatedAt > local.UpdatedAt) local.UpdatedAt = ub.UpdatedAt;
+                if (ub.UpdatedAt > local.UpdatedAt)
+                {
+                    local.UserId = ub.UserId;
+                    local.Amount = ub.Amount;
+                    local.BalanceAfter = ub.BalanceAfter;
+                    local.Type = ub.Type;
+                    local.SimCardId = ub.SimCardId;
+                    local.Note = ub.Note;
+                    local.RecordedAt = ub.RecordedAt;
+                    local.UpdatedAt = ub.UpdatedAt;
+                }
                 local.ArchivedAt = ub.ArchivedAt;
-                local.MachineId = _machineId;
             }, "userbalancehistories", ct);
         pulled += ubhPulled;
 
