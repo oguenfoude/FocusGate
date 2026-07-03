@@ -1,4 +1,3 @@
-using System.Text;
 using FocusGate.Core.Enums;
 using FocusGate.Core.Models;
 using FocusGate.Infrastructure.Data;

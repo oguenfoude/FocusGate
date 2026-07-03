@@ -71,6 +71,15 @@ public static class DatabaseInitializer
         ExecuteSql("CREATE INDEX IF NOT EXISTS IX_UserBalanceHistories_UserId ON UserBalanceHistories(UserId)", context);
         ExecuteSql("CREATE INDEX IF NOT EXISTS IX_UserBalanceHistories_RecordedAt ON UserBalanceHistories(RecordedAt)", context);
 
+        ExecuteSql("CREATE INDEX IF NOT EXISTS IX_Modems_UpdatedAt ON Modems(UpdatedAt)", context);
+        ExecuteSql("CREATE INDEX IF NOT EXISTS IX_SimCards_UpdatedAt ON SimCards(UpdatedAt)", context);
+        ExecuteSql("CREATE INDEX IF NOT EXISTS IX_SmsRecords_UpdatedAt ON SmsRecords(UpdatedAt)", context);
+        ExecuteSql("CREATE INDEX IF NOT EXISTS IX_BalanceHistories_UpdatedAt ON BalanceHistories(UpdatedAt)", context);
+        ExecuteSql("CREATE INDEX IF NOT EXISTS IX_Users_UpdatedAt ON Users(UpdatedAt)", context);
+        ExecuteSql("CREATE INDEX IF NOT EXISTS IX_UserModems_UpdatedAt ON UserModems(UpdatedAt)", context);
+        ExecuteSql("CREATE INDEX IF NOT EXISTS IX_WithdrawalRequests_UpdatedAt ON WithdrawalRequests(UpdatedAt)", context);
+        ExecuteSql("CREATE INDEX IF NOT EXISTS IX_UserBalanceHistories_UpdatedAt ON UserBalanceHistories(UpdatedAt)", context);
+
         context.Database.CloseConnection();
         logger.LogInformation("Database initialized (EnsureCreated + PRAGMAs + MachineId migration)");
     }

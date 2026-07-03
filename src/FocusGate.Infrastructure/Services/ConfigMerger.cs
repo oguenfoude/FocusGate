@@ -17,7 +17,7 @@ public static class ConfigMerger
         ["alert.low_balance_threshold"] = "10",
         ["modem.watchdog.interval"] = "30",
         ["modem.sms.poll.interval"] = "30",
-        ["modem.balance.poll.interval"] = "30",
+
         ["serial.read.timeout"] = "5000",
         ["modem.ussd.phone_code"] = "*101#",
         ["modem.ussd.balance_code"] = "*222#",
@@ -39,10 +39,24 @@ public static class ConfigMerger
 
         if (File.Exists(configPath))
         {
-            var json = File.ReadAllText(configPath);
-            var doc = JsonDocument.Parse(json);
-            foreach (var prop in doc.RootElement.EnumerateObject())
-                existing[prop.Name] = prop.Value.GetString() ?? "";
+            try
+            {
+                var json = File.ReadAllText(configPath);
+                var doc = JsonDocument.Parse(json);
+                foreach (var prop in doc.RootElement.EnumerateObject())
+                    existing[prop.Name] = prop.Value.GetString() ?? "";
+            }
+            catch (JsonException ex)
+            {
+                var backupPath = configPath + ".corrupted";
+                try
+                {
+                    File.Copy(configPath, backupPath, overwrite: true);
+                    Console.WriteLine($"[ConfigMerger] Corrupted config backed up to {backupPath}: {ex.Message}");
+                }
+                catch { }
+                existing.Clear();
+            }
         }
 
         bool changed = false;
@@ -67,7 +81,9 @@ public static class ConfigMerger
             var sorted = existing.OrderBy(k => k.Key).ToDictionary(k => k.Key, k => k.Value);
             var options = new JsonSerializerOptions { WriteIndented = true };
             var json = JsonSerializer.Serialize(sorted, options);
-            File.WriteAllText(configPath, json);
+            var tempPath = configPath + ".tmp";
+            File.WriteAllText(tempPath, json);
+            File.Move(tempPath, configPath, overwrite: true);
         }
     }
 }

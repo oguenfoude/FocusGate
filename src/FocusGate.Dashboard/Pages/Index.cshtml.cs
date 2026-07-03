@@ -25,7 +25,7 @@ public class IndexModel : PageModel
     public async Task OnGetAsync()
     {
         ModemsTotal = await _db.Modems.CountAsync();
-        var cutoff = DateTime.UtcNow.AddMinutes(-2);
+        var cutoff = DateTime.UtcNow.AddMinutes(-10);
         ModemsOnline = await _db.Modems.CountAsync(m => m.Status == Core.Enums.ModemStatus.Online && m.UpdatedAt >= cutoff);
 
         SimCount = await _db.SimCards.CountAsync(s => s.IsActive);

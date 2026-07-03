@@ -23,7 +23,6 @@ public class HiLinkModemOrchestrator : BackgroundService
     private readonly ConcurrentDictionary<string, int> _blacklistedIps = new();
     private readonly HashSet<string> _knownModemIps = new(StringComparer.OrdinalIgnoreCase);
     private const int MaxIpFailures = 3;
-    private const int ModemIpCooldownMinutes = 5;
 
     public HiLinkModemOrchestrator(IServiceProvider services, DatabaseWriteChannel db,
         ILogger<HiLinkModemOrchestrator> log, IConfigProvider config)
@@ -49,7 +48,9 @@ public class HiLinkModemOrchestrator : BackgroundService
         {
             try
             {
+                _log.LogInformation("Scan cycle starting ({Count} handlers active, {Blacklisted} blacklisted IPs)", _handlers.Count, _blacklistedIps.Count);
                 await ScanAsync(ct);
+                _log.LogInformation("Scan cycle complete ({Count} modems online, {Blacklisted} blacklisted IPs)", _handlers.Count, _blacklistedIps.Count);
             }
             catch (OperationCanceledException) { break; }
             catch (Exception ex) { _log.LogError(ex, "Scan cycle error"); }
@@ -90,6 +91,8 @@ public class HiLinkModemOrchestrator : BackgroundService
             _blacklistedIps.TryRemove(kv.Key, out _);
             try { handler.Dispose(); } catch { }
         }
+
+        bool startedNewHandlers = false;
 
         if (_handlers.Count >= MaxModems) return;
 
@@ -149,7 +152,7 @@ public class HiLinkModemOrchestrator : BackgroundService
                     _blacklistedIps[ip] = newCount;
 
                     if (_knownModemIps.Contains(ip))
-                        _log.LogWarning("{Ip}: Known modem probe failed ({Count}/{Max}) — will retry in {Cooldown}min", ip, newCount, MaxIpFailures, ModemIpCooldownMinutes);
+                        _log.LogWarning("{Ip}: Known modem probe failed ({Count}/{Max}) — will retry", ip, newCount, MaxIpFailures);
                     else if (newCount >= MaxIpFailures)
                         _log.LogWarning("{Ip}: Permanently blacklisted after {Count} failures — never connected", ip, newCount);
                     else
@@ -217,7 +220,7 @@ public class HiLinkModemOrchestrator : BackgroundService
                 var imsi = await hilink.GetImsiAsync();
                 var manufacturer = device.Manufacturer;
                 var model = device.Model;
-                var brand = DetectBrand(manufacturer, model);
+                var brand = ModemHelper.DetectBrand(manufacturer, model);
 
                 _log.LogInformation("{Ip}: HiLink OK | IMEI={IMEI} IMSI={IMSI} Brand={Brand} Model={Model}",
                     device.Ip, imei, imsi, brand, model);
@@ -244,6 +247,7 @@ public class HiLinkModemOrchestrator : BackgroundService
                 var handler = new ModemHandler(hilink, writeChannel, handlerLog, config, modem.Id, device.Ip, isHiLink: true);
 
                 _handlers[device.Ip] = (handler, imei);
+                startedNewHandlers = true;
                 _log.LogInformation("{Ip}: Handler started (total active: {Count})", device.Ip, _handlers.Count);
 
                 _ = Task.Run(async () =>
@@ -275,28 +279,21 @@ public class HiLinkModemOrchestrator : BackgroundService
 
         if (ct.IsCancellationRequested) return;
 
+        if (startedNewHandlers)
+        {
+            _log.LogDebug("Skipping orphan check — new handlers starting this cycle");
+            return;
+        }
+
         var activeImeiArray = _activeImeis.Keys.ToArray();
         try
         {
             await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.UpdateOrphanedModems, Data = new { ActiveImeis = activeImeiArray } });
         }
-        catch { }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Failed to enqueue orphan check");
+        }
     }
 
-    private static ModemBrand DetectBrand(string manufacturer, string model)
-    {
-        var mfg = (manufacturer ?? "").ToLowerInvariant();
-        var mdl = (model ?? "").ToLowerInvariant();
-
-        if (mfg.Contains("zte") || mdl.Contains("zte")) return ModemBrand.ZTE;
-        if (mfg.Contains("huawei") || mdl.Contains("huawei")) return ModemBrand.Huawei;
-        if (mfg.Contains("quectel") || mdl.Contains("quectel")) return ModemBrand.Quectel;
-        if (mfg.Contains("simcom") || mdl.Contains("simcom")) return ModemBrand.SIMCom;
-        if (mfg.Contains("sierra") || mdl.Contains("sierra")) return ModemBrand.SierraWireless;
-        if (mfg.Contains("ericsson") || mdl.Contains("ericsson")) return ModemBrand.Ericsson;
-        if (mfg.Contains("mediatek") || mdl.Contains("mtk")) return ModemBrand.MediaTek;
-
-        if (!string.IsNullOrEmpty(mfg)) return ModemBrand.Other;
-        return ModemBrand.Unknown;
-    }
 }

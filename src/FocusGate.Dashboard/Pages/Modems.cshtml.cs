@@ -39,7 +39,7 @@ public class ModemsModel : PageModel
             .Include(um => um.User)
             .ToDictionaryAsync(um => um.ModemId);
 
-        var cutoff = DateTime.UtcNow.AddMinutes(-2);
+        var cutoff = DateTime.UtcNow.AddMinutes(-10);
 
         AllModems = allModemsRaw.Select(m =>
         {

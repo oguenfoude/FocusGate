@@ -1,4 +1,3 @@
-using FocusGate.Core.Enums;
 using FocusGate.Core.Services;
 using FocusGate.Infrastructure;
 using FocusGate.Infrastructure.Data;
@@ -11,9 +10,9 @@ var builder = WebApplication.CreateBuilder(args);
 var dataDir = PathService.DataDirectory;
 Directory.CreateDirectory(dataDir);
 
-ConfigMerger.EnsureConfig(Path.Combine(dataDir, "config.json"));
-
 var configPath = Path.Combine(dataDir, "config.json");
+ConfigMerger.EnsureConfig(configPath);
+
 var configBuilder = new ConfigurationBuilder()
     .SetBasePath(AppContext.BaseDirectory)
     .AddJsonFile("appsettings.json", optional: true)
@@ -79,6 +78,6 @@ app.UseRequestLocalization(new RequestLocalizationOptions()
 
 app.MapRazorPages();
 
-Log.Information("FocusGate Dashboard starting on http://localhost:5080");
+Log.Information("FocusGate Dashboard starting on http://localhost:5080 | DB: {DbPath}", Path.Combine(dataDir, "focusgate.db"));
 
 app.Run();

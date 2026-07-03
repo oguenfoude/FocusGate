@@ -14,9 +14,6 @@ public class MachineInfoService
     private readonly string _username;
 
     public string MachineId => _machineId;
-    public string MachineName => _machineName;
-    public string OsInfo => _osInfo;
-    public string Username => _username;
 
     public MachineInfoService(ILogger<MachineInfoService> logger)
     {
@@ -55,17 +52,5 @@ public class MachineInfoService
 
         logger.LogInformation("Machine: {Id} ({Name}@{User}, {OS})",
             _machineId, _machineName, _username, _osInfo);
-    }
-
-    public Dictionary<string, string> GetInfo()
-    {
-        return new Dictionary<string, string>
-        {
-            ["machine_id"] = _machineId,
-            ["hostname"] = _machineName,
-            ["username"] = _username,
-            ["os"] = _osInfo,
-            ["created_at"] = DateTime.UtcNow.ToString("O")
-        };
     }
 }

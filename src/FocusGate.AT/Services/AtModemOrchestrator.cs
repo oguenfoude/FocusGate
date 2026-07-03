@@ -84,6 +84,8 @@ public class AtModemOrchestrator : BackgroundService
             try { handler.Dispose(); } catch { }
         }
 
+        bool startedNewHandlers = false;
+
         var currentPorts = new HashSet<string>(ports);
         foreach (var key in _failedPorts.Keys.Where(k => !currentPorts.Contains(k)).ToList())
             _failedPorts.TryRemove(key, out _);
@@ -114,6 +116,7 @@ public class AtModemOrchestrator : BackgroundService
             }
 
             _handlers[port] = (handler, imei);
+            startedNewHandlers = true;
             _ = Task.Run(async () =>
             {
                 try
@@ -135,6 +138,12 @@ public class AtModemOrchestrator : BackgroundService
         }
 
         if (ct.IsCancellationRequested) return;
+
+        if (startedNewHandlers)
+        {
+            _log.LogDebug("Skipping orphan check — new handlers starting this cycle");
+            return;
+        }
 
         var activeImeiArray = _activeImeis.Keys.ToArray();
         try
@@ -168,7 +177,7 @@ public class AtModemOrchestrator : BackgroundService
             var modelResp = await at.SendCommandAsync("AT+CGMM");
             var model = modelResp.Replace("OK", "").ReplaceLineEndings(" ").Trim();
 
-            var brand = DetectBrand(manufacturer, model);
+            var brand = ModemHelper.DetectBrand(manufacturer, model);
 
             _log.LogDebug("{Port}: IMEI={IMEI} IMSI={IMSI} Brand={Brand} Mfg={Mfg} Model={Model}",
                 port, imei, imsi, brand, manufacturer, model);
@@ -193,20 +202,4 @@ public class AtModemOrchestrator : BackgroundService
         catch (Exception ex) { _log.LogDebug("{Port}: {Error}", port, ex.Message); try { at.Dispose(); } catch { } return (null, ""); }
     }
 
-    private static ModemBrand DetectBrand(string manufacturer, string model)
-    {
-        var mfg = (manufacturer ?? "").ToLowerInvariant();
-        var mdl = (model ?? "").ToLowerInvariant();
-
-        if (mfg.Contains("zte") || mdl.Contains("zte")) return ModemBrand.ZTE;
-        if (mfg.Contains("huawei") || mdl.Contains("huawei")) return ModemBrand.Huawei;
-        if (mfg.Contains("quectel") || mdl.Contains("quectel")) return ModemBrand.Quectel;
-        if (mfg.Contains("simcom") || mdl.Contains("simcom")) return ModemBrand.SIMCom;
-        if (mfg.Contains("sierra") || mdl.Contains("sierra")) return ModemBrand.SierraWireless;
-        if (mfg.Contains("ericsson") || mdl.Contains("ericsson")) return ModemBrand.Ericsson;
-        if (mfg.Contains("mediatek") || mdl.Contains("mtk")) return ModemBrand.MediaTek;
-
-        if (!string.IsNullOrEmpty(mfg)) return ModemBrand.Other;
-        return ModemBrand.Unknown;
-    }
 }

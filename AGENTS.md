@@ -12,11 +12,11 @@ Two separate products in one repo:
 ### .NET Gateway (5 projects)
 
 ```
-src/FocusGate.Core/          — Models, enums, PathService (no deps)
-src/FocusGate.Infrastructure/ — DbContext, services, MongoDB sync
-src/FocusGate.AT/             — COM port modem entry point
-src/FocusGate.HiLink/         — Huawei HTTP modem entry point
-src/FocusGate.Dashboard/      — ASP.NET Core Razor Pages (port 5080)
+src/FocusGate.Core/          — Models, enums, PathService (no deps, 19 files)
+src/FocusGate.Infrastructure/ — DbContext, services, MongoDB sync (15 files)
+src/FocusGate.AT/             — COM port modem entry point (3 files)
+src/FocusGate.HiLink/         — Huawei HTTP modem entry point (2 files)
+src/FocusGate.Dashboard/      — ASP.NET Core Razor Pages (port 5080, 23 files)
 ```
 
 ### Next.js Web App
@@ -90,15 +90,7 @@ npm start        # Production server
 - **MachineId:** Each machine has a unique ID from `MachineInfoService`. Dev machine: `d26b1c221259fb12`. Client (BERRAR): `419c0cfc97666753`.
 - **HTMX in Dashboard:** POST handlers must use `Response.Headers["HX-Redirect"]` + `return new EmptyResult()` — NOT `RedirectToPage()`. `_ViewStart.cshtml` sets `Layout = null` for `HX-Request` header.
 - **Dashboard DI:** Uses `AddFocusGateDashboard()` (lightweight — no MongoSync, no ConsoleCommandHandler, no RestartService).
-- **Safe shutdown:** `writeChannel.CompleteAsync()` in `ApplicationStopping`. Dashboard process tracked and killed in `ApplicationStopped`.
-
-### Next.js Web App
-
-- **Next.js 16** — has breaking changes from earlier versions. Check `node_modules/next/dist/docs/` before writing code.
-- **Dev command:** `npm run dev` uses `--webpack` flag (required).
-- **Auth:** `next-auth` v4 with credentials provider. `NEXTAUTH_SECRET` and `MONGODB_URI` in `.env.local`.
-- **MongoDB:** Mongoose 9.x. Models in `src/lib/models/`. Connection in `src/lib/mongodb.ts`.
-- **No API route for gateway** — the web app reads MongoDB directly. The .NET gateway pushes data to MongoDB Atlas.
+- **Safe shutdown:** `writeChannel.CompleteAsync()` in `ApplicationStopped` (after host.RunAsync returns). Dashboard process tracked and killed in `ApplicationStopped`.
 
 ## Data Flow
 
@@ -106,26 +98,159 @@ npm start        # Production server
 USB Modems → .NET Gateway → SQLite (local) → MongoDB Atlas (cloud) ← Next.js Web App (writes users/withdrawals)
 ```
 
-### Data Ownership (who writes each collection)
+### Startup Sequence
 
-| Collection | Writer | Notes |
-|------------|--------|-------|
-| `modems` | .NET only | Status, IMEI, ComPort, Brand |
-| `simcards` | .NET only | Balance (from USSD), IMSI, PhoneNumber |
-| `smsrecords` | .NET only | SMS received by modems |
-| `users` | Next.js only | Created/edited by admin in web UI |
-| `usermodems` | Next.js only | Assign/remove modem-to-user |
-| `balancehistories` | .NET only | SIM balance change records (from USSD) |
-| `withdrawalrequests` | Next.js only | User requests, admin approve/reject |
-| `userbalancehistories` | Next.js only | Created on withdrawal approval |
+```
+1. Mutex check (Global\FocusGate_HiLink or Global\FocusGate_AT)
+2. ConfigMerger.EnsureConfig() — creates/merges config.json (atomic write)
+3. DatabaseInitializer.Initialize() — EnsureCreated + PRAGMAs + column migrations + indexes
+4. DatabaseWriteChannel.Start() — begins processing write queue
+5. MongoSyncService waits 15s, then connects to MongoDB (5 retries)
+6. HiLinkDiscovery probes IPs (parallel, 5s timeout) → finds modems
+7. For each modem found:
+   a. HiLinkCommandService.OpenAsync() — gets session cookie + CSRF token
+   b. ModemHandler created → StartAsync():
+      - GetImeiAsync, GetImsiAsync, GetNetworkRegistrationAsync
+      - Insert modem + SIM to SQLite
+      - *222# balance check → update SimCard.Balance
+      - *101# phone detection (if missing)
+      - Read startup SMS → save to SQLite → delete from SIM
+      - Start 3 async loops (watchdog, SMS poll, network retry)
+8. Orphan check — marks missing modems as Offline
+```
 
-Both systems pull from MongoDB → SQLite. .NET pushes modem/SIM/SMS data. Next.js pushes user/assignment/withdrawal data.
+### Steady State (every 30s)
+
+```
+SMS Poll (30s): ReadAllSmsAsync → save to SQLite (dedup: SimCardId+Sender+Content+ReceivedAt) → DeleteAllSmsAsync
+Watchdog (30s): TryRefreshSessionAsync → IsAliveAsync → mark Online/Offline/Disconnect
+Network Retry (2min): GetNetworkRegistrationAsync → mark Online + write status
+MongoDB Sync (30s): push SQLite changes → pull MongoDB changes
+Scan Cycle (30s): probe for new modems → orphan check for missing modems
+```
+
+### Mobilis SMS Trigger
+
+```
+When recharge/transfer SMS from "Mobilis" or "77111" detected:
+  → Parse "Solde" from SMS content
+  → *222# USSD to confirm real balance
+  → Update SimCard.Balance + BalanceHistory
+  → Credit user balance if increase detected
+```
+
+### Key: `*222#` Only Fires At
+
+1. **Startup** — once per modem when connected
+2. **Mobilis SMS** — when recharge/transfer SMS detected
+3. **Never periodically** — no auto-refresh, no timer, no retry loop
+
+## Data Ownership (who writes each SQLite table)
+
+| Table | Writer | Notes |
+|-------|--------|-------|
+| `Modems` | .NET only | Status, IMEI, ComPort, Brand, Model, UpdatedAt |
+| `SimCards` | .NET only | Balance (from USSD), IMSI, PhoneNumber, IsActive |
+| `SmsRecords` | .NET only | SMS received by modems |
+| `BalanceHistories` | .NET only | SIM balance change records (from USSD) |
+| `Users` | Dashboard only | Created/edited by admin in ASP.NET Dashboard |
+| `UserModems` | Dashboard only | Assign/remove modem-to-user |
+| `WithdrawalRequests` | Dashboard only | User requests, admin approve/reject |
+| `UserBalanceHistories` | Dashboard only | Created on withdrawal approval |
+
+Both .NET Gateway and Dashboard read from SQLite. Next.js Web App reads from MongoDB.
 
 ## MongoDB Collections (8)
 
 `modems`, `simcards`, `smsrecords`, `users`, `usermodems`, `balancehistories`, `withdrawalrequests`, `userbalancehistories`
 
 Full schema reference: `MONGO_SCHEMA.md`
+
+## Per-Modem Architecture
+
+### ModemHandler (604 lines)
+
+Single handler per connected modem. Manages modem lifecycle with 3 async loops:
+
+| Loop | Interval | What it does |
+|------|----------|-------------|
+| **Watchdog** | 30s | HiLink: TryRefreshSessionAsync → IsAliveAsync → Online/Offline/Disconnect. AT: send "AT" → Online/Disconnect |
+| **SMS Poll** | 30s | ReadAllSmsAsync → save to SQLite → DeleteAllSmsAsync → check for Mobilis balance SMS → trigger *222# if recharge |
+| **Network Retry** | 2min | GetNetworkRegistrationAsync → mark Online + write status |
+
+**Startup:** GetImei → GetImsi → GetNetworkReg → *222# balance → *101# phone (if missing) → startup SMS read → start loops
+
+**Shutdown:** Cancel CTS → loops exit → Dispose AT service → orchestrator removes handler
+
+### HiLinkCommandService (717 lines)
+
+HTTP API for Huawei HiLink modems:
+- `OpenAsync(ip)` — tries HTTP then HTTPS, gets SesInfo/CsrfToken
+- `TryRefreshSessionAsync()` — re-fetches SesInfo/CsrfToken, clears state on failure
+- `SendGetAsync/SendPostAsync` — with `LastRequestFailed` flag, throws on non-2xx
+- `ReadAllSmsAsync()` — XML parsing, throws on HTTP failure (caller catches and disconnects)
+- `SendUssdAsync(code, timeout)` — sends USSD, polls `/api/ussd/get`, 15s lock timeout
+- `GetBalanceAsync()` — sends *222#, parses "Solde" from response
+- `DeleteAllSmsAsync()` — deletes SMS by index, fallback 1-50 on 125002 inbox full
+
+### AtCommandService (830 lines)
+
+Serial port AT commands:
+- Multi-baud opening (9600/115200/57600/19200)
+- AT+CMGL SMS reading with UDH concatenation reassembly + consecutive-index merge
+- GSM 7-bit/UTF-16/ISO-8859-1 SMS decoding
+- AT+CUSD USSD with hex/UTF-16/plain text response decoding
+- 10s lock timeout on SendCommand/SendUssd
+
+### HiLinkModemOrchestrator (299 lines)
+
+BackgroundService scanning 14 IPs every 30s (max 15 modems):
+- Parallel probe → create HiLinkCommandService → create ModemHandler
+- Blacklists IPs after 3 failures; known modem IPs retried indefinitely
+- Orphan check: marks missing modems Offline (skipped when new handlers starting)
+
+### DatabaseWriteChannel (614 lines)
+
+Single serialized write queue using `Channel<Op>`. ALL DB writes go through here.
+
+**Operations:**
+- `InsertModem` — modem + SIM (atomic)
+- `UpdateModemStatus` — status + UpdatedAt
+- `TouchModemUpdatedAt` — heartbeat (no status change)
+- `UpsertSimCard` — detect SIM changes
+- `UpdateSimCardPhone` — phone number from USSD
+- `UpdateSimBalance` — balance from *222# + BalanceHistory
+- `UpdateSimBalanceFromSms` — balance from Mobilis SMS + user credit
+- `InsertSms` — with dedup (SimCardId+Sender+Content+ReceivedAt) + Mobilis trigger
+- `UpdateOrphanedModems` — marks missing modems Offline
+- `CreateWithdrawalRequest` / `ProcessWithdrawal` — withdrawal workflow
+
+### MongoSyncService (539 lines)
+
+BackgroundService. Bidirectional sync every 30s:
+- **Push:** SQLite → MongoDB (upsert by `_id` + `machineId`). Per-collection counts logged
+- **Pull:** MongoDB → SQLite (in-memory matching by ID). SimCard balance only overwritten when `remote.UpdatedAt > local.UpdatedAt`
+- `_lastSyncAt` only advances when BOTH push AND pull succeed
+- `_initialSyncDone` only set on full success
+- `SafeUpsertAsync` handles DuplicateKey by claiming with `_id`-only filter
+- `StopAsync` performs final sync before shutdown
+
+## Dashboard Pages (ASP.NET Razor Pages)
+
+| Page | Purpose |
+|------|---------|
+| `Index` | Dashboard home: 4 stat cards (modems, SIM balance, user wallets, pending withdrawals) |
+| `Modems` | Modem list with filter pills (All/Online/Offline/Assigned/Unassigned), HTMX 5s refresh |
+| `ModemDetail` | Modem detail: Info + Balance History + SMS tabs |
+| `Users` | User CRUD with search, archived toggle, add user modal |
+| `UserDetail` | User detail: Modems + Wallet + History + SMS tabs |
+| `Withdrawals` | Withdrawal requests: All/Pending/Approved/Rejected filter tabs, approve/reject |
+| `Warnings` | Modems with high SIM balance (>= 45000 DA) |
+| `AdminSettings` | Change username and password |
+
+## Console Commands
+
+`help`, `status`, `modems`, `modem <id>`, `sms [modemId] [days]`, `sim <modemId>`, `config`, `set-config <k> <v>`, `setmongo <uri>`, `users`, `adduser <u> <p> [d]`, `assign <uid> <mid>`, `unassign <uid> <mid>`, `settle <modId> <amt> [note]`, `report balance|sms [id] [days]`, `exit`
 
 ## Deployment
 
@@ -140,7 +265,7 @@ Full schema reference: `MONGO_SCHEMA.md`
 
 - `Global\FocusGate_HiLink` — prevents duplicate HiLink instances
 - `Global\FocusGate_AT` — prevents duplicate AT instances
-- `FocusGate_Restart` — named pipe for restart/stop signals
+- `FocusGate_Restart` — named pipe for restart/stop signals (accepts "restart" or "stop")
 
 ## Gotchas
 
@@ -151,3 +276,7 @@ Full schema reference: `MONGO_SCHEMA.md`
 - **Global query filters** apply to all queries unless `IgnoreQueryFilters()` is used
 - **Admin user hidden from Users page** — filtered by `Role != UserRole.Admin` by design
 - **No tests exist** — verify with `dotnet build` (0 warnings, 0 errors) and manual browser testing
+- **USSD lock timeout** — HiLinkCommandService.SendUssdAsync has 15s lock timeout; AT has 10s
+- **SendUssdAsync on HiLink** sends `POST /api/ussd/send` then polls `GET /api/ussd/get` every 2s
+- **125002 error** means SMS inbox full — DeleteAllSmsAsync falls back to index-based deletion (1-50)
+- **Session refresh failure** clears _sessionCookie, _csrfToken, sets _isOpen=false — forces clean re-handshake

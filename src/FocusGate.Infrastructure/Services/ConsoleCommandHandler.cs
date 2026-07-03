@@ -12,18 +12,16 @@ namespace FocusGate.Infrastructure.Services;
 public class ConsoleCommandHandler : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
-    private readonly DatabaseWriteChannel _writeChannel;
     private readonly ILogger<ConsoleCommandHandler> _log;
     private readonly IHostApplicationLifetime _lifetime;
     private readonly MongoSyncService? _mongoSync;
     private CancellationToken _ct;
 
-    public ConsoleCommandHandler(IServiceScopeFactory scopeFactory, DatabaseWriteChannel writeChannel,
+    public ConsoleCommandHandler(IServiceScopeFactory scopeFactory,
         ILogger<ConsoleCommandHandler> log, IHostApplicationLifetime lifetime,
         MongoSyncService? mongoSync = null)
     {
         _scopeFactory = scopeFactory;
-        _writeChannel = writeChannel;
         _log = log;
         _lifetime = lifetime;
         _mongoSync = mongoSync;
@@ -446,7 +444,9 @@ public class ConsoleCommandHandler : BackgroundService
         }
         dict[args[0]] = args[1];
         var updated = System.Text.Json.JsonSerializer.Serialize(dict, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
-        await File.WriteAllTextAsync(path, updated);
+        var tempPath = path + ".tmp";
+        await File.WriteAllTextAsync(tempPath, updated);
+        File.Move(tempPath, path, overwrite: true);
         Console.WriteLine($"Set: {args[0]} = {args[1]}");
     }
 
@@ -481,7 +481,9 @@ public class ConsoleCommandHandler : BackgroundService
         }
         dict["mongodb.uri"] = uri;
         var updated = System.Text.Json.JsonSerializer.Serialize(dict, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
-        await File.WriteAllTextAsync(path, updated);
+        var tempPath = path + ".tmp";
+        await File.WriteAllTextAsync(tempPath, updated);
+        File.Move(tempPath, path, overwrite: true);
 
         var masked = uri.Length > 30 ? uri[..30] + "..." : uri;
         Console.WriteLine($"MongoDB URI set: {masked}");
@@ -526,7 +528,7 @@ public class ConsoleCommandHandler : BackgroundService
         sim.VerifiedAt = DateTime.UtcNow;
         sim.LastSeen = DateTime.UtcNow;
 
-        var userId = await ResolveUserIdForModemAsync(db, modemId);
+        var userId = await ModemHelper.ResolveUserIdForModemAsync(db, modemId);
 
         db.BalanceHistories.Add(new BalanceHistory
         {
@@ -666,9 +668,4 @@ public class ConsoleCommandHandler : BackgroundService
         Console.WriteLine();
     }
 
-    private static async Task<long?> ResolveUserIdForModemAsync(FocusGateDbContext db, int modemId)
-    {
-        var um = await db.UserModems.FirstOrDefaultAsync(x => x.ModemId == modemId && x.RemovedAt == null);
-        return um?.UserId;
-    }
 }

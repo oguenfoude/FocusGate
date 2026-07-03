@@ -46,6 +46,8 @@ Directory.CreateDirectory(PathService.LogsDirectory);
 var configPath = PathService.ConfigPath;
 ConfigMerger.EnsureConfig(configPath);
 
+DatabaseWriteChannel? writeChannel = null;
+
 var host = Host.CreateDefaultBuilder(args)
     .UseContentRoot(AppContext.BaseDirectory)
     .ConfigureAppConfiguration((ctx, cfg) =>
@@ -90,7 +92,7 @@ try
         logger.LogInformation("MachineId persisted to config: {Machine}", context.MachineId);
     }
 
-    var writeChannel = scope.ServiceProvider.GetRequiredService<DatabaseWriteChannel>();
+    writeChannel = scope.ServiceProvider.GetRequiredService<DatabaseWriteChannel>();
     linkedCts = CancellationTokenSource.CreateLinkedTokenSource(appCts.Token);
     writeChannel.Start(linkedCts.Token);
 
@@ -116,8 +118,6 @@ try
     var lifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
     lifetime.ApplicationStopping.Register(() =>
     {
-        try { writeChannel.CompleteAsync().GetAwaiter().GetResult(); }
-        catch { }
         linkedCts?.Cancel();
     });
 
@@ -125,7 +125,7 @@ try
     {
         if (dashboardProcess != null && !dashboardProcess.HasExited)
         {
-            try { dashboardProcess.Kill(); } catch { }
+            try { dashboardProcess.Kill(); dashboardProcess.WaitForExit(3000); } catch { }
         }
     });
 }
@@ -136,6 +136,8 @@ catch (Exception ex)
 
 await host.RunAsync();
 
+try { writeChannel?.CompleteAsync().GetAwaiter().GetResult(); }
+catch { }
 linkedCts?.Cancel();
 linkedCts?.Dispose();
 }
@@ -143,7 +145,7 @@ finally
 {
     if (dashboardProcess != null && !dashboardProcess.HasExited)
     {
-        try { dashboardProcess.Kill(); } catch { }
+        try { dashboardProcess.Kill(); dashboardProcess.WaitForExit(3000); } catch { }
         dashboardProcess.Dispose();
     }
     mutex.ReleaseMutex();

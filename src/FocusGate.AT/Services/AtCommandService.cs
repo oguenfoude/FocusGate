@@ -20,6 +20,8 @@ public partial class AtCommandService : IAtCommandService
 
     public bool IsOpen => _isOpen;
     public string? ComPort => _serialPort?.PortName;
+    public bool IsSmsInboxFull { get; private set; }
+    public bool LastRequestFailed { get; private set; }
 
     public AtCommandService(ILogger<AtCommandService> logger, IConfigProvider config)
     {
@@ -36,9 +38,10 @@ public partial class AtCommandService : IAtCommandService
 
         foreach (var baud in baudRates)
         {
+            SerialPort? port = null;
             try
             {
-                var port = new SerialPort(comPort, baud, Parity.None, 8, StopBits.One)
+                port = new SerialPort(comPort, baud, Parity.None, 8, StopBits.One)
                 {
                     ReadTimeout = _config.Get<int>("serial.read.timeout", 5000),
                     WriteTimeout = 5000,
@@ -80,9 +83,11 @@ public partial class AtCommandService : IAtCommandService
                 lastPort = port;
                 port.Close();
                 port.Dispose();
+                port = null;
             }
             catch
             {
+                try { port?.Close(); port?.Dispose(); } catch { }
                 try { lastPort?.Close(); lastPort?.Dispose(); } catch { }
             }
         }
@@ -92,7 +97,7 @@ public partial class AtCommandService : IAtCommandService
 
     public async Task<string> SendCommandAsync(string command, int timeoutMs = 5000)
     {
-        await _lock.WaitAsync();
+        await _lock.WaitAsync(TimeSpan.FromSeconds(10));
         try
         {
             if (_disposed) throw new ObjectDisposedException(nameof(AtCommandService));
@@ -730,7 +735,7 @@ public partial class AtCommandService : IAtCommandService
 
     public async Task<string> SendUssdAsync(string code, int timeoutMs = 30000)
     {
-        await _lock.WaitAsync();
+        await _lock.WaitAsync(TimeSpan.FromSeconds(10));
         try
         {
             if (_disposed) throw new ObjectDisposedException(nameof(AtCommandService));
@@ -814,6 +819,7 @@ public partial class AtCommandService : IAtCommandService
         _isOpen = false;
         try { _serialPort?.Close(); } catch { }
         try { _serialPort?.Dispose(); } catch { }
+        try { _lock.Dispose(); } catch { }
     }
 
     [GeneratedRegex(@"\+CNUM:\s*""([^""]*)"",\s*""(\+?\d+)""")]

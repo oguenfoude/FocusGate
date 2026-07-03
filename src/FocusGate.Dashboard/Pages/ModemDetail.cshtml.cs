@@ -34,7 +34,7 @@ public class ModemDetailModel : PageModel
 
         if (Modem == null) return;
 
-        var cutoff = DateTime.UtcNow.AddMinutes(-2);
+        var cutoff = DateTime.UtcNow.AddMinutes(-10);
         IsOnline = Modem.Status == ModemStatus.Online && Modem.UpdatedAt >= cutoff;
 
         StatusLabel = Modem.Status switch

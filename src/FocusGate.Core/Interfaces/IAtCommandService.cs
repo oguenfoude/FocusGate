@@ -16,6 +16,8 @@ public interface IAtCommandService : IDisposable
     Task<decimal?>         GetBalanceAsync();
     Task<List<RawSmsMessage>> ReadAllSmsAsync();
     Task                   DeleteAllSmsAsync();
+    bool                   IsSmsInboxFull { get; }
+    bool                   LastRequestFailed { get; }
     Task<string>           SendUssdAsync(string code, int timeoutMs = 15000);
     Task<bool>             TrySetCharsetAsync(string charset);
     Task<bool>             TryRefreshSessionAsync();

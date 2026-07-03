@@ -17,7 +17,6 @@ public class AdminSettingsModel : PageModel
     public string CurrentDisplayName { get; set; } = "";
 
     [BindProperty] public string NewUsername { get; set; } = "";
-    [BindProperty] public string NewDisplayName { get; set; } = "";
     [BindProperty] public string NewPassword { get; set; } = "";
     [BindProperty] public string ConfirmPassword { get; set; } = "";
 

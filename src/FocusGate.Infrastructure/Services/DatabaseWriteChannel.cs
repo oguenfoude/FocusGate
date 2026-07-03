@@ -30,7 +30,8 @@ public class DatabaseWriteChannel
         UpdateOrphanedModems,
         CreateWithdrawalRequest,
         ProcessWithdrawal,
-        UpdateSimBalanceFromSms
+        UpdateSimBalanceFromSms,
+        TouchModemUpdatedAt
     }
 
     public DatabaseWriteChannel(IServiceProvider services, ILogger<DatabaseWriteChannel> logger)
@@ -62,14 +63,6 @@ public class DatabaseWriteChannel
         return sim?.Id ?? 0;
     }
 
-    public async Task<string> GetActiveImsiAsync(int modemId)
-    {
-        using var scope = _services.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<FocusGateDbContext>();
-        var sim = await db.SimCards.FirstOrDefaultAsync(s => s.ModemId == modemId && s.IsActive);
-        return sim?.IMSI ?? string.Empty;
-    }
-
     public async Task<(string Imsi, long PhoneNumber)> GetActiveSimInfoAsync(int modemId)
     {
         using var scope = _services.CreateScope();
@@ -93,7 +86,10 @@ public class DatabaseWriteChannel
             using var setupScope = _services.CreateScope();
             machineSetter = setupScope.ServiceProvider.GetRequiredService<Action<FocusGateDbContext>>();
         }
-        catch { }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "MachineId setter resolution failed — MachineId will not be stamped on writes");
+        }
 
         await foreach (var op in _channel.Reader.ReadAllAsync(ct))
         {
@@ -118,6 +114,7 @@ public class DatabaseWriteChannel
                     case Op.CreateWithdrawalRequest: success = await HandleCreateWithdrawalRequestAsync(db, op.Data!, ct); break;
                     case Op.ProcessWithdrawal: success = await HandleProcessWithdrawalAsync(db, op.Data!, ct); break;
                     case Op.UpdateSimBalanceFromSms: success = await HandleUpdateSimBalanceFromSmsAsync(db, op.Data!, ct); break;
+                    case Op.TouchModemUpdatedAt:    await HandleTouchModemUpdatedAtAsync(db, op.Data!, ct); success = true; break;
                 }
                 op.Completed?.TrySetResult(success);
             }
@@ -158,7 +155,6 @@ public class DatabaseWriteChannel
             UpdatedAt = DateTime.UtcNow
         };
         db.Modems.Add(modem);
-        await db.SaveChangesAsync(ct);
 
         var sim = new SimCard
         {
@@ -186,6 +182,17 @@ public class DatabaseWriteChannel
             .Where(m => m.Id == modemId)
             .ExecuteUpdateAsync(s => s
                 .SetProperty(m => m.Status, status)
+                .SetProperty(m => m.UpdatedAt, DateTime.UtcNow), ct);
+    }
+
+    private async Task HandleTouchModemUpdatedAtAsync(FocusGateDbContext db, object data, CancellationToken ct)
+    {
+        var d = Deserialize(data);
+        var modemId = d["ModemId"].GetInt32();
+
+        await db.Modems
+            .Where(m => m.Id == modemId)
+            .ExecuteUpdateAsync(s => s
                 .SetProperty(m => m.UpdatedAt, DateTime.UtcNow), ct);
     }
 
@@ -253,7 +260,12 @@ public class DatabaseWriteChannel
         var phone = d["PhoneNumber"].GetInt64();
 
         var sim = await db.SimCards.FirstOrDefaultAsync(s => s.ModemId == modemId && s.IsActive, ct);
-        if (sim != null && phone > 0)
+        if (sim == null)
+        {
+            _logger.LogWarning("UpdateSimCardPhone: No active SIM on modem {ModemId} — phone {Phone} not saved", modemId, phone);
+            return;
+        }
+        if (phone > 0)
         {
             sim.PhoneNumber = phone;
             sim.LastSeen = DateTime.UtcNow;
@@ -297,7 +309,7 @@ public class DatabaseWriteChannel
 
             await db.SaveChangesAsync(ct);
 
-            var userId = await ResolveUserIdForModemAsync(db, modemId, ct);
+            var userId = await ModemHelper.ResolveUserIdForModemAsync(db, modemId, ct);
             
             if (oldBalance != newBalance)
             {
@@ -334,7 +346,7 @@ public class DatabaseWriteChannel
 
         await db.SaveChangesAsync(ct);
 
-        var userId = await ResolveUserIdForModemAsync(db, modemId, ct);
+        var userId = await ModemHelper.ResolveUserIdForModemAsync(db, modemId, ct);
 
         if (oldSimBalance != newBalance)
         {
@@ -366,14 +378,6 @@ public class DatabaseWriteChannel
         return true;
     }
 
-    private static async Task<long?> ResolveUserIdForModemAsync(FocusGateDbContext db, int modemId, CancellationToken ct)
-    {
-        var um = await db.UserModems
-            .Where(um => um.ModemId == modemId && um.RemovedAt == null)
-            .FirstOrDefaultAsync(ct);
-        return um?.UserId;
-    }
-
     private async Task<bool> HandleInsertSmsAsync(FocusGateDbContext db, SmsRecord sms, CancellationToken ct)
     {
         if (sms.SimCardId <= 0)
@@ -382,15 +386,17 @@ public class DatabaseWriteChannel
             return false;
         }
 
-        // Prevent repetition of the exact same message to keep things clear
-        var lastSms = await db.SmsRecords
-            .Where(s => s.SimCardId == sms.SimCardId && s.SenderNumber == sms.SenderNumber)
-            .OrderByDescending(s => s.ReceivedAt)
-            .FirstOrDefaultAsync(ct);
+        // Skip re-reads of the same SMS from the SIM (same sender + content + time)
+        // Same text at a different time is a new message — always store it
+        var exists = await db.SmsRecords
+            .AnyAsync(s => s.SimCardId == sms.SimCardId
+                && s.SenderNumber == sms.SenderNumber
+                && s.Content == sms.Content
+                && s.ReceivedAt == sms.ReceivedAt, ct);
 
-        if (lastSms != null && lastSms.Content == sms.Content)
+        if (exists)
         {
-            _logger.LogWarning("SMS duplicate skipped (exact repetition): SimCardId={SimId} Sender={Sender}", sms.SimCardId, sms.SenderNumber);
+            _logger.LogDebug("SMS duplicate skipped: SimCardId={SimId} Sender={Sender}", sms.SimCardId, sms.SenderNumber);
             return false;
         }
 
@@ -456,7 +462,7 @@ public class DatabaseWriteChannel
             .Select(x => x.GetString() ?? "").ToHashSet();
 
         var online = await db.Modems
-            .Where(m => m.Status != ModemStatus.Offline && m.Status != ModemStatus.Error && m.Status != ModemStatus.Detected)
+            .Where(m => m.Status != ModemStatus.Offline && m.Status != ModemStatus.Error && m.Status != ModemStatus.Detected && m.Status != ModemStatus.PendingNetwork)
             .ToListAsync(ct);
 
         var orphaned = 0;
