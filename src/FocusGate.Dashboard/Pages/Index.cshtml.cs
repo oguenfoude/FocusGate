@@ -29,7 +29,14 @@ public class IndexModel : PageModel
         ModemsOnline = await _db.Modems.CountAsync(m => m.Status == Core.Enums.ModemStatus.Online && m.UpdatedAt >= cutoff);
 
         SimCount = await _db.SimCards.CountAsync(s => s.IsActive);
-        TotalSimBalance = (await _db.SimCards.Where(s => s.IsActive).Select(s => s.Balance).ToListAsync()).Sum();
+        var onlineModemIds = await _db.Modems
+            .Where(m => m.Status == Core.Enums.ModemStatus.Online && m.UpdatedAt >= cutoff)
+            .Select(m => m.Id)
+            .ToListAsync();
+        TotalSimBalance = (await _db.SimCards
+            .Where(s => s.IsActive && onlineModemIds.Contains(s.ModemId))
+            .Select(s => s.Balance)
+            .ToListAsync()).Sum();
 
         UserCount = await _db.Users.CountAsync(u => u.ArchivedAt == null && u.Role != FocusGate.Core.Enums.UserRole.Admin);
         TotalUserBalance = (await _db.Users.Where(u => u.ArchivedAt == null && u.Role != FocusGate.Core.Enums.UserRole.Admin).Select(u => u.Balance).ToListAsync()).Sum();
