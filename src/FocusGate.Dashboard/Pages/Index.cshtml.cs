@@ -28,11 +28,11 @@ public class IndexModel : PageModel
         var cutoff = DateTime.UtcNow.AddMinutes(-10);
         ModemsOnline = await _db.Modems.CountAsync(m => m.Status == Core.Enums.ModemStatus.Online && m.UpdatedAt >= cutoff);
 
-        SimCount = await _db.SimCards.CountAsync(s => s.IsActive);
         var onlineModemIds = await _db.Modems
             .Where(m => m.Status == Core.Enums.ModemStatus.Online && m.UpdatedAt >= cutoff)
             .Select(m => m.Id)
             .ToListAsync();
+        SimCount = await _db.SimCards.CountAsync(s => s.IsActive && onlineModemIds.Contains(s.ModemId));
         TotalSimBalance = (await _db.SimCards
             .Where(s => s.IsActive && onlineModemIds.Contains(s.ModemId))
             .Select(s => s.Balance)

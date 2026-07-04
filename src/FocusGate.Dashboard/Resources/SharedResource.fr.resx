@@ -157,4 +157,11 @@
   <data name="Warnings.AllNormal"><value>Tous les soldes des modems sont dans les limites normales.</value></data>
   <data name="Layout.Subtitle"><value>Tableau de bord de la passerelle</value></data>
   <data name="Layout.Language"><value>Langue</value></data>
+  <data name="Users.EditUser"><value>Modifier l'utilisateur</value></data>
+  <data name="Users.UpdateUser"><value>Mettre à jour</value></data>
+  <data name="Users.EditDisplayName"><value>Nom d'affichage</value></data>
+  <data name="Users.EditNewPassword"><value>Nouveau mot de passe (laisser vide pour garder l'actuel)</value></data>
+  <data name="Users.EditConfirmPassword"><value>Confirmer le nouveau mot de passe</value></data>
+  <data name="Toast.UserUpdated"><value>Utilisateur mis à jour avec succès</value></data>
+  <data name="Settings.DisplayName"><value>Nom d'affichage</value></data>
 </root>

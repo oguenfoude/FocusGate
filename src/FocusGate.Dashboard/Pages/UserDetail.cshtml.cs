@@ -186,6 +186,50 @@ public class UserDetailModel : PageModel
         return new EmptyResult();
     }
 
+    public async Task<IActionResult> OnPostUpdateUserAsync(long userId, string username, string? displayName, string? password, string? confirmPassword)
+    {
+        var user = await _db.Users.FindAsync(userId);
+        if (user == null || user.Role == UserRole.Admin)
+        {
+            Response.Headers["HX-Redirect"] = $"/UserDetail?id={userId}";
+            return new EmptyResult();
+        }
+
+        if (string.IsNullOrWhiteSpace(username))
+        {
+            Response.Headers["HX-Redirect"] = $"/UserDetail?id={userId}";
+            return new EmptyResult();
+        }
+
+        var exists = await _db.Users.IgnoreQueryFilters().AnyAsync(u => u.Username == username && u.Id != userId);
+        if (exists)
+        {
+            Response.Headers["HX-Redirect"] = $"/UserDetail?id={userId}";
+            return new EmptyResult();
+        }
+
+        user.Username = username;
+        user.DisplayName = displayName ?? username;
+        user.UpdatedAt = DateTime.UtcNow;
+
+        if (!string.IsNullOrWhiteSpace(password))
+        {
+            if (password != confirmPassword)
+            {
+                Response.Headers["HX-Redirect"] = $"/UserDetail?id={userId}";
+                return new EmptyResult();
+            }
+            user.Password = password;
+        }
+
+        await _db.SaveChangesAsync();
+
+        TempData["ToastMessage"] = _localizer["Toast.UserUpdated"].Value;
+        TempData["ToastType"] = "success";
+        Response.Headers["HX-Redirect"] = $"/UserDetail?id={userId}";
+        return new EmptyResult();
+    }
+
     public class AssignedModem
     {
         public int ModemId { get; set; }

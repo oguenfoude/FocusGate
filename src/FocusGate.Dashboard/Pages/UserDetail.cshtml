@@ -35,9 +35,18 @@ else
                 </div>
                 <p class="text-xs text-gray-400 mt-1">@Model.User.DisplayName &middot; @L["UserDetail.Since"] @Model.User.CreatedAt.ToLocalTime().ToString("MMM dd, yyyy")</p>
             </div>
-            <div class="text-right flex-shrink-0">
-                <p class="text-xs text-gray-400">@L["UserDetail.WalletBalance"]</p>
-                <p class="text-2xl font-bold text-brand-600 mt-0.5">@Model.User.Balance.ToString("N2") DA</p>
+            <div class="flex items-center gap-3 flex-shrink-0">
+                @if (Model.User.Role != FocusGate.Core.Enums.UserRole.Admin)
+                {
+                    <button onclick="document.getElementById('editUserDetailModal').classList.remove('hidden')"
+                            class="btn btn-outline text-xs">
+                        <i class="fas fa-pen mr-1"></i> @L["Users.EditUser"]
+                    </button>
+                }
+                <div class="text-right">
+                    <p class="text-xs text-gray-400">@L["UserDetail.WalletBalance"]</p>
+                    <p class="text-2xl font-bold text-brand-600 mt-0.5">@Model.User.Balance.ToString("N2") DA</p>
+                </div>
             </div>
         </div>
     </div>
@@ -265,6 +274,40 @@ else
                 <div class="flex gap-3 pt-2">
                     <button type="submit" class="btn btn-primary flex-1">@L["UserDetail.CreateRequest"]</button>
                     <button type="button" onclick="document.getElementById('withdrawalModal').classList.add('hidden')" class="btn btn-outline">@L["Common.Cancel"]</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Edit User Modal -->
+    <div id="editUserDetailModal" class="hidden fixed inset-0 z-50 modal-overlay flex items-center justify-center p-4" onclick="if(event.target===this)this.classList.add('hidden')">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm">
+            <div class="px-5 py-4 border-b border-gray-100">
+                <h3 class="text-base font-semibold text-gray-900">@L["Users.EditUser"]</h3>
+            </div>
+            <form hx-post="/UserDetail?handler=UpdateUser&userId=@Model.User.Id"
+                  hx-swap="none"
+                  hx-on::after-request="if(event.detail.successful){ document.getElementById('editUserDetailModal').classList.add('hidden'); }"
+                  class="p-5 space-y-4">
+                <div>
+                    <label class="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">@L["Common.Username"] *</label>
+                    <input type="text" name="username" value="@Model.User.Username" required autocomplete="off" class="input" />
+                </div>
+                <div>
+                    <label class="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">@L["Users.EditDisplayName"]</label>
+                    <input type="text" name="displayName" value="@Model.User.DisplayName" autocomplete="off" class="input" />
+                </div>
+                <div>
+                    <label class="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">@L["Users.EditNewPassword"]</label>
+                    <input type="password" name="password" autocomplete="new-password" class="input" />
+                </div>
+                <div>
+                    <label class="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">@L["Users.EditConfirmPassword"]</label>
+                    <input type="password" name="confirmPassword" autocomplete="new-password" class="input" />
+                </div>
+                <div class="flex gap-3 pt-2">
+                    <button type="submit" class="btn btn-primary flex-1">@L["Users.UpdateUser"]</button>
+                    <button type="button" onclick="document.getElementById('editUserDetailModal').classList.add('hidden')" class="btn btn-outline">@L["Common.Cancel"]</button>
                 </div>
             </form>
         </div>
