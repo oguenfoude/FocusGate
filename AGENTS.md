@@ -12,20 +12,20 @@ Two separate products in one repo:
 ### .NET Gateway (5 projects)
 
 ```
-src/FocusGate.Core/          — Models, enums, PathService (no deps, 19 files)
-src/FocusGate.Infrastructure/ — DbContext, services, MongoDB sync (15 files)
+src/FocusGate.Core/           — Models, enums, PathService (no deps, 19 files)
+src/FocusGate.Infrastructure/ — DbContext, services, MongoDB sync (16 files)
 src/FocusGate.AT/             — COM port modem entry point (3 files)
 src/FocusGate.HiLink/         — Huawei HTTP modem entry point (2 files)
-src/FocusGate.Dashboard/      — ASP.NET Core Razor Pages (port 5080, 23 files)
+src/FocusGate.Dashboard/      — ASP.NET Core Razor Pages (port 5080, 9 pages)
 ```
 
 ### Next.js Web App
 
 ```
-focusgate-web/src/app/       — Pages: login, admin, dashboard, API routes
-focusgate-web/src/lib/       — MongoDB models, auth, utilities
-focusgate-web/src/components/ — React components
-focusgate-web/src/types/     — TypeScript types
+focusgate-web/src/app/        — Pages: login, admin, dashboard, API routes
+focusgate-web/src/lib/        — MongoDB models, auth, utilities (date-utils, number-utils, id-generator)
+focusgate-web/src/components/ — React components (admin/, dashboard/, shared/)
+focusgate-web/src/i18n/       — Translations: en.json, fr.json, ar.json
 ```
 
 ## Build & Run Commands
@@ -91,6 +91,17 @@ npm start        # Production server
 - **HTMX in Dashboard:** POST handlers must use `Response.Headers["HX-Redirect"]` + `return new EmptyResult()` — NOT `RedirectToPage()`. `_ViewStart.cshtml` sets `Layout = null` for `HX-Request` header.
 - **Dashboard DI:** Uses `AddFocusGateDashboard()` (lightweight — no MongoSync, no ConsoleCommandHandler, no RestartService).
 - **Safe shutdown:** `writeChannel.CompleteAsync()` in `ApplicationStopped` (after host.RunAsync returns). Dashboard process tracked and killed in `ApplicationStopped`.
+
+### Next.js
+
+- **`--webpack` flag required** for `npm run dev` and `npm run build` — Next.js 16 webpack mode
+- **MongoDB `_id` precision:** IDs > `Number.MAX_SAFE_INTEGER` (9007199254740991) lose precision in JavaScript. `nextId()` uses `Date.now() * 1000` (safe). Old code used `* 10000` — some records in MongoDB have oversized IDs that can't be round-tripped through JSON. Use raw MongoDB collection queries (`mongoose.connection.db.collection(...)`) with `as Record<string, unknown>` cast when dealing with these IDs.
+- **Online status:** Use `status === 4` directly. The .NET side already manages Online/Offline transitions. Do NOT add `updatedAt` staleness checks — MongoDB sync can be delayed, causing false Offline.
+- **Locale-aware dates:** Use `formatDate()` / `formatShortDate()` from `@/lib/date-utils` (NOT `date-fns` `format()`). These respect the language setting (en/fr/ar).
+- **Safe number conversion:** Use `toNum()` / `toNumOrNull()` from `@/lib/number-utils` for MongoDB `Decimal128` fields. `Number()` on Decimal128 gives `[object Object]`.
+- **i18n:** Translation keys under `sms.types.*` in en.json, fr.json, ar.json. Use `t('sms.types.otp')` etc. in components.
+- **Dashboard userId:** Stored in `localStorage` via `UserIdProvider` context. Sub-pages read from URL params (`?userId=X`) with localStorage fallback, wrapped in `<Suspense>` for `useSearchParams`.
+- **Sidebar admin detection:** Uses pathname-based `isAdmin` via `useSyncExternalStore` + localStorage. No useEffect/setState.
 
 ## Data Flow
 
@@ -168,7 +179,7 @@ Full schema reference: `MONGO_SCHEMA.md`
 
 ## Per-Modem Architecture
 
-### ModemHandler (604 lines)
+### ModemHandler
 
 Single handler per connected modem. Manages modem lifecycle with 3 async loops:
 
@@ -182,7 +193,7 @@ Single handler per connected modem. Manages modem lifecycle with 3 async loops:
 
 **Shutdown:** Cancel CTS → loops exit → Dispose AT service → orchestrator removes handler
 
-### HiLinkCommandService (717 lines)
+### HiLinkCommandService
 
 HTTP API for Huawei HiLink modems:
 - `OpenAsync(ip)` — tries HTTP then HTTPS, gets SesInfo/CsrfToken
@@ -193,7 +204,7 @@ HTTP API for Huawei HiLink modems:
 - `GetBalanceAsync()` — sends *222#, parses "Solde" from response
 - `DeleteAllSmsAsync()` — deletes SMS by index, fallback 1-50 on 125002 inbox full
 
-### AtCommandService (830 lines)
+### AtCommandService (in FocusGate.AT)
 
 Serial port AT commands:
 - Multi-baud opening (9600/115200/57600/19200)
@@ -202,14 +213,14 @@ Serial port AT commands:
 - AT+CUSD USSD with hex/UTF-16/plain text response decoding
 - 10s lock timeout on SendCommand/SendUssd
 
-### HiLinkModemOrchestrator (299 lines)
+### HiLinkModemOrchestrator (in FocusGate.HiLink)
 
 BackgroundService scanning 14 IPs every 30s (max 15 modems):
 - Parallel probe → create HiLinkCommandService → create ModemHandler
 - Blacklists IPs after 3 failures; known modem IPs retried indefinitely
 - Orphan check: marks missing modems Offline (skipped when new handlers starting)
 
-### DatabaseWriteChannel (614 lines)
+### DatabaseWriteChannel
 
 Single serialized write queue using `Channel<Op>`. ALL DB writes go through here.
 
@@ -225,7 +236,7 @@ Single serialized write queue using `Channel<Op>`. ALL DB writes go through here
 - `UpdateOrphanedModems` — marks missing modems Offline
 - `CreateWithdrawalRequest` / `ProcessWithdrawal` — withdrawal workflow
 
-### MongoSyncService (539 lines)
+### MongoSyncService
 
 BackgroundService. Bidirectional sync every 30s:
 - **Push:** SQLite → MongoDB (upsert by `_id` + `machineId`). Per-collection counts logged
