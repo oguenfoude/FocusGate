@@ -155,6 +155,7 @@ public class DatabaseWriteChannel
             UpdatedAt = DateTime.UtcNow
         };
         db.Modems.Add(modem);
+        await db.SaveChangesAsync(ct);
 
         var sim = new SimCard
         {
