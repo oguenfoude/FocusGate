@@ -157,4 +157,11 @@
   <data name="Warnings.AllNormal"><value>جميع أرصدة المودمات ضمن الحدود الطبيعية.</value></data>
   <data name="Layout.Subtitle"><value>لوحة تحكم البوابة</value></data>
   <data name="Layout.Language"><value>اللغة</value></data>
+  <data name="Users.EditUser"><value>تعديل المستخدم</value></data>
+  <data name="Users.UpdateUser"><value>تحديث</value></data>
+  <data name="Users.EditDisplayName"><value>اسم العرض</value></data>
+  <data name="Users.EditNewPassword"><value>كلمة المرور الجديدة (اتركها فارغة للحفاظ على الحالية)</value></data>
+  <data name="Users.EditConfirmPassword"><value>تأكيد كلمة المرور الجديدة</value></data>
+  <data name="Toast.UserUpdated"><value>تم تحديث المستخدم بنجاح</value></data>
+  <data name="Settings.DisplayName"><value>اسم العرض</value></data>
 </root>

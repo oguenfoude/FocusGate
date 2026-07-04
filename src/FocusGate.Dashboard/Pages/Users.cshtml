@@ -86,6 +86,13 @@
                                 <a href="/UserDetail?id=@u.Id" class="p-1.5 text-gray-300 hover:text-gray-500 rounded transition-colors" title="View">
                                     <i class="fas fa-eye text-xs"></i>
                                 </a>
+                                @if (!u.IsArchived && u.Role != "Admin")
+                                {
+                                    <button onclick="openEditUserModal('@u.Id', '@u.Username', '@u.DisplayName')"
+                                            class="p-1.5 text-blue-300 hover:text-blue-500 rounded transition-colors" title="@L["Users.EditUser"]">
+                                        <i class="fas fa-pen text-xs"></i>
+                                    </button>
+                                }
                                 @if (u.IsArchived)
                                 {
                                     <button hx-post="/Users?handler=Restore&userId=@u.Id"
@@ -139,6 +146,41 @@
     </div>
 </div>
 
+<!-- Edit User Modal -->
+<div id="editUserModal" class="hidden fixed inset-0 z-50 modal-overlay flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm">
+        <div class="px-5 py-4 border-b border-gray-100">
+            <h3 class="text-base font-semibold text-gray-900">@L["Users.EditUser"]</h3>
+        </div>
+        <form hx-post="/Users?handler=UpdateUser"
+              hx-swap="none"
+              hx-on::after-request="if(event.detail.successful){ document.getElementById('editUserModal').classList.add('hidden'); }"
+              class="p-5 space-y-4">
+            <input type="hidden" name="userId" id="editUserId" />
+            <div>
+                <label class="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">@L["Common.Username"] *</label>
+                <input type="text" name="username" id="editUsername" required autocomplete="off" class="input" />
+            </div>
+            <div>
+                <label class="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">@L["Users.EditDisplayName"]</label>
+                <input type="text" name="displayName" id="editDisplayName" autocomplete="off" class="input" />
+            </div>
+            <div>
+                <label class="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">@L["Users.EditNewPassword"]</label>
+                <input type="password" name="password" id="editPassword" autocomplete="new-password" class="input" />
+            </div>
+            <div>
+                <label class="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">@L["Users.EditConfirmPassword"]</label>
+                <input type="password" name="confirmPassword" id="editConfirmPassword" autocomplete="new-password" class="input" />
+            </div>
+            <div class="flex gap-3 pt-2">
+                <button type="submit" class="btn btn-primary flex-1">@L["Users.UpdateUser"]</button>
+                <button type="button" onclick="document.getElementById('editUserModal').classList.add('hidden')" class="btn btn-outline">@L["Common.Cancel"]</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script>
     function filterTable() {
         var input = document.getElementById('searchInput').value.toLowerCase();
@@ -147,6 +189,14 @@
             var text = row.textContent.toLowerCase();
             row.style.display = text.includes(input) ? '' : 'none';
         });
+    }
+    function openEditUserModal(id, username, displayName) {
+        document.getElementById('editUserId').value = id;
+        document.getElementById('editUsername').value = username;
+        document.getElementById('editDisplayName').value = displayName;
+        document.getElementById('editPassword').value = '';
+        document.getElementById('editConfirmPassword').value = '';
+        document.getElementById('editUserModal').classList.remove('hidden');
     }
 </script>
 

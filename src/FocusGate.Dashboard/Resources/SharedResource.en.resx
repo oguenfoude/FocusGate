@@ -147,4 +147,11 @@
   <data name="Settings.PasswordMismatch"><value>Passwords do not match</value></data>
   <data name="Settings.PasswordUpdated"><value>Password updated successfully</value></data>
   <data name="Nav.Settings"><value>Settings</value></data>
+  <data name="Users.EditUser"><value>Edit User</value></data>
+  <data name="Users.UpdateUser"><value>Update User</value></data>
+  <data name="Users.EditDisplayName"><value>Display Name</value></data>
+  <data name="Users.EditNewPassword"><value>New Password (leave empty to keep current)</value></data>
+  <data name="Users.EditConfirmPassword"><value>Confirm New Password</value></data>
+  <data name="Toast.UserUpdated"><value>User updated successfully</value></data>
+  <data name="Settings.DisplayName"><value>Display Name</value></data>
 </root>
