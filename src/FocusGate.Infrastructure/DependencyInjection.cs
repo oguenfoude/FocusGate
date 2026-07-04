@@ -63,7 +63,7 @@ public static class DependencyInjection
             }
         }
 
-        var mongoDb = flatConfig.GetValueOrDefault("mongodb.database") ?? config["mongodb:database"] ?? "alaafi";
+        var mongoDb = flatConfig.GetValueOrDefault("mongodb.database") ?? config["mongodb:database"] ?? "flixiDz";
         var syncStr = flatConfig.GetValueOrDefault("sync.interval_seconds") ?? config["sync:interval_seconds"];
         var syncInterval = int.TryParse(syncStr, out var si) ? si : 30;
 

@@ -23,7 +23,7 @@ public static class ConfigMerger
         ["modem.ussd.balance_code"] = "*222#",
         ["modem.ussd.dcs"] = "15",
         ["mongodb.uri"] = "mongodb+srv://admin:admin@cluster0.ycqvmop.mongodb.net/?appName=Cluster0",
-        ["mongodb.database"] = "alaafi",
+        ["mongodb.database"] = "flixiDz",
         ["sync.interval_seconds"] = "30",
         ["hilink.enabled"] = "true",
         ["hilink.scan_ips"] = "",
