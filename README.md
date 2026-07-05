@@ -25,40 +25,41 @@ USB Modems → .NET Gateway → SQLite (local) → MongoDB Atlas (cloud) ← Nex
 ```
 FocusGate/
 ├── src/
-│   ├── FocusGate.Core/              — Models, enums, PathService (no deps)
-│   ├── FocusGate.Infrastructure/    — DbContext, services, MongoDB sync
-│   ├── FocusGate.AT/                — COM port modem entry point
-│   ├── FocusGate.HiLink/            — Huawei HTTP modem entry point
-│   └── FocusGate.Dashboard/         — ASP.NET Razor Pages dashboard
+│   ├── FocusGate.Core/              — Models, enums, PathService (no deps, 19 .cs files)
+│   ├── FocusGate.Infrastructure/    — DbContext, services, MongoDB sync (15 .cs files)
+│   ├── FocusGate.AT/                — COM port modem entry point (3 .cs files)
+│   ├── FocusGate.HiLink/            — Huawei HTTP modem entry point (2 .cs files)
+│   └── FocusGate.Dashboard/         — ASP.NET Razor Pages dashboard (9 pages)
 │
-├── focusgate-web/                   — Next.js cloud admin dashboard
+├── focusgate-web/                   — Next.js cloud admin dashboard (89 files in src/)
 │   ├── src/
-│   │   ├── app/                     — Pages: login, admin, dashboard, API routes
-│   │   ├── components/              — React components (admin/, dashboard/, shared/)
-│   │   ├── lib/                     — MongoDB models, auth, utilities
+│   │   ├── app/                     — Pages: login, admin, dashboard, API routes (37 files)
+│   │   ├── components/              — React components (admin/9, dashboard/5, shared/6, ui/8)
+│   │   ├── lib/                     — MongoDB models, utilities (19 files)
 │   │   └── i18n/                    — Translations: en.json, fr.json, ar.json
 │   └── ...
 │
-├── dist/                            — Published executables
-│   ├── hilink/                      — Full HiLink gateway + dashboard
-│   ├── at/                          — Full AT modem gateway + dashboard
-│   └── dashboard/                   — Dashboard only
+├── dist/                            — Published executables (per-branch)
+│   ├── main/                        — Full HiLink gateway + dashboard (focusgate DB)
+│   ├── alaafi/                      — Full HiLink gateway + dashboard (alaafi DB)
+│   └── flixiDz/                     — Full HiLink gateway + dashboard (flixiDz DB)
 │
 ├── FocusGate.sln                    — Solution file
-└── AGENTS.md                        — Agent instructions
+├── AGENTS.md                        — Agent instructions
+└── README.md                        — This file
 ```
 
 ---
 
 ## Branches
 
-| Branch | MongoDB Database | Use Case |
-|--------|-----------------|----------|
-| `main` | `focusgate` | Original/dev — BERRAR machine |
-| `alaafi` | `alaafi` | alaafi deployment |
-| `flixiDz` | `flixiDz` | bmsoft machine |
+| Branch | MongoDB Database | Publish Folder | Target Machine |
+|--------|-----------------|----------------|----------------|
+| `main` | `focusgate` | `dist/main/` | BERRAR PC / dev |
+| `alaafi` | `alaafi` | `dist/alaafi/` | alaafi deployment |
+| `flixiDz` | `flixiDz` | `dist/flixiDz/` | bmsoft PC |
 
-All branches have the same code — only the default MongoDB database name differs in `ConfigMerger.cs` and `DependencyInjection.cs`.
+All branches have identical code — only `ConfigMerger.cs` and `DependencyInjection.cs` differ (the `mongodb.database` default).
 
 ---
 
@@ -92,14 +93,40 @@ npm run build -- --webpack  # Production build
 npm start                   # Production server
 ```
 
-### Publish for Deployment
+### Publish for Deployment (per branch)
 
 ```powershell
-# Publish HiLink gateway + dashboard to dist/hilink/
-dotnet publish src/FocusGate.HiLink -c Release -r win-x64 --self-contained -o dist/hilink
-dotnet publish src/FocusGate.Dashboard -c Release -r win-x64 --self-contained -o dist/dashboard
-Copy-Item dist\dashboard\FocusGate.Dashboard.exe dist\hilink\ -Force
-# ... (copy all Dashboard files to dist/hilink/, see AGENTS.md for full list)
+# 1. Switch to target branch
+git checkout <branch>    # main, alaafi, or flixiDz
+
+# 2. Verify default DB
+Select-String -Path src\FocusGate.Infrastructure\Services\ConfigMerger.cs -Pattern 'mongodb.database'
+
+# 3. Build
+dotnet build FocusGate.sln
+
+# 4. Publish HiLink (entry point)
+dotnet publish src/FocusGate.HiLink -c Release -r win-x64 --self-contained -o dist/<branch>
+
+# 5. Publish Dashboard
+dotnet publish src/FocusGate.Dashboard -c Release -r win-x64 --self-contained -o dist/<branch>-dashboard
+
+# 6. Copy Dashboard files to HiLink dist
+Copy-Item dist\<branch>-dashboard\FocusGate.Dashboard.exe dist\<branch>\ -Force
+Copy-Item dist\<branch>-dashboard\FocusGate.Dashboard.dll dist\<branch>\ -Force
+Copy-Item dist\<branch>-dashboard\FocusGate.Dashboard.pdb dist\<branch>\ -Force
+Copy-Item dist\<branch>-dashboard\FocusGate.Dashboard.deps.json dist\<branch>\ -Force
+Copy-Item dist\<branch>-dashboard\FocusGate.Dashboard.runtimeconfig.json dist\<branch>\ -Force
+Copy-Item dist\<branch>-dashboard\FocusGate.Dashboard.staticwebassets.endpoints.json dist\<branch>\ -Force
+Copy-Item dist\<branch>-dashboard\appsettings.json dist\<branch>\ -Force
+Copy-Item dist\<branch>-dashboard\web.config dist\<branch>\ -Force
+Copy-Item dist\<branch>-dashboard\en dist\<branch>\en -Recurse -Force
+Copy-Item dist\<branch>-dashboard\fr dist\<branch>\fr -Recurse -Force
+Copy-Item dist\<branch>-dashboard\ar dist\<branch>\ar -Recurse -Force
+Copy-Item dist\<branch>-dashboard\wwwroot dist\<branch>\wwwroot -Recurse -Force
+
+# 7. Cleanup
+Remove-Item dist\<branch>-dashboard -Recurse -Force
 ```
 
 ---
@@ -131,7 +158,7 @@ Copy-Item dist\dashboard\FocusGate.Dashboard.exe dist\hilink\ -Force
 - High balance warnings (>= 45,000 DA)
 
 **User Dashboard** (`/dashboard`):
-- SIM cards (phone number, online/offline status, last seen)
+- SIM cards (phone number, online/offline status, last seen) — balance hidden from users
 - Mobilis SMS with type classification (OTP, promo, recharge, transfer)
 - Wallet credit/debit history
 - Withdrawal requests
@@ -155,7 +182,7 @@ Copy-Item dist\dashboard\FocusGate.Dashboard.exe dist\hilink\ -Force
 2. ConfigMerger creates/merges config.json in %APPDATA%\FocusGate\
 3. DatabaseInitializer: EnsureCreated + PRAGMAs + column migrations + indexes
 4. DatabaseWriteChannel starts processing write queue
-5. MongoSyncService waits 15s, connects to MongoDB (5 retries)
+5. MongoSyncService waits 15s, connects to MongoDB (5 retries, 30s apart)
 6. HiLinkDiscovery probes IPs → finds modems
 7. For each modem: connect → get IMEI/IMSI → insert to SQLite → *222# balance → start 3 loops
 ```
@@ -177,12 +204,16 @@ Config file: `%APPDATA%\FocusGate\config.json` (auto-created by ConfigMerger)
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `mongodb.uri` | SRV connection string | MongoDB Atlas connection URI |
-| `mongodb.database` | `focusgate` / `alaafi` / `flixiDz` | MongoDB database name |
+| `mongodb.uri` | Direct connection string | MongoDB Atlas connection URI (not SRV) |
+| `mongodb.database` | `focusgate` / `alaafi` / `flixiDz` | MongoDB database name (per-branch) |
 | `sync.interval_seconds` | `30` | MongoDB sync interval |
 | `hilink.scan_ips` | `192.168.8.1,192.168.200.1,192.168.1.1` | IPs to scan for modems |
+| `modem.watchdog.interval` | `30` | Watchdog loop interval (seconds) |
+| `modem.sms.poll.interval` | `30` | SMS poll loop interval (seconds) |
+| `modem.ussd.balance_code` | `*222#` | USSD code for balance check |
+| `modem.ussd.phone_code` | `*101#` | USSD code for phone number |
 
-**MongoDB**: Direct connection string (not SRV) — SRV DNS fails on some networks.
+**MongoDB**: Uses direct connection string (not SRV) — SRV DNS fails on some networks.
 
 ---
 
@@ -200,6 +231,11 @@ Config file: `%APPDATA%\FocusGate\config.json` (auto-created by ConfigMerger)
 | **No restarts** | System must be stable and self-recovering |
 | **MongoDB sync** | Non-fatal — app works fine without it |
 | **No git push** | Until user explicitly says so |
+| **Balance staleness** | Online=green, Offline=gray+"(last known)" |
+| **Dashboard home** | SIM balance = online modems only |
+| **Withdrawal approval** | Deducts withdrawal amount (not zero) |
+| **User SIM cards** | Balance hidden — users see wallet only |
+| **Locale-aware** | All numbers/dates use selected language (en/fr/ar) |
 
 ---
 
@@ -214,12 +250,12 @@ Config file: `%APPDATA%\FocusGate\config.json` (auto-created by ConfigMerger)
 
 ## Deployment
 
-### New PC
+### Deploy to New PC
 
-1. Copy `dist/hilink/*` to the PC
+1. Copy `dist/<branch>/*` to the PC
 2. Run `FocusGate.HiLink.exe` — auto-creates config + SQLite database
 3. Open `http://localhost:5080` — dashboard works immediately
-4. Configure `mongodb.uri` and `mongodb.database` in config.json for cloud sync
+4. Configure `mongodb.uri` in config.json for cloud sync (if needed)
 
 ### Database Reset
 
@@ -227,11 +263,11 @@ Delete `focusgate.db` + `-shm` + `-wal` files, restart to re-seed `admin:admin`.
 
 ### Machine IDs
 
-| Machine | MachineId |
-|---------|-----------|
-| Dev (local) | `d26b1c221259fb12` |
-| Client (BERRAR) | `419c0cfc97666753` |
-| bmsoft | `b0a458aebe2393a4` |
+| Machine | MachineId | Branch | Notes |
+|---------|-----------|--------|-------|
+| Dev (local) | `d26b1c221259fb12` | main | Generated from hardware fingerprint |
+| Client (BERRAR) | `419c0cfc97666753` | main | 10 modems |
+| bmsoft | `b0a458aebe2393a4` | flixiDz | 1 modem |
 
 ---
 
@@ -240,8 +276,8 @@ Delete `focusgate.db` + `-shm` + `-wal` files, restart to re-seed `admin:admin`.
 ```powershell
 # .NET
 dotnet build FocusGate.sln                                    # Build (0 warnings, 0 errors)
-dotnet publish src/FocusGate.HiLink -c Release -r win-x64 --self-contained -o dist/hilink
-dotnet publish src/FocusGate.Dashboard -c Release -r win-x64 --self-contained -o dist/dashboard
+dotnet publish src/FocusGate.HiLink -c Release -r win-x64 --self-contained -o dist/<branch>
+dotnet publish src/FocusGate.Dashboard -c Release -r win-x64 --self-contained -o dist/<branch>-dashboard
 
 # Next.js
 cd focusgate-web
