@@ -171,7 +171,7 @@ public class MongoSyncService : BackgroundService
 
         if (pushOk && pullOk)
         {
-            _lastSyncAt = DateTime.UtcNow;
+            _lastSyncAt = _lastSyncStarted;
             _logger.LogInformation("Full sync complete");
         }
         else
@@ -190,7 +190,7 @@ public class MongoSyncService : BackgroundService
 
         if (pushOk && pullOk)
         {
-            _lastSyncAt = DateTime.UtcNow;
+            _lastSyncAt = _lastSyncStarted;
         }
         else
         {
