@@ -6,7 +6,7 @@ public static class ConfigMerger
 {
     private static readonly Dictionary<string, string> RequiredKeys = new()
     {
-        ["gateway.name"] = "FocusGate",
+        ["gateway.name"] = "FlixiDz",
         ["gateway.admin.password"] = "ChangeMeImmediately",
         ["machine.id"] = "",
         ["sms.verification.enabled"] = "true",
@@ -22,12 +22,16 @@ public static class ConfigMerger
         ["modem.ussd.phone_code"] = "*101#",
         ["modem.ussd.balance_code"] = "*222#",
         ["modem.ussd.dcs"] = "15",
-        ["mongodb.uri"] = "mongodb+srv://admin:admin@cluster0.ycqvmop.mongodb.net/?appName=Cluster0",
+        ["mongodb.uri"] = "mongodb://admin:admin@ac-8knjxta-shard-00-00.ldndrwe.mongodb.net:27017,ac-8knjxta-shard-00-01.ldndrwe.mongodb.net:27017,ac-8knjxta-shard-00-02.ldndrwe.mongodb.net:27017/flixiDz?ssl=true&replicaSet=atlas-qo2jcu-shard-0&authSource=admin&retryWrites=true&w=majority&appName=Cluster0",
         ["mongodb.database"] = "flixiDz",
         ["sync.interval_seconds"] = "30",
+        ["mongodb.retry_interval_seconds"] = "15",
+        ["mongodb.write_timeout_ms"] = "5000",
+        ["commands.poll_interval_seconds"] = "5",
+        ["modem.balance.poll.interval"] = "30",
         ["hilink.enabled"] = "true",
         ["hilink.scan_ips"] = "",
-        ["hilink.probe_timeout_ms"] = "2000",
+        ["hilink.probe_timeout_ms"] = "5000",
         ["at.enabled"] = "true",
         ["at.probe_timeout_ms"] = "8000",
         ["app.version"] = "1.0.0"
