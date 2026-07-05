@@ -6,7 +6,7 @@ public static class ConfigMerger
 {
     private static readonly Dictionary<string, string> RequiredKeys = new()
     {
-        ["gateway.name"] = "FlixiDz",
+        ["gateway.name"] = "flexiDZ",
         ["gateway.admin.password"] = "ChangeMeImmediately",
         ["machine.id"] = "",
         ["sms.verification.enabled"] = "true",
