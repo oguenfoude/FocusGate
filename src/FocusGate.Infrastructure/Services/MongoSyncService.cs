@@ -171,8 +171,8 @@ public class MongoSyncService : BackgroundService
 
         if (pushOk && pullOk)
         {
-            _lastSyncAt = _lastSyncStarted;
-            _logger.LogInformation("Full sync complete");
+            _lastSyncAt = DateTime.MinValue;
+            _logger.LogInformation("Full sync complete — next cycle will re-scan all records");
         }
         else
         {
