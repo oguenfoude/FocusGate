@@ -102,7 +102,7 @@ public class AtModemOrchestrator : BackgroundService
             if (_handlers.Count >= MaxModems) break;
             if (!task.IsCompletedSuccessfully) continue;
 
-            var (handler, imei) = task.Result;
+            var (handler, imei, modemId) = task.Result;
             if (handler == null || string.IsNullOrEmpty(imei))
             {
                 _failedPorts.TryAdd(port, 0);
@@ -117,6 +117,7 @@ public class AtModemOrchestrator : BackgroundService
 
             _handlers[port] = (handler, imei);
             startedNewHandlers = true;
+            var capturedModemId = modemId;
             _ = Task.Run(async () =>
             {
                 try
@@ -126,6 +127,7 @@ public class AtModemOrchestrator : BackgroundService
                         _activeImeis.TryRemove(imei, out _);
                         _handlers.TryRemove(port, out _);
                         try { handler.Dispose(); } catch { }
+                        try { await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.UpdateModemStatus, Data = new { ModemId = capturedModemId, Status = ModemStatus.Offline } }); } catch { }
                     }
                 }
                 catch
@@ -133,6 +135,7 @@ public class AtModemOrchestrator : BackgroundService
                     _activeImeis.TryRemove(imei, out _);
                     _handlers.TryRemove(port, out _);
                     try { handler.Dispose(); } catch { }
+                    try { await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.UpdateModemStatus, Data = new { ModemId = capturedModemId, Status = ModemStatus.Offline } }); } catch { }
                 }
             }, ct);
         }
@@ -153,7 +156,7 @@ public class AtModemOrchestrator : BackgroundService
         catch { }
     }
 
-    private async Task<(ModemHandler? handler, string imei)> ProbeAsync(string port, CancellationToken ct)
+    private async Task<(ModemHandler? handler, string imei, int modemId)> ProbeAsync(string port, CancellationToken ct)
     {
         using var scope = _services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<FocusGateDbContext>();
@@ -164,13 +167,13 @@ public class AtModemOrchestrator : BackgroundService
         try
         {
             await at.OpenAsync(port);
-            if (!await at.IsAliveAsync()) { try { at.Dispose(); } catch { } return (null, ""); }
+            if (!await at.IsAliveAsync()) { try { at.Dispose(); } catch { } return (null, "", 0); }
 
             var imei = await at.GetImeiAsync();
-            if (string.IsNullOrEmpty(imei)) { try { at.Dispose(); } catch { } return (null, ""); }
+            if (string.IsNullOrEmpty(imei)) { try { at.Dispose(); } catch { } return (null, "", 0); }
 
             var imsi = await at.GetImsiAsync();
-            if (string.IsNullOrEmpty(imsi)) { _log.LogWarning("{Port}: No SIM", port); try { at.Dispose(); } catch { } return (null, ""); }
+            if (string.IsNullOrEmpty(imsi)) { _log.LogWarning("{Port}: No SIM", port); try { at.Dispose(); } catch { } return (null, "", 0); }
 
             var manufacturerResp = await at.SendCommandAsync("AT+CGMI");
             var manufacturer = manufacturerResp.Replace("OK", "").ReplaceLineEndings(" ").Trim();
@@ -192,14 +195,14 @@ public class AtModemOrchestrator : BackgroundService
                 if (modem != null) break;
             }
 
-            if (modem == null) { _log.LogWarning("{Port}: Modem not found after insert", port); try { at.Dispose(); } catch { } return (null, ""); }
+            if (modem == null) { _log.LogWarning("{Port}: Modem not found after insert", port); try { at.Dispose(); } catch { } return (null, "", 0); }
 
             var handlerLog = scope.ServiceProvider.GetRequiredService<ILogger<ModemHandler>>();
             var writeChannel = scope.ServiceProvider.GetRequiredService<DatabaseWriteChannel>();
 
-            return (new ModemHandler(at, writeChannel, handlerLog, config, modem.Id, port), imei);
+            return (new ModemHandler(at, writeChannel, handlerLog, config, modem.Id, port), imei, modem.Id);
         }
-        catch (Exception ex) { _log.LogDebug("{Port}: {Error}", port, ex.Message); try { at.Dispose(); } catch { } return (null, ""); }
+        catch (Exception ex) { _log.LogDebug("{Port}: {Error}", port, ex.Message); try { at.Dispose(); } catch { } return (null, "", 0); }
     }
 
 }

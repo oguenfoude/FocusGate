@@ -250,6 +250,7 @@ public class HiLinkModemOrchestrator : BackgroundService
                 startedNewHandlers = true;
                 _log.LogInformation("{Ip}: Handler started (total active: {Count})", device.Ip, _handlers.Count);
 
+                var capturedModemId = modem.Id;
                 _ = Task.Run(async () =>
                 {
                     try
@@ -258,16 +259,18 @@ public class HiLinkModemOrchestrator : BackgroundService
                         {
                             _activeImeis.TryRemove(imei, out _);
                             _handlers.TryRemove(device.Ip, out _);
-                            _log.LogWarning("{Ip}: Handler StartAsync returned false", device.Ip);
+                            _log.LogWarning("{Ip}: Handler StartAsync returned false — setting modem Offline", device.Ip);
                             try { handler.Dispose(); } catch { }
+                            try { await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.UpdateModemStatus, Data = new { ModemId = capturedModemId, Status = ModemStatus.Offline } }); } catch { }
                         }
                     }
                     catch (Exception ex)
                     {
                         _activeImeis.TryRemove(imei, out _);
                         _handlers.TryRemove(device.Ip, out _);
-                        _log.LogWarning(ex, "{Ip}: Handler failed", device.Ip);
+                        _log.LogWarning(ex, "{Ip}: Handler failed — setting modem Offline", device.Ip);
                         try { handler.Dispose(); } catch { }
+                        try { await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.UpdateModemStatus, Data = new { ModemId = capturedModemId, Status = ModemStatus.Offline } }); } catch { }
                     }
                 }, ct);
             }
