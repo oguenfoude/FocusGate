@@ -46,7 +46,6 @@ public class MongoSyncService : BackgroundService
         _intervalSeconds = intervalSeconds;
     }
 
-    private const int MaxRetryAttempts = 5;
     private const int RetryDelaySeconds = 30;
     private const int StartupDelaySeconds = 15;
 
@@ -60,7 +59,7 @@ public class MongoSyncService : BackgroundService
         await Task.Delay(TimeSpan.FromSeconds(StartupDelaySeconds), stoppingToken);
 
         var retryCount = 0;
-        while (retryCount < MaxRetryAttempts)
+        while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
@@ -72,27 +71,16 @@ public class MongoSyncService : BackgroundService
                 }
 
                 retryCount++;
-                if (retryCount >= MaxRetryAttempts)
-                {
-                    _logger.LogWarning("MongoDB unavailable after {Attempts} attempts — sync disabled (app works without cloud)", retryCount);
-                    return;
-                }
-
-                _logger.LogWarning("MongoDB connection failed (attempt {Attempt}/{Max}), retrying in {Delay}s...",
-                    retryCount, MaxRetryAttempts, RetryDelaySeconds);
+                _logger.LogWarning("MongoDB connection failed (attempt {Attempt}), retrying in {Delay}s...",
+                    retryCount, RetryDelaySeconds);
                 await Task.Delay(TimeSpan.FromSeconds(RetryDelaySeconds), stoppingToken);
             }
             catch (OperationCanceledException) { return; }
             catch (Exception ex)
             {
                 retryCount++;
-                _logger.LogWarning(ex, "MongoDB connection error (attempt {Attempt}/{Max}), retrying in {Delay}s...",
-                    retryCount, MaxRetryAttempts, RetryDelaySeconds);
-                if (retryCount >= MaxRetryAttempts)
-                {
-                    _logger.LogWarning("MongoDB unavailable after {Attempts} attempts — sync disabled (app works without cloud)", retryCount);
-                    return;
-                }
+                _logger.LogWarning(ex, "MongoDB connection error (attempt {Attempt}), retrying in {Delay}s...",
+                    retryCount, RetryDelaySeconds);
                 await Task.Delay(TimeSpan.FromSeconds(RetryDelaySeconds), stoppingToken);
             }
         }

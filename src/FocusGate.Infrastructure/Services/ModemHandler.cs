@@ -282,8 +282,7 @@ public class ModemHandler : IDisposable
         }
         else
         {
-            _log.LogWarning("Modem {Id}: *222# returned no balance after recharge/transfer SMS", _modemId);
-            _ussdUnavailableSince = DateTime.UtcNow;
+            _log.LogInformation("Modem {Id}: *222# returned processing message — balance will arrive via SMS shortly", _modemId);
         }
     }
 
@@ -516,7 +515,9 @@ public class ModemHandler : IDisposable
     {
         if (msg.Sender != "Mobilis" && msg.Sender != "77111" && msg.Sender != "610") return false;
         return msg.Content.Contains("recharg", StringComparison.OrdinalIgnoreCase)
-            || msg.Content.Contains("montant de", StringComparison.OrdinalIgnoreCase);
+            || msg.Content.Contains("montant de", StringComparison.OrdinalIgnoreCase)
+            || msg.Content.Contains("solde", StringComparison.OrdinalIgnoreCase)
+            || msg.Content.Contains("credit", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task TryGetPhoneAndBalanceAsync(CancellationToken ct)
@@ -565,9 +566,7 @@ public class ModemHandler : IDisposable
         }
         else
         {
-            _log.LogWarning("Modem {Id}: Balance USSD returned empty", _modemId);
-            _ussdUnavailableSince = DateTime.UtcNow;
-            _log.LogWarning("Modem {Id}: USSD temporarily unavailable — retry in 10 min", _modemId);
+            _log.LogInformation("Modem {Id}: *222# returned no balance — balance will arrive via SMS if recharge was made", _modemId);
         }
     }
 
