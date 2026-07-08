@@ -404,7 +404,7 @@ public class DatabaseWriteChannel
         db.SmsRecords.Add(sms);
         await db.SaveChangesAsync(ct);
 
-        if (sms.SenderNumber != "Mobilis" && sms.SenderNumber != "77111") return true;
+        if (sms.SenderNumber != "Mobilis" && sms.SenderNumber != "77111" && sms.SenderNumber != "610") return true;
 
         var sim = await db.SimCards.FindAsync(new object[] { sms.SimCardId }, ct);
         if (sim == null) return true;

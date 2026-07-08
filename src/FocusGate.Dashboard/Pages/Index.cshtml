@@ -139,7 +139,7 @@
                     @foreach (var sms in Model.RecentSms)
                     {
                         <tr class="table-row">
-                            <td class="px-5 py-3 text-gray-400 text-xs whitespace-nowrap">@sms.ReceivedAt.ToLocalTime().ToString("MMM dd, HH:mm")</td>
+                            <td class="px-5 py-3 text-gray-400 text-xs whitespace-nowrap">@sms.ReceivedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</td>
                             <td class="px-5 py-3">
                                 <div class="flex items-center gap-2.5">
                                     <div class="w-7 h-7 bg-gray-100 rounded-full flex items-center justify-center text-[10px] font-bold text-gray-500 flex-shrink-0">

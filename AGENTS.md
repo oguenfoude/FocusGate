@@ -12,20 +12,20 @@ Two separate products in one repo:
 ### .NET Gateway (5 projects)
 
 ```
-src/FocusGate.Core/           — Models, enums, PathService (no deps, 19 .cs files)
-src/FocusGate.Infrastructure/ — DbContext, services, MongoDB sync (15 .cs files)
-src/FocusGate.AT/             — COM port modem entry point (3 .cs files)
-src/FocusGate.HiLink/         — Huawei HTTP modem entry point (2 .cs files)
+src/FocusGate.Core/           — Models, enums, PathService (no deps, 19 files)
+src/FocusGate.Infrastructure/ — DbContext, services, MongoDB sync (16 files)
+src/FocusGate.AT/             — COM port modem entry point (3 files)
+src/FocusGate.HiLink/         — Huawei HTTP modem entry point (2 files)
 src/FocusGate.Dashboard/      — ASP.NET Core Razor Pages (port 5080, 9 pages)
 ```
 
-### Next.js Web App (89 files in src/)
+### Next.js Web App
 
 ```
-focusgate-web/src/app/        — Pages: login, admin, dashboard, API routes (37 files)
-focusgate-web/src/components/ — React components (admin/9, dashboard/5, shared/6, ui/8, root/3 = 31)
-focusgate-web/src/lib/        — MongoDB models, utilities (19 files)
-focusgate-web/src/i18n/       — Translations: en.json, fr.json, ar.json (3 files)
+focusgate-web/src/app/        — Pages: login, admin, dashboard, API routes
+focusgate-web/src/lib/        — MongoDB models, auth, utilities (date-utils, number-utils, id-generator)
+focusgate-web/src/components/ — React components (admin/, dashboard/, shared/)
+focusgate-web/src/i18n/       — Translations: en.json, fr.json, ar.json
 ```
 
 ## Build & Run Commands
@@ -41,9 +41,40 @@ dotnet run --project src/FocusGate.HiLink    # HiLink modems + auto-launches Das
 dotnet run --project src/FocusGate.AT         # AT modems + auto-launches Dashboard
 dotnet run --project src/FocusGate.Dashboard  # Dashboard only (port 5080)
 
-# Publish self-contained (per-branch, see Deployment section)
-dotnet publish src/FocusGate.HiLink -c Release -r win-x64 --self-contained -o dist/<branch>
-dotnet publish src/FocusGate.Dashboard -c Release -r win-x64 --self-contained -o dist/<branch>-dashboard
+# Publish self-contained (Alaafi)
+dotnet publish src/FocusGate.HiLink -c Release -r win-x64 --self-contained -o dist/alaafi
+dotnet publish src/FocusGate.Dashboard -c Release -r win-x64 --self-contained -o dist/alaafi-dashboard
+
+# Publish self-contained (FlexiDZ)
+dotnet publish src/FocusGate.HiLink -c Release -r win-x64 --self-contained -o dist/flixiDz
+dotnet publish src/FocusGate.Dashboard -c Release -r win-x64 --self-contained -o dist/flixiDz-dashboard
+
+# After publishing Dashboard, copy to each brand dist:
+Copy-Item dist\alaafi-dashboard\FocusGate.Dashboard.exe dist\alaafi\ -Force
+Copy-Item dist\alaafi-dashboard\FocusGate.Dashboard.dll dist\alaafi\ -Force
+Copy-Item dist\alaafi-dashboard\FocusGate.Dashboard.pdb dist\alaafi\ -Force
+Copy-Item dist\alaafi-dashboard\FocusGate.Dashboard.deps.json dist\alaafi\ -Force
+Copy-Item dist\alaafi-dashboard\FocusGate.Dashboard.runtimeconfig.json dist\alaafi\ -Force
+Copy-Item dist\alaafi-dashboard\FocusGate.Dashboard.staticwebassets.endpoints.json dist\alaafi\ -Force
+Copy-Item dist\alaafi-dashboard\appsettings.json dist\alaafi\ -Force
+Copy-Item dist\alaafi-dashboard\web.config dist\alaafi\ -Force
+Copy-Item dist\alaafi-dashboard\en dist\alaafi\en -Recurse -Force
+Copy-Item dist\alaafi-dashboard\fr dist\alaafi\fr -Recurse -Force
+Copy-Item dist\alaafi-dashboard\ar dist\alaafi\ar -Recurse -Force
+Copy-Item dist\alaafi-dashboard\wwwroot dist\alaafi\wwwroot -Recurse -Force
+
+Copy-Item dist\flixiDz-dashboard\FocusGate.Dashboard.exe dist\flixiDz\ -Force
+Copy-Item dist\flixiDz-dashboard\FocusGate.Dashboard.dll dist\flixiDz\ -Force
+Copy-Item dist\flixiDz-dashboard\FocusGate.Dashboard.pdb dist\flixiDz\ -Force
+Copy-Item dist\flixiDz-dashboard\FocusGate.Dashboard.deps.json dist\flixiDz\ -Force
+Copy-Item dist\flixiDz-dashboard\FocusGate.Dashboard.runtimeconfig.json dist\flixiDz\ -Force
+Copy-Item dist\flixiDz-dashboard\FocusGate.Dashboard.staticwebassets.endpoints.json dist\flixiDz\ -Force
+Copy-Item dist\flixiDz-dashboard\appsettings.json dist\flixiDz\ -Force
+Copy-Item dist\flixiDz-dashboard\web.config dist\flixiDz\ -Force
+Copy-Item dist\flixiDz-dashboard\en dist\flixiDz\en -Recurse -Force
+Copy-Item dist\flixiDz-dashboard\fr dist\flixiDz\fr -Recurse -Force
+Copy-Item dist\flixiDz-dashboard\ar dist\flixiDz\ar -Recurse -Force
+Copy-Item dist\flixiDz-dashboard\wwwroot dist\flixiDz\wwwroot -Recurse -Force
 ```
 
 ### Next.js Web App
@@ -66,13 +97,13 @@ npm start        # Production server
 - **PRAGMA foreign_keys=ON** runs at startup via `DatabaseInitializer`.
 - **Soft delete:** `ArchivedAt` field on all entities. Never hard-delete. Global query filters exclude archived records (`ArchivedAt == null`). Use `IgnoreQueryFilters()` to see archived.
 - **Config:** `config.json` in `%APPDATA%\FocusGate\`. Auto-created by `ConfigMerger`. Never edit manually — use `set-config` console command.
-- **MongoDB URI:** Real URI in `config.json` only. NEVER commit real URI to source code. Placeholder in `ConfigMerger.cs` contains `admin:admin@cluster0...` as example.
+- **MongoDB URI:** Real URI in `config.json` only. NEVER commit real URI to source code. Placeholder in `ConfigMerger.cs` is `user:password@cluster.example.net`.
 - **MongoDB sync is non-fatal** — app works fine without it. MongoSyncService has 15s startup delay, 5 retry attempts with 30s intervals. PullFromMongoAsync is resilient per-collection — one bad collection doesn't kill all sync.
 - **MongoDB pull uses in-memory matching** — Loads local records by ID list, matches in Dictionary. EF Core can't translate `Func<T, object>` in LINQ expressions (CS1963).
 - **MongoDB collection names are ALL lowercase** — .NET `FocusGateMongoClient.cs` uses `"modems"`, `"simcards"`, etc. Next.js Mongoose models must match.
 - **MongoDB `_id` is Number (long)** — NOT ObjectId. `BsonClassMap.MapIdMember(m => m.Id)` maps C# `long Id` to MongoDB `_id`.
 - **Balance architecture:** SMS from Mobilis is a TRIGGER only. Never parse amounts from SMS text. `*222#` USSD is the single source of truth for `SimCard.Balance`.
-- **MachineId:** Each machine has a unique ID generated at runtime from hardware fingerprint (MAC + MachineName + UserName + MachineGuid). Config key `machine.id` can override. Dev machine: `d26b1c221259fb12`. Client (BERRAR): `419c0cfc97666753`. New PC (bmsoft): `b0a458aebe2393a4`.
+- **MachineId:** Each machine has a unique ID from `MachineInfoService`. Dev machine: `d26b1c221259fb12`. Client (BERRAR): `419c0cfc97666753`.
 - **HTMX in Dashboard:** POST handlers must use `Response.Headers["HX-Redirect"]` + `return new EmptyResult()` — NOT `RedirectToPage()`. `_ViewStart.cshtml` sets `Layout = null` for `HX-Request` header.
 - **Dashboard DI:** Uses `AddFocusGateDashboard()` (lightweight — no MongoSync, no ConsoleCommandHandler, no RestartService).
 - **Safe shutdown:** `writeChannel.CompleteAsync()` in `ApplicationStopped` (after host.RunAsync returns). Dashboard process tracked and killed in `ApplicationStopped`.
@@ -83,14 +114,10 @@ npm start        # Production server
 - **MongoDB `_id` precision:** IDs > `Number.MAX_SAFE_INTEGER` (9007199254740991) lose precision in JavaScript. `nextId()` uses `Date.now() * 1000` (safe). Old code used `* 10000` — some records in MongoDB have oversized IDs that can't be round-tripped through JSON. Use raw MongoDB collection queries (`mongoose.connection.db.collection(...)`) with `as Record<string, unknown>` cast when dealing with these IDs.
 - **Online status:** Use `status === 4` directly. The .NET side already manages Online/Offline transitions. Do NOT add `updatedAt` staleness checks — MongoDB sync can be delayed, causing false Offline.
 - **Locale-aware dates:** Use `formatDate()` / `formatShortDate()` from `@/lib/date-utils` (NOT `date-fns` `format()`). These respect the language setting (en/fr/ar).
-- **Locale-aware numbers:** All `toLocaleString()` calls must use the locale from `useLanguage()` hook. Pattern: `const loc = locale === 'fr' ? 'fr-FR' : locale === 'ar' ? 'ar-DZ' : 'en-US'`. Used in StatCards, ModemTable, UserTable, WithdrawalTable, WarningsContent, UserDetail, WithdrawForm, HistoryList.
 - **Safe number conversion:** Use `toNum()` / `toNumOrNull()` from `@/lib/number-utils` for MongoDB `Decimal128` fields. `Number()` on Decimal128 gives `[object Object]`.
-- **i18n:** Translation keys under `sms.types.*` in en.json, fr.json, ar.json. Use `t('sms.types.otp')` etc. in components. Settings page has 20+ keys under `settings.*`. All date/number labels translated.
+- **i18n:** Translation keys under `sms.types.*` in en.json, fr.json, ar.json. Use `t('sms.types.otp')` etc. in components.
 - **Dashboard userId:** Stored in `localStorage` via `UserIdProvider` context. Sub-pages read from URL params (`?userId=X`) with localStorage fallback, wrapped in `<Suspense>` for `useSearchParams`.
 - **Sidebar admin detection:** Uses pathname-based `isAdmin` via `useSyncExternalStore` + localStorage. No useEffect/setState.
-- **No ComPort in web** — ComPort removed from all Next.js pages (admin and dashboard). Only .NET side uses it.
-- **User dashboard balance** — Hidden from SIM cards view. Users see wallet balance only, not SIM balance.
-- **Withdrawal flow** — User submits: creates pending request, balance NOT deducted immediately. Admin approves: deducts withdrawal amount from user balance, records BalanceHistory(source=4) + UserBalanceHistory(type=1). Admin rejects: no balance change.
 
 ## Data Flow
 
@@ -105,8 +132,8 @@ USB Modems → .NET Gateway → SQLite (local) → MongoDB Atlas (cloud) ← Nex
 2. ConfigMerger.EnsureConfig() — creates/merges config.json (atomic write)
 3. DatabaseInitializer.Initialize() — EnsureCreated + PRAGMAs + column migrations + indexes
 4. DatabaseWriteChannel.Start() — begins processing write queue
-5. MongoSyncService waits 15s, then connects to MongoDB (5 retries, 30s apart)
-6. HiLinkDiscovery probes IPs (parallel, 2s timeout) → finds modems
+5. MongoSyncService waits 15s, then connects to MongoDB (5 retries)
+6. HiLinkDiscovery probes IPs (parallel, 5s timeout) → finds modems
 7. For each modem found:
    a. HiLinkCommandService.OpenAsync() — gets session cookie + CSRF token
    b. ModemHandler created → StartAsync():
@@ -153,10 +180,10 @@ When recharge/transfer SMS from "Mobilis" or "77111" detected:
 | `SimCards` | .NET only | Balance (from USSD), IMSI, PhoneNumber, IsActive |
 | `SmsRecords` | .NET only | SMS received by modems |
 | `BalanceHistories` | .NET only | SIM balance change records (from USSD) |
-| `Users` | Dashboard/Next.js | Created/edited by admin |
-| `UserModems` | Dashboard/Next.js | Assign/remove modem-to-user |
-| `WithdrawalRequests` | Dashboard/Next.js | User requests, admin approve/reject |
-| `UserBalanceHistories` | Dashboard/Next.js | Created on withdrawal approval |
+| `Users` | Dashboard only | Created/edited by admin in ASP.NET Dashboard |
+| `UserModems` | Dashboard only | Assign/remove modem-to-user |
+| `WithdrawalRequests` | Dashboard only | User requests, admin approve/reject |
+| `UserBalanceHistories` | Dashboard only | Created on withdrawal approval |
 
 Both .NET Gateway and Dashboard read from SQLite. Next.js Web App reads from MongoDB.
 
@@ -204,7 +231,7 @@ Serial port AT commands:
 
 ### HiLinkModemOrchestrator (in FocusGate.HiLink)
 
-BackgroundService scanning IPs every 30s (max 15 modems):
+BackgroundService scanning 14 IPs every 30s (max 15 modems):
 - Parallel probe → create HiLinkCommandService → create ModemHandler
 - Blacklists IPs after 3 failures; known modem IPs retried indefinitely
 - Orphan check: marks missing modems Offline (skipped when new handlers starting)
@@ -214,7 +241,7 @@ BackgroundService scanning IPs every 30s (max 15 modems):
 Single serialized write queue using `Channel<Op>`. ALL DB writes go through here.
 
 **Operations:**
-- `InsertModem` — modem + SIM (atomic — two SaveChanges: first Modem, then SimCard with FK)
+- `InsertModem` — modem + SIM (atomic)
 - `UpdateModemStatus` — status + UpdatedAt
 - `TouchModemUpdatedAt` — heartbeat (no status change)
 - `UpsertSimCard` — detect SIM changes
@@ -235,19 +262,18 @@ BackgroundService. Bidirectional sync every 30s:
 - `SafeUpsertAsync` handles DuplicateKey by claiming with `_id`-only filter
 - `StopAsync` performs final sync before shutdown
 
-## Dashboard Pages (ASP.NET Razor Pages — 9 total)
+## Dashboard Pages (ASP.NET Razor Pages)
 
 | Page | Purpose |
 |------|---------|
-| `Index` | Dashboard home: 4 stat cards (modems, SIM balance online-only, user wallets, pending withdrawals) |
+| `Index` | Dashboard home: 4 stat cards (modems, SIM balance, user wallets, pending withdrawals) |
 | `Modems` | Modem list with filter pills (All/Online/Offline/Assigned/Unassigned), HTMX 5s refresh |
 | `ModemDetail` | Modem detail: Info + Balance History + SMS tabs |
-| `Users` | User CRUD with search, archived toggle, add user modal, edit modal |
-| `UserDetail` | User detail: Modems + Wallet + History + SMS tabs, Edit User button |
+| `Users` | User CRUD with search, archived toggle, add user modal |
+| `UserDetail` | User detail: Modems + Wallet + History + SMS tabs |
 | `Withdrawals` | Withdrawal requests: All/Pending/Approved/Rejected filter tabs, approve/reject |
 | `Warnings` | Modems with high SIM balance (>= 45000 DA) |
 | `AdminSettings` | Change username and password |
-| `SetLanguage` | Switch between EN/FR/AR |
 
 ## Console Commands
 
@@ -255,72 +281,12 @@ BackgroundService. Bidirectional sync every 30s:
 
 ## Deployment
 
-### 3-Branch Strategy
+### Client PC (BERRAR)
 
-Each branch has a different default MongoDB database baked into the compiled DLL:
-
-| Branch | Default MongoDB DB | Publish Folder | Target |
-|--------|-------------------|----------------|--------|
-| `main` | `focusgate` | `dist/main/` | BERRAR PC / dev |
-| `alaafi` | `alaafi` | `dist/alaafi/` | alaafi deployment |
-| `flixiDz` | `flixiDz` | `dist/flixiDz/` | bmsoft PC |
-
-All branches have identical code — only `ConfigMerger.cs` and `DependencyInjection.cs` differ (the `mongodb.database` default).
-
-### Build & Publish (per branch)
-
-```powershell
-# 1. Switch to branch
-git checkout <branch>    # main, alaafi, or flixiDz
-
-# 2. Verify default DB in source
-Select-String -Path src\FocusGate.Infrastructure\Services\ConfigMerger.cs -Pattern 'mongodb.database'
-
-# 3. Build
-dotnet build FocusGate.sln
-
-# 4. Publish HiLink (entry point)
-dotnet publish src/FocusGate.HiLink -c Release -r win-x64 --self-contained -o dist/<branch>
-
-# 5. Publish Dashboard
-dotnet publish src/FocusGate.Dashboard -c Release -r win-x64 --self-contained -o dist/<branch>-dashboard
-
-# 6. Copy Dashboard files to HiLink dist
-Copy-Item dist\<branch>-dashboard\FocusGate.Dashboard.exe dist\<branch>\ -Force
-Copy-Item dist\<branch>-dashboard\FocusGate.Dashboard.dll dist\<branch>\ -Force
-Copy-Item dist\<branch>-dashboard\FocusGate.Dashboard.pdb dist\<branch>\ -Force
-Copy-Item dist\<branch>-dashboard\FocusGate.Dashboard.deps.json dist\<branch>\ -Force
-Copy-Item dist\<branch>-dashboard\FocusGate.Dashboard.runtimeconfig.json dist\<branch>\ -Force
-Copy-Item dist\<branch>-dashboard\FocusGate.Dashboard.staticwebassets.endpoints.json dist\<branch>\ -Force
-Copy-Item dist\<branch>-dashboard\appsettings.json dist\<branch>\ -Force
-Copy-Item dist\<branch>-dashboard\web.config dist\<branch>\ -Force
-Copy-Item dist\<branch>-dashboard\en dist\<branch>\en -Recurse -Force
-Copy-Item dist\<branch>-dashboard\fr dist\<branch>\fr -Recurse -Force
-Copy-Item dist\<branch>-dashboard\ar dist\<branch>\ar -Recurse -Force
-Copy-Item dist\<branch>-dashboard\wwwroot dist\<branch>\wwwroot -Recurse -Force
-
-# 7. Cleanup temp folder
-Remove-Item dist\<branch>-dashboard -Recurse -Force
-```
-
-### Deploy to Target PC
-
-1. Copy `dist/<branch>/*` to the PC
-2. Run `FocusGate.HiLink.exe` — auto-creates config + SQLite database
-3. Dashboard opens at `http://localhost:5080`
-4. Configure `mongodb.uri` in config.json for cloud sync (if needed)
-
-### Machine IDs
-
-| Machine | MachineId | Notes |
-|---------|-----------|-------|
-| Dev (local) | `d26b1c221259fb12` | Generated from hardware fingerprint |
-| Client (BERRAR) | `419c0cfc97666753` | 10 modems, main branch |
-| bmsoft | `b0a458aebe2393a4` | 1 modem, flixiDz branch |
-
-### Database Reset
-
-Delete `focusgate.db` + `-shm` + `-wal` files, restart to re-seed `admin:admin`.
+- **MachineId:** `419c0cfc97666753`
+- **Data path:** `C:\Users\BERRAR\AppData\Roaming\FocusGate\`
+- **Deploy:** Copy `dist\hilink\*` to client PC, run `FocusGate.HiLink.exe`
+- **Database reset:** Delete `focusgate.db` + `-shm` + `-wal` files, restart to re-seed `admin:admin`
 
 ### Mutexes & Pipes
 
@@ -341,12 +307,3 @@ Delete `focusgate.db` + `-shm` + `-wal` files, restart to re-seed `admin:admin`.
 - **SendUssdAsync on HiLink** sends `POST /api/ussd/send` then polls `GET /api/ussd/get` every 2s
 - **125002 error** means SMS inbox full — DeleteAllSmsAsync falls back to index-based deletion (1-50)
 - **Session refresh failure** clears _sessionCookie, _csrfToken, sets _isOpen=false — forces clean re-handshake
-- **Dashboard home total SIM balance** = online SIMs only — offline SIM balances excluded from total
-- **Balance staleness** — Online modems show green balance; offline modems show gray + "(last known)" label
-- **Withdrawal approval** deducts withdrawal amount (not zero) — `newBalance = Math.max(0, oldBalance - amount)`
-- **MongoDB oversized IDs** — Old records created with `Date.now() * 10000` have IDs > MAX_SAFE_INTEGER. PATCH handlers use raw MongoDB collection to avoid precision loss
-- **Not-found page** is client component — needs `useLanguage()` hook for i18n, can't be server component
-- **User detail admin page** — converted to client component for i18n header
-- **LiveProvider key path** — modem detail uses `modemDetail.*` (NOT `usersDetail.*`)
-- **`date-fns` removed** — replaced by custom `lib/date-utils.ts` with locale-aware formatting
-- **`NEXTAUTH_SECRET`/`NEXTAUTH_URL`** — removed from `.env.local` (auth removed from web app)
