@@ -41,24 +41,40 @@ dotnet run --project src/FocusGate.HiLink    # HiLink modems + auto-launches Das
 dotnet run --project src/FocusGate.AT         # AT modems + auto-launches Dashboard
 dotnet run --project src/FocusGate.Dashboard  # Dashboard only (port 5080)
 
-# Publish self-contained
-dotnet publish src/FocusGate.HiLink -c Release -r win-x64 --self-contained -o dist/hilink
-dotnet publish src/FocusGate.AT -c Release -r win-x64 --self-contained -o dist/at
-dotnet publish src/FocusGate.Dashboard -c Release -r win-x64 --self-contained -o dist/dashboard
+# Publish self-contained (Alaafi)
+dotnet publish src/FocusGate.HiLink -c Release -r win-x64 --self-contained -o dist/alaafi
+dotnet publish src/FocusGate.Dashboard -c Release -r win-x64 --self-contained -o dist/alaafi-dashboard
 
-# After publishing Dashboard, copy to hilink dist:
-Copy-Item dist\dashboard\FocusGate.Dashboard.exe dist\hilink\ -Force
-Copy-Item dist\dashboard\FocusGate.Dashboard.dll dist\hilink\ -Force
-Copy-Item dist\dashboard\FocusGate.Dashboard.pdb dist\hilink\ -Force
-Copy-Item dist\dashboard\FocusGate.Dashboard.deps.json dist\hilink\ -Force
-Copy-Item dist\dashboard\FocusGate.Dashboard.runtimeconfig.json dist\hilink\ -Force
-Copy-Item dist\dashboard\FocusGate.Dashboard.staticwebassets.endpoints.json dist\hilink\ -Force
-Copy-Item dist\dashboard\appsettings.json dist\hilink\ -Force
-Copy-Item dist\dashboard\web.config dist\hilink\ -Force
-Copy-Item dist\dashboard\en dist\hilink\en -Recurse -Force
-Copy-Item dist\dashboard\fr dist\hilink\fr -Recurse -Force
-Copy-Item dist\dashboard\ar dist\hilink\ar -Recurse -Force
-Copy-Item dist\dashboard\wwwroot dist\hilink\wwwroot -Recurse -Force
+# Publish self-contained (FlexiDZ)
+dotnet publish src/FocusGate.HiLink -c Release -r win-x64 --self-contained -o dist/flixiDz
+dotnet publish src/FocusGate.Dashboard -c Release -r win-x64 --self-contained -o dist/flixiDz-dashboard
+
+# After publishing Dashboard, copy to each brand dist:
+Copy-Item dist\alaafi-dashboard\FocusGate.Dashboard.exe dist\alaafi\ -Force
+Copy-Item dist\alaafi-dashboard\FocusGate.Dashboard.dll dist\alaafi\ -Force
+Copy-Item dist\alaafi-dashboard\FocusGate.Dashboard.pdb dist\alaafi\ -Force
+Copy-Item dist\alaafi-dashboard\FocusGate.Dashboard.deps.json dist\alaafi\ -Force
+Copy-Item dist\alaafi-dashboard\FocusGate.Dashboard.runtimeconfig.json dist\alaafi\ -Force
+Copy-Item dist\alaafi-dashboard\FocusGate.Dashboard.staticwebassets.endpoints.json dist\alaafi\ -Force
+Copy-Item dist\alaafi-dashboard\appsettings.json dist\alaafi\ -Force
+Copy-Item dist\alaafi-dashboard\web.config dist\alaafi\ -Force
+Copy-Item dist\alaafi-dashboard\en dist\alaafi\en -Recurse -Force
+Copy-Item dist\alaafi-dashboard\fr dist\alaafi\fr -Recurse -Force
+Copy-Item dist\alaafi-dashboard\ar dist\alaafi\ar -Recurse -Force
+Copy-Item dist\alaafi-dashboard\wwwroot dist\alaafi\wwwroot -Recurse -Force
+
+Copy-Item dist\flixiDz-dashboard\FocusGate.Dashboard.exe dist\flixiDz\ -Force
+Copy-Item dist\flixiDz-dashboard\FocusGate.Dashboard.dll dist\flixiDz\ -Force
+Copy-Item dist\flixiDz-dashboard\FocusGate.Dashboard.pdb dist\flixiDz\ -Force
+Copy-Item dist\flixiDz-dashboard\FocusGate.Dashboard.deps.json dist\flixiDz\ -Force
+Copy-Item dist\flixiDz-dashboard\FocusGate.Dashboard.runtimeconfig.json dist\flixiDz\ -Force
+Copy-Item dist\flixiDz-dashboard\FocusGate.Dashboard.staticwebassets.endpoints.json dist\flixiDz\ -Force
+Copy-Item dist\flixiDz-dashboard\appsettings.json dist\flixiDz\ -Force
+Copy-Item dist\flixiDz-dashboard\web.config dist\flixiDz\ -Force
+Copy-Item dist\flixiDz-dashboard\en dist\flixiDz\en -Recurse -Force
+Copy-Item dist\flixiDz-dashboard\fr dist\flixiDz\fr -Recurse -Force
+Copy-Item dist\flixiDz-dashboard\ar dist\flixiDz\ar -Recurse -Force
+Copy-Item dist\flixiDz-dashboard\wwwroot dist\flixiDz\wwwroot -Recurse -Force
 ```
 
 ### Next.js Web App

@@ -171,7 +171,7 @@
                 <div class="flex items-center gap-4">
                     <div class="text-xs text-gray-400">
                         <i class="fas fa-clock mr-1"></i>
-                        <span x-data="{ time: '' }" x-init="setInterval(() => time = new Date().toLocaleTimeString(), 1000)" x-text="time"></span>
+                        <span x-data="{ time: '' }" x-init="setInterval(() => time = new Date().toLocaleTimeString('@currentCulture', {hour:'2-digit', minute:'2-digit', hour12:false}), 1000)" x-text="time"></span>
                     </div>
                     <div class="w-8 h-8 bg-brand-100 text-brand-700 rounded-full flex items-center justify-center text-sm font-semibold">
                         A
