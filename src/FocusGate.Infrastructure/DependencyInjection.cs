@@ -64,6 +64,12 @@ public static class DependencyInjection
                 var separator = mongoUri.Contains('?') ? '&' : '?';
                 mongoUri += $"{separator}connectTimeoutMS=10000&serverSelectionTimeoutMS=15000";
             }
+
+            if (!mongoUri.Contains("directConnection"))
+            {
+                var separator = mongoUri.Contains('?') ? '&' : '?';
+                mongoUri += $"{separator}directConnection=true";
+            }
         }
         var syncStr = flatConfig.GetValueOrDefault("sync.interval_seconds") ?? config["sync:interval_seconds"];
         var syncInterval = int.TryParse(syncStr, out var si) ? si : 30;
