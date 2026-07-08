@@ -159,7 +159,13 @@ public class ModemHandler : IDisposable
                     if (IsMobilisBalanceTrigger(msg))
                         startupBalanceTrigger = true;
                 }
-                var results = await Task.WhenAll(tcsList);
+                bool[] results;
+                try { results = await Task.WhenAll(tcsList); }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex, "Modem {Id}: Some startup SMS writes failed — continuing with partial results", _modemId);
+                    results = tcsList.Select(t => t.IsCompletedSuccessfully && t.Result).ToArray();
+                }
                 var savedCount = results.Count(r => r);
                 var skippedCount = results.Length - savedCount;
                 try { await _at.DeleteAllSmsAsync(); }

@@ -121,7 +121,7 @@ public class DatabaseWriteChannel
             catch (Exception ex)
             {
                 _logger.LogError(ex, "WriteChannel error: {OpType}", op.Type);
-                op.Completed?.TrySetException(ex);
+                op.Completed?.TrySetResult(false);
             }
         }
     }
@@ -308,8 +308,6 @@ public class DatabaseWriteChannel
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(m => m.UpdatedAt, DateTime.UtcNow), ct);
 
-            await db.SaveChangesAsync(ct);
-
             var userId = await ModemHelper.ResolveUserIdForModemAsync(db, modemId, ct);
             
             if (oldBalance != newBalance)
@@ -324,8 +322,9 @@ public class DatabaseWriteChannel
                     Source = BalanceSource.USSD,
                     RecordedAt = DateTime.UtcNow
                 });
-                await db.SaveChangesAsync(ct);
             }
+
+            await db.SaveChangesAsync(ct);
             return true;
         }
         return false;
@@ -345,8 +344,6 @@ public class DatabaseWriteChannel
         sim.VerifiedAt = DateTime.UtcNow;
         sim.LastSeen = DateTime.UtcNow;
 
-        await db.SaveChangesAsync(ct);
-
         var userId = await ModemHelper.ResolveUserIdForModemAsync(db, modemId, ct);
 
         if (oldSimBalance != newBalance)
@@ -361,14 +358,12 @@ public class DatabaseWriteChannel
                 Source = BalanceSource.SMS,
                 RecordedAt = DateTime.UtcNow
             });
-            await db.SaveChangesAsync(ct);
         }
 
         if (userId > 0 && newBalance > oldSimBalance)
         {
             var delta = newBalance - oldSimBalance;
             CreditUserBalance(db, userId, delta, sim.Id);
-            await db.SaveChangesAsync(ct);
             _logger.LogInformation("Balance confirmed via *222#: Modem={Id} Old={Old:F2} → New={New:F2}, User credited +{Delta:F2} DZD", modemId, oldSimBalance, newBalance, delta);
         }
         else
@@ -376,6 +371,7 @@ public class DatabaseWriteChannel
             _logger.LogDebug("Balance confirmed via *222#: Modem={Id} Balance={Balance:F2} DZD", modemId, newBalance);
         }
 
+        await db.SaveChangesAsync(ct);
         return true;
     }
 

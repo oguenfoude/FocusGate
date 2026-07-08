@@ -204,68 +204,102 @@ public class MongoSyncService : BackgroundService
         var pushed = 0;
         var skipped = 0;
 
-        var modems = await db.Modems.IgnoreQueryFilters().Where(m => m.UpdatedAt > since).ToListAsync(ct);
-        foreach (var m in modems)
-        {
-            if (!await SafeUpsertAsync(_mongo.Modems, m, ct)) skipped++;
-        }
-        pushed += modems.Count;
+        var failedCollections = new List<string>();
 
-        var sims = await db.SimCards.IgnoreQueryFilters().Where(s => s.UpdatedAt > since).ToListAsync(ct);
-        foreach (var s in sims)
+        try
         {
-            if (!await SafeUpsertAsync(_mongo.SimCards, s, ct)) skipped++;
+            var modems = await db.Modems.IgnoreQueryFilters().Where(m => m.UpdatedAt > since).ToListAsync(ct);
+            foreach (var m in modems)
+            {
+                if (!await SafeUpsertAsync(_mongo.Modems, m, ct)) skipped++;
+            }
+            pushed += modems.Count;
         }
-        pushed += sims.Count;
+        catch (Exception ex) { _logger.LogWarning(ex, "Push modems failed — skipping collection"); failedCollections.Add("modems"); }
 
-        var sms = await db.SmsRecords.IgnoreQueryFilters().Where(s => s.UpdatedAt > since).ToListAsync(ct);
-        foreach (var s in sms)
+        try
         {
-            if (!await SafeUpsertAsync(_mongo.SmsRecords, s, ct)) skipped++;
+            var sims = await db.SimCards.IgnoreQueryFilters().Where(s => s.UpdatedAt > since).ToListAsync(ct);
+            foreach (var s in sims)
+            {
+                if (!await SafeUpsertAsync(_mongo.SimCards, s, ct)) skipped++;
+            }
+            pushed += sims.Count;
         }
-        pushed += sms.Count;
+        catch (Exception ex) { _logger.LogWarning(ex, "Push sims failed — skipping collection"); failedCollections.Add("sims"); }
 
-        var balances = await db.BalanceHistories.IgnoreQueryFilters().Where(b => b.UpdatedAt > since).ToListAsync(ct);
-        foreach (var b in balances)
+        try
         {
-            if (!await SafeUpsertAsync(_mongo.BalanceHistories, b, ct)) skipped++;
+            var sms = await db.SmsRecords.IgnoreQueryFilters().Where(s => s.UpdatedAt > since).ToListAsync(ct);
+            foreach (var s in sms)
+            {
+                if (!await SafeUpsertAsync(_mongo.SmsRecords, s, ct)) skipped++;
+            }
+            pushed += sms.Count;
         }
-        pushed += balances.Count;
+        catch (Exception ex) { _logger.LogWarning(ex, "Push sms failed — skipping collection"); failedCollections.Add("sms"); }
 
-        var users = await db.Users.IgnoreQueryFilters().Where(u => u.UpdatedAt > since).ToListAsync(ct);
-        foreach (var u in users)
+        try
         {
-            if (!await SafeUpsertAsync(_mongo.Users, u, ct)) skipped++;
+            var balances = await db.BalanceHistories.IgnoreQueryFilters().Where(b => b.UpdatedAt > since).ToListAsync(ct);
+            foreach (var b in balances)
+            {
+                if (!await SafeUpsertAsync(_mongo.BalanceHistories, b, ct)) skipped++;
+            }
+            pushed += balances.Count;
         }
-        pushed += users.Count;
+        catch (Exception ex) { _logger.LogWarning(ex, "Push balances failed — skipping collection"); failedCollections.Add("balances"); }
 
-        var userModems = await db.UserModems.IgnoreQueryFilters().Where(um => um.UpdatedAt > since).ToListAsync(ct);
-        foreach (var um in userModems)
+        try
         {
-            if (!await SafeUpsertAsync(_mongo.UserModems, um, ct)) skipped++;
+            var users = await db.Users.IgnoreQueryFilters().Where(u => u.UpdatedAt > since).ToListAsync(ct);
+            foreach (var u in users)
+            {
+                if (!await SafeUpsertAsync(_mongo.Users, u, ct)) skipped++;
+            }
+            pushed += users.Count;
         }
-        pushed += userModems.Count;
+        catch (Exception ex) { _logger.LogWarning(ex, "Push users failed — skipping collection"); failedCollections.Add("users"); }
 
-        var withdrawalRequests = await db.WithdrawalRequests.IgnoreQueryFilters().Where(w => w.UpdatedAt > since).ToListAsync(ct);
-        foreach (var w in withdrawalRequests)
+        try
         {
-            if (!await SafeUpsertAsync(_mongo.WithdrawalRequests, w, ct)) skipped++;
+            var userModems = await db.UserModems.IgnoreQueryFilters().Where(um => um.UpdatedAt > since).ToListAsync(ct);
+            foreach (var um in userModems)
+            {
+                if (!await SafeUpsertAsync(_mongo.UserModems, um, ct)) skipped++;
+            }
+            pushed += userModems.Count;
         }
-        pushed += withdrawalRequests.Count;
+        catch (Exception ex) { _logger.LogWarning(ex, "Push userModems failed — skipping collection"); failedCollections.Add("userModems"); }
 
-        var userBalanceHistories = await db.UserBalanceHistories.IgnoreQueryFilters().Where(ub => ub.UpdatedAt > since).ToListAsync(ct);
-        foreach (var ub in userBalanceHistories)
+        try
         {
-            if (!await SafeUpsertAsync(_mongo.UserBalanceHistories, ub, ct)) skipped++;
+            var withdrawalRequests = await db.WithdrawalRequests.IgnoreQueryFilters().Where(w => w.UpdatedAt > since).ToListAsync(ct);
+            foreach (var w in withdrawalRequests)
+            {
+                if (!await SafeUpsertAsync(_mongo.WithdrawalRequests, w, ct)) skipped++;
+            }
+            pushed += withdrawalRequests.Count;
         }
-        pushed += userBalanceHistories.Count;
+        catch (Exception ex) { _logger.LogWarning(ex, "Push withdrawalRequests failed — skipping collection"); failedCollections.Add("withdrawalRequests"); }
+
+        try
+        {
+            var userBalanceHistories = await db.UserBalanceHistories.IgnoreQueryFilters().Where(ub => ub.UpdatedAt > since).ToListAsync(ct);
+            foreach (var ub in userBalanceHistories)
+            {
+                if (!await SafeUpsertAsync(_mongo.UserBalanceHistories, ub, ct)) skipped++;
+            }
+            pushed += userBalanceHistories.Count;
+        }
+        catch (Exception ex) { _logger.LogWarning(ex, "Push userBalanceHistories failed — skipping collection"); failedCollections.Add("userBalanceHistories"); }
 
         var actualPushed = pushed - skipped;
-        if (pushed > 0)
-            _logger.LogInformation("Push: {ModemCount} modems, {SimCount} sims, {SmsCount} sms, {BalCount} bal, {UserCount} users, {UmCount} um, {WrCount} wr, {UbhCount} ubh (skipped {Skipped})",
-                modems.Count, sims.Count, sms.Count, balances.Count, users.Count, userModems.Count, withdrawalRequests.Count, userBalanceHistories.Count, skipped);
+        if (pushed > 0 || failedCollections.Count > 0)
+            _logger.LogInformation("Push: {Pushed} pushed, {Skipped} skipped, failed: [{Failed}]",
+                actualPushed, skipped, string.Join(", ", failedCollections));
         _totalPushed += actualPushed;
-        return skipped == 0 || actualPushed > 0;
+        return failedCollections.Count == 0;
     }
 
     private async Task<bool> SafeUpsertAsync<T>(IMongoCollection<T> collection, T document, CancellationToken ct) where T : class
