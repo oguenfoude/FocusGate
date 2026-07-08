@@ -71,8 +71,11 @@ public class MongoSyncService : BackgroundService
                 }
 
                 retryCount++;
-                _logger.LogWarning("MongoDB connection failed (attempt {Attempt}), retrying in {Delay}s...",
-                    retryCount, RetryDelaySeconds);
+                if (retryCount % 5 == 0)
+                    _logger.LogWarning("MongoDB still disconnected after {Count} attempts — check network/firewall/atlas IP whitelist", retryCount);
+                else
+                    _logger.LogWarning("MongoDB connection failed (attempt {Attempt}), retrying in {Delay}s...",
+                        retryCount, RetryDelaySeconds);
                 await Task.Delay(TimeSpan.FromSeconds(RetryDelaySeconds), stoppingToken);
             }
             catch (OperationCanceledException) { return; }
