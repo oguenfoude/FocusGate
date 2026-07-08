@@ -515,9 +515,7 @@ public class ModemHandler : IDisposable
     {
         if (msg.Sender != "Mobilis" && msg.Sender != "77111" && msg.Sender != "610") return false;
         return msg.Content.Contains("recharg", StringComparison.OrdinalIgnoreCase)
-            || msg.Content.Contains("montant de", StringComparison.OrdinalIgnoreCase)
-            || msg.Content.Contains("solde", StringComparison.OrdinalIgnoreCase)
-            || msg.Content.Contains("credit", StringComparison.OrdinalIgnoreCase);
+            || msg.Content.Contains("montant de", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task TryGetPhoneAndBalanceAsync(CancellationToken ct)
