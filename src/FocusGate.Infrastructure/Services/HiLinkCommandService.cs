@@ -410,6 +410,13 @@ public partial class HiLinkCommandService : IAtCommandService
                 if (!DateTime.TryParse(dateStr, System.Globalization.CultureInfo.InvariantCulture,
                     System.Globalization.DateTimeStyles.None, out var dt))
                     dt = DateTime.UtcNow;
+                else
+                {
+                    var tzOffset = _config.Get<int>("modem.timezone_offset_hours", 0);
+                    if (tzOffset != 0)
+                        dt = dt.AddHours(-tzOffset);
+                    dt = DateTime.SpecifyKind(dt, DateTimeKind.Utc);
+                }
 
                 messages.Add(new RawSmsMessage
                 {

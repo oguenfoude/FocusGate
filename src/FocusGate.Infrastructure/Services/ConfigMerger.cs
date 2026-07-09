@@ -30,6 +30,7 @@ public static class ConfigMerger
         ["hilink.probe_timeout_ms"] = "2000",
         ["at.enabled"] = "true",
         ["at.probe_timeout_ms"] = "8000",
+        ["modem.timezone_offset_hours"] = "0",
         ["app.version"] = "1.0.0"
     };
 
