@@ -58,12 +58,6 @@ public static class DependencyInjection
             var masked = mongoUri.Length > 40 ? mongoUri[..40] + "..." : mongoUri;
             Console.WriteLine($"[*] MongoDB URI: {masked}");
             Console.WriteLine($"[*] MongoDB Database: {mongoDb}");
-
-            if (!mongoUri.Contains("connectTimeoutMS"))
-            {
-                var separator = mongoUri.Contains('?') ? '&' : '?';
-                mongoUri += $"{separator}connectTimeoutMS=10000&serverSelectionTimeoutMS=15000";
-            }
         }
         var syncStr = flatConfig.GetValueOrDefault("sync.interval_seconds") ?? config["sync:interval_seconds"];
         var syncInterval = int.TryParse(syncStr, out var si) ? si : 30;

@@ -1,3 +1,4 @@
+using System.Security.Authentication;
 using FocusGate.Core.Models;
 using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
@@ -43,7 +44,21 @@ public class FocusGateMongoClient
         try
         {
             _logger.LogInformation("MongoDB connecting to {Host}...", ExtractHost(connectionString));
-            var client = new MongoClient(connectionString);
+            var settings = MongoClientSettings.FromConnectionString(connectionString);
+            settings.ReadPreference = ReadPreference.SecondaryPreferred;
+            settings.RetryWrites = true;
+            settings.RetryReads = true;
+            settings.ConnectTimeout = TimeSpan.FromSeconds(15);
+            settings.ServerSelectionTimeout = TimeSpan.FromSeconds(30);
+            settings.SocketTimeout = TimeSpan.FromSeconds(60);
+            settings.HeartbeatInterval = TimeSpan.FromSeconds(30);
+            settings.SslSettings = new SslSettings
+            {
+                EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13
+            };
+            settings.ServerApi = new ServerApi(ServerApiVersion.V1, strict: false);
+            settings.ApplicationName = "FocusGate";
+            var client = new MongoClient(settings);
             _db = client.GetDatabase(databaseName);
             IsConnected = false;
         }
