@@ -514,8 +514,8 @@ public class ModemHandler : IDisposable
     private static bool IsMobilisBalanceTrigger(RawSmsMessage msg)
     {
         if (msg.Sender != "Mobilis" && msg.Sender != "77111" && msg.Sender != "610") return false;
-        return msg.Content.Contains("recharg", StringComparison.OrdinalIgnoreCase)
-            || msg.Content.Contains("montant de", StringComparison.OrdinalIgnoreCase);
+        return msg.Content.Contains("montant de", StringComparison.OrdinalIgnoreCase)
+            && msg.Content.Contains("reçu", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task TryGetPhoneAndBalanceAsync(CancellationToken ct)

@@ -409,14 +409,15 @@ public class DatabaseWriteChannel
         sim.LastSeen = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
 
-        if (sms.Content.Contains("Solde", StringComparison.OrdinalIgnoreCase)
-            || sms.Content.Contains("credit", StringComparison.OrdinalIgnoreCase))
+        if (sms.Content.Contains("Solde", StringComparison.OrdinalIgnoreCase))
         {
             var balance = ExtractBalanceFromContent(sms.Content);
             if (balance.HasValue)
             {
-                await HandleUpdateSimBalanceFromSmsAsync(db,
-                    new { ModemId = sim.ModemId, Balance = balance.Value }, ct);
+                sim.Balance = balance.Value;
+                sim.VerifiedAt = DateTime.UtcNow;
+                sim.LastSeen = DateTime.UtcNow;
+                await db.SaveChangesAsync(ct);
             }
         }
 
