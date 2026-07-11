@@ -52,7 +52,7 @@ public class DatabaseWriteChannel
 
     public bool TryClaimPendingBalanceCheck(long modemId) =>
         _pendingBalanceChecks.TryRemove(modemId, out var pendingAt)
-        && DateTime.UtcNow - pendingAt < TimeSpan.FromMinutes(2);
+        && DateTime.UtcNow - pendingAt < TimeSpan.FromMinutes(5);
 
     public void ClearPendingBalanceCheck(long modemId) =>
         _pendingBalanceChecks.TryRemove(modemId, out _);
@@ -510,7 +510,7 @@ public class DatabaseWriteChannel
         return true;
     }
 
-    private static decimal? ExtractBalanceFromContent(string content)
+    internal static decimal? ExtractBalanceFromContent(string content)
     {
         var soldeIdx = content.IndexOf("Solde", StringComparison.OrdinalIgnoreCase);
         if (soldeIdx < 0) return null;
@@ -540,13 +540,13 @@ public class DatabaseWriteChannel
         return null;
     }
 
-    private static bool IsRechargeSms(string content)
+    internal static bool IsRechargeSms(string content)
     {
         return content.Contains("montant de", StringComparison.OrdinalIgnoreCase)
             && content.Contains("reçu", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static decimal? ExtractRechargeAmountFromContent(string content)
+    internal static decimal? ExtractRechargeAmountFromContent(string content)
     {
         var match = System.Text.RegularExpressions.Regex.Match(content, @"montant\s+de\s*(\d[\d.,]*)", RegexOptions.IgnoreCase);
         if (match.Success)
@@ -559,7 +559,7 @@ public class DatabaseWriteChannel
         return null;
     }
 
-    private static decimal? ParseAmount(string numStr)
+    internal static decimal? ParseAmount(string numStr)
     {
         if (numStr.Contains(',') && numStr.Contains('.'))
         {

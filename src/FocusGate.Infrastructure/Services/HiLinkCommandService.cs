@@ -401,7 +401,7 @@ public partial class HiLinkCommandService : IAtCommandService
 
             foreach (var el in messageElements)
             {
-                var phone = GetElement(el, "Phone") ?? "";
+                var phone = (GetElement(el, "Phone") ?? "").Trim();
                 var content = GetElement(el, "Content") ?? "";
                 var dateStr = GetElement(el, "Date") ?? "";
                 var indexStr = GetElement(el, "Index") ?? "0";

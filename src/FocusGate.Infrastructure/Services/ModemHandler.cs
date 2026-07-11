@@ -282,8 +282,28 @@ public class ModemHandler : IDisposable
         }
         else
         {
-            _db.MarkPendingBalanceCheck(_modemId);
-            _log.LogInformation("Modem {Id}: *222# returned processing — pending balance check set, waiting for Solde SMS", _modemId);
+            _log.LogInformation("Modem {Id}: *222# returned processing — retrying in 15s...", _modemId);
+            try { await Task.Delay(15000, ct); } catch (OperationCanceledException) { return; }
+
+            balance = await _at.GetBalanceAsync();
+            if (balance.HasValue)
+            {
+                _log.LogInformation("Modem {Id}: Balance confirmed on retry: {Balance:F2} DZD", _modemId, balance.Value);
+                try
+                {
+                    await _db.EnqueueAsync(new()
+                    {
+                        Type = DatabaseWriteChannel.Op.UpdateSimBalanceFromSms,
+                        Data = new { ModemId = _modemId, Balance = balance.Value }
+                    });
+                }
+                catch (Exception ex) { _log.LogDebug(ex, "Modem {Id}: UpdateSimBalanceFromSms failed", _modemId); }
+            }
+            else
+            {
+                _db.MarkPendingBalanceCheck(_modemId);
+                _log.LogInformation("Modem {Id}: *222# still processing after retry — pending balance check set, waiting for Solde SMS", _modemId);
+            }
         }
     }
 
@@ -482,13 +502,12 @@ public class ModemHandler : IDisposable
                     });
                     var wasSaved = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
                     if (wasSaved)
-                    {
                         savedCount++;
-                        if (!balanceTriggerNeeded && IsMobilisBalanceTrigger(msg))
-                            balanceTriggerNeeded = true;
-                    }
                     else
                         skippedCount++;
+
+                    if (!balanceTriggerNeeded && IsMobilisBalanceTrigger(msg))
+                        balanceTriggerNeeded = true;
                 }
                 catch (TimeoutException) when (_disposed) { }
                 catch (OperationCanceledException) when (_disposed) { }
@@ -512,9 +531,10 @@ public class ModemHandler : IDisposable
         return balanceTriggerNeeded;
     }
 
-    private static bool IsMobilisBalanceTrigger(RawSmsMessage msg)
+    internal static bool IsMobilisBalanceTrigger(RawSmsMessage msg)
     {
-        if (msg.Sender != "Mobilis" && msg.Sender != "77111" && msg.Sender != "610") return false;
+        var sender = msg.Sender.Trim();
+        if (sender != "Mobilis" && sender != "77111" && sender != "610") return false;
         if (msg.Content.Contains("montant de", StringComparison.OrdinalIgnoreCase)
             && msg.Content.Contains("reçu", StringComparison.OrdinalIgnoreCase))
             return true;

@@ -27,4 +27,8 @@
     <NuGetAudit>false</NuGetAudit>
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="FocusGate.Tests" />
+  </ItemGroup>
+
 </Project>
