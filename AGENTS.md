@@ -102,10 +102,15 @@ npm start        # Production server
 - **MongoDB pull uses in-memory matching** — Loads local records by ID list, matches in Dictionary. EF Core can't translate `Func<T, object>` in LINQ expressions (CS1963).
 - **MongoDB collection names are ALL lowercase** — .NET `FocusGateMongoClient.cs` uses `"modems"`, `"simcards"`, etc. Next.js Mongoose models must match.
 - **MongoDB `_id` is Number (long)** — NOT ObjectId. `BsonClassMap.MapIdMember(m => m.Id)` maps C# `long Id` to MongoDB `_id`.
-- **Balance architecture:** SMS from Mobilis is a TRIGGER only. Never parse amounts from SMS text. `*222#` USSD is the single source of truth for `SimCard.Balance`.
+- **Balance architecture:** Two sources for balance tracking:
+  - `*222#` USSD → primary source. Credits user on increase. Creates BalanceHistory (Source=USSD).
+  - "Solde" SMS → fallback when *222# returns "processing". Updates `sim.Balance` + BalanceHistory (Source=SMS). Only credits user if `_pendingBalanceChecks` flag was set (within 2 minutes).
+  - **Pending flag:** When *222# returns "processing", `MarkPendingBalanceCheck(modemId)` is called. When "Solde" SMS arrives, `TryClaimPendingBalanceCheck(modemId)` gates the user credit. This prevents double-crediting and avoids crediting old startup SMS.
+  - Never parse amounts from SMS text for crediting — only `*222#` or pending-flagged "Solde" SMS credit the user.
 - **MachineId:** Each machine has a unique ID from `MachineInfoService`. Dev machine: `d26b1c221259fb12`. Client (BERRAR): `419c0cfc97666753`.
 - **HTMX in Dashboard:** POST handlers must use `Response.Headers["HX-Redirect"]` + `return new EmptyResult()` — NOT `RedirectToPage()`. `_ViewStart.cshtml` sets `Layout = null` for `HX-Request` header.
 - **Dashboard DI:** Uses `AddFocusGateDashboard()` (lightweight — no MongoSync, no ConsoleCommandHandler, no RestartService).
+- **Dashboard timezone:** Use `.ToDisplayTime(Config)` extension (NOT `.ToLocalTime()`). Reads `display.timezone_offset_hours` from config; if empty, falls back to `TimeZoneInfo.FindSystemTimeZoneById("Africa/Algiers")`.
 - **Safe shutdown:** `writeChannel.CompleteAsync()` in `ApplicationStopped` (after host.RunAsync returns). Dashboard process tracked and killed in `ApplicationStopped`.
 
 ### Next.js
@@ -159,11 +164,11 @@ Scan Cycle (30s): probe for new modems → orphan check for missing modems
 ### Mobilis SMS Trigger
 
 ```
-When recharge/transfer SMS from "Mobilis" or "77111" detected:
-  → Parse "Solde" from SMS content
+When recharge/transfer SMS from "Mobilis" or "77111" detected (contains "montant de" + "reçu"):
   → *222# USSD to confirm real balance
-  → Update SimCard.Balance + BalanceHistory
-  → Credit user balance if increase detected
+  → If *222# returns balance: credit user + create BalanceHistory (Source=USSD)
+  → If *222# returns "processing": set pending flag, wait for "Solde" SMS
+  → When "Solde" SMS arrives with pending flag: credit user + create BalanceHistory (Source=SMS)
 ```
 
 ### Key: `*222#` Only Fires At
@@ -288,6 +293,14 @@ BackgroundService. Bidirectional sync every 30s:
 - **Deploy:** Copy `dist\hilink\*` to client PC, run `FocusGate.HiLink.exe`
 - **Database reset:** Delete `focusgate.db` + `-shm` + `-wal` files, restart to re-seed `admin:admin`
 
+### Client PC (Alaafi)
+
+- **MachineId:** `fb96ac5207011ae1`
+- **Data path:** `C:\Users\DELL\AppData\Roaming\FocusGate\`
+- **Content root:** `C:\Users\DELL\Documents\alaafi\`
+- **Deploy:** Copy `dist\alaafi\*` to content root, run `FocusGate.HiLink.exe`
+- **Database reset:** Delete `focusgate.db` + `-shm` + `-wal` files, restart to re-seed `admin:admin`
+
 ### Mutexes & Pipes
 
 - `Global\FocusGate_HiLink` — prevents duplicate HiLink instances
@@ -307,3 +320,15 @@ BackgroundService. Bidirectional sync every 30s:
 - **SendUssdAsync on HiLink** sends `POST /api/ussd/send` then polls `GET /api/ussd/get` every 2s
 - **125002 error** means SMS inbox full — DeleteAllSmsAsync falls back to index-based deletion (1-50)
 - **Session refresh failure** clears _sessionCookie, _csrfToken, sets _isOpen=false — forces clean re-handshake
+
+## Config Keys (config.json)
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `modem.timezone_offset_hours` | `1` | UTC offset for modem date parsing (Algeria = UTC+1) |
+| `display.timezone_offset_hours` | `""` (empty = use Algeria TZ) | Override display timezone. Empty = use `Africa/Algiers` |
+| `modem.max_count` | `15` | Maximum modems per orchestrator |
+| `modem.ussd.balance_code` | `*222#` | USSD code for balance check |
+| `modem.ussd.phone_code` | `*101#` | USSD code for phone number |
+| `mongodb.uri` | (cluster URI) | MongoDB Atlas connection string |
+| `mongodb.database` | `focusgate` | MongoDB database name |

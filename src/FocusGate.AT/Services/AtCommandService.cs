@@ -372,12 +372,16 @@ public partial class AtCommandService : IAtCommandService
                     content = DecodeSmsContent(rawHex);
                 }
 
+                // Parse SCTS timestamp from modem; fall back to DateTime.UtcNow
+                var tzOffset = _config.Get<int>("modem.timezone_offset_hours", 1);
+                var receivedAt = ParseSctsTimestamp(cmglParts.Value.Scts ?? "", tzOffset) ?? DateTime.UtcNow;
+
                 var msg = new RawSmsMessage
                 {
                     Index = cmglParts.Value.Index,
                     Status = cmglParts.Value.Status,
                     Sender = cmglParts.Value.Sender,
-                    ReceivedAt = DateTime.UtcNow,
+                    ReceivedAt = receivedAt,
                     Content = content
                 };
 
@@ -535,9 +539,10 @@ public partial class AtCommandService : IAtCommandService
         return false;
     }
 
-    private static (int Index, string Status, string Sender)? ParseCmglLine(string line)
+    private static (int Index, string Status, string Sender, string? Scts)? ParseCmglLine(string line)
     {
         // Format: +CMGL: <index>,<status>,"<sender>",[<alpha>],[<scts>]
+        // scts format: "yy/MM/dd,HH:mm:ss+/-zz" (zz = timezone in quarter hours)
         var trimmed = line.Trim();
         if (!trimmed.StartsWith("+CMGL:")) return null;
 
@@ -551,7 +556,77 @@ public partial class AtCommandService : IAtCommandService
         var status = fields[1].Trim().Trim('"');
         var sender = fields[2].Trim().Trim('"');
 
-        return (index, status, sender);
+        // SCTS is typically at field[4] (after alpha at field[3]), but may also be at field[3] if alpha is empty
+        string? scts = null;
+        if (fields.Count >= 5)
+            scts = fields[4].Trim().Trim('"');
+        else if (fields.Count >= 4)
+        {
+            var candidate = fields[3].Trim().Trim('"');
+            if (candidate.Contains('/') && candidate.Contains(':'))
+                scts = candidate;
+        }
+
+        return (index, status, sender, scts);
+    }
+
+    private static DateTime? ParseSctsTimestamp(string scts, int tzOffsetHours)
+    {
+        // Format: "yy/MM/dd,HH:mm:ss" or "yy/MM/dd,HH:mm:ss+/-zz" (zz in quarter hours)
+        try
+        {
+            var trimmed = scts.Trim();
+
+            // Split date and time by comma
+            var commaIdx = trimmed.IndexOf(',');
+            if (commaIdx < 0) return null;
+
+            var datePart = trimmed[..commaIdx].Trim();
+            var timePart = trimmed[(commaIdx + 1)..].Trim();
+
+            // Parse date: yy/MM/dd
+            var dateParts = datePart.Split('/');
+            if (dateParts.Length != 3) return null;
+            if (!int.TryParse(dateParts[0], out var yy)) return null;
+            if (!int.TryParse(dateParts[1], out var MM)) return null;
+            if (!int.TryParse(dateParts[2], out var dd)) return null;
+            var year = yy < 100 ? 2000 + yy : yy;
+
+            // Check for timezone in time part: HH:mm:ss+/-zz
+            int modemTzQuarterHours = 0;
+            var timeStr = timePart;
+            var tzSep = timePart.LastIndexOfAny(['+', '-']);
+            if (tzSep > 0 && int.TryParse(timePart[(tzSep + 1)..], out var qh))
+            {
+                modemTzQuarterHours = timePart[tzSep] == '+' ? qh : -qh;
+                timeStr = timePart[..tzSep];
+            }
+
+            var timeParts = timeStr.Split(':');
+            if (timeParts.Length < 3) return null;
+            if (!int.TryParse(timeParts[0], out var hh)) return null;
+            if (!int.TryParse(timeParts[1], out var mm)) return null;
+            if (!int.TryParse(timeParts[2], out var ss)) return null;
+
+            var dt = new DateTime(year, MM, dd, hh, mm, ss, DateTimeKind.Utc);
+
+            // If modem provided its own timezone, use that; otherwise use config offset
+            if (modemTzQuarterHours != 0)
+            {
+                var modemOffsetHours = modemTzQuarterHours / 4.0;
+                dt = dt.AddHours(-modemOffsetHours);
+            }
+            else if (tzOffsetHours != 0)
+            {
+                dt = dt.AddHours(-tzOffsetHours);
+            }
+
+            return dt;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static List<string> SplitCmglFields(string text)

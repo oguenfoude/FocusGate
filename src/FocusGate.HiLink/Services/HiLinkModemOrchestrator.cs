@@ -13,7 +13,7 @@ namespace FocusGate.HiLink.Services;
 
 public class HiLinkModemOrchestrator : BackgroundService
 {
-    private const int MaxModems = 15;
+    private readonly int _maxModems;
     private readonly IServiceProvider _services;
     private readonly DatabaseWriteChannel _db;
     private readonly ILogger<HiLinkModemOrchestrator> _log;
@@ -22,6 +22,7 @@ public class HiLinkModemOrchestrator : BackgroundService
     private readonly ConcurrentDictionary<string, byte> _activeImeis = new();
     private readonly ConcurrentDictionary<string, int> _blacklistedIps = new();
     private readonly HashSet<string> _knownModemIps = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _noSimIps = new(StringComparer.OrdinalIgnoreCase);
     private const int MaxIpFailures = 3;
 
     public HiLinkModemOrchestrator(IServiceProvider services, DatabaseWriteChannel db,
@@ -31,6 +32,7 @@ public class HiLinkModemOrchestrator : BackgroundService
         _db = db;
         _log = log;
         _config = config;
+        _maxModems = _config.Get("modem.max_count", 15);
     }
 
     protected override async Task ExecuteAsync(CancellationToken ct)
@@ -42,7 +44,7 @@ public class HiLinkModemOrchestrator : BackgroundService
             return;
         }
 
-        _log.LogInformation("HiLink Orchestrator ready (max {Max} modems)", MaxModems);
+        _log.LogInformation("HiLink Orchestrator ready (max {Max} modems)", _maxModems);
 
         while (!ct.IsCancellationRequested)
         {
@@ -94,7 +96,7 @@ public class HiLinkModemOrchestrator : BackgroundService
 
         bool startedNewHandlers = false;
 
-        if (_handlers.Count >= MaxModems) return;
+        if (_handlers.Count >= _maxModems) return;
 
         var ipsRaw = _config.Get("hilink.scan_ips", "");
         string[] discoveredIps;
@@ -118,6 +120,7 @@ public class HiLinkModemOrchestrator : BackgroundService
         var toScan = allIps.Where(ip =>
         {
             if (_handlers.ContainsKey(ip)) return false;
+            if (_noSimIps.Contains(ip)) return false;
 
             if (_blacklistedIps.TryGetValue(ip, out var failCount))
             {
@@ -177,7 +180,7 @@ public class HiLinkModemOrchestrator : BackgroundService
 
         foreach (var device in devices)
         {
-            if (_handlers.Count >= MaxModems) break;
+            if (_handlers.Count >= _maxModems) break;
 
             if (!string.IsNullOrEmpty(device.Imei) && _activeImeis.ContainsKey(device.Imei))
             {
@@ -259,7 +262,8 @@ public class HiLinkModemOrchestrator : BackgroundService
                         {
                             _activeImeis.TryRemove(imei, out _);
                             _handlers.TryRemove(device.Ip, out _);
-                            _log.LogWarning("{Ip}: Handler StartAsync returned false — setting modem Offline", device.Ip);
+                            _noSimIps.Add(device.Ip);
+                            _log.LogWarning("{Ip}: Handler StartAsync returned false (no SIM) — will skip in future scans", device.Ip);
                             try { handler.Dispose(); } catch { }
                             try { await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.UpdateModemStatus, Data = new { ModemId = capturedModemId, Status = ModemStatus.Offline } }); } catch { }
                         }

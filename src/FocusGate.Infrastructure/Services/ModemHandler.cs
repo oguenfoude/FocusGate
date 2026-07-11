@@ -282,7 +282,8 @@ public class ModemHandler : IDisposable
         }
         else
         {
-            _log.LogInformation("Modem {Id}: *222# returned processing message — balance will arrive via SMS shortly", _modemId);
+            _db.MarkPendingBalanceCheck(_modemId);
+            _log.LogInformation("Modem {Id}: *222# returned processing — pending balance check set, waiting for Solde SMS", _modemId);
         }
     }
 
@@ -514,8 +515,12 @@ public class ModemHandler : IDisposable
     private static bool IsMobilisBalanceTrigger(RawSmsMessage msg)
     {
         if (msg.Sender != "Mobilis" && msg.Sender != "77111" && msg.Sender != "610") return false;
-        return msg.Content.Contains("montant de", StringComparison.OrdinalIgnoreCase)
-            && msg.Content.Contains("reçu", StringComparison.OrdinalIgnoreCase);
+        if (msg.Content.Contains("montant de", StringComparison.OrdinalIgnoreCase)
+            && msg.Content.Contains("reçu", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (msg.Content.Contains("rechargé", StringComparison.OrdinalIgnoreCase))
+            return true;
+        return false;
     }
 
     private async Task TryGetPhoneAndBalanceAsync(CancellationToken ct)
@@ -564,7 +569,8 @@ public class ModemHandler : IDisposable
         }
         else
         {
-            _log.LogInformation("Modem {Id}: *222# returned no balance — balance will arrive via SMS if recharge was made", _modemId);
+            _db.MarkPendingBalanceCheck(_modemId);
+            _log.LogInformation("Modem {Id}: *222# returned no balance — pending balance check set", _modemId);
         }
     }
 

@@ -1,8 +1,10 @@
+@using FocusGate.Core.Interfaces
 @using FocusGate.Core.Models
 @using FocusGate.Dashboard
 @using FocusGate.Dashboard.Resources
 @using Microsoft.AspNetCore.Localization
 @using Microsoft.Extensions.Localization
 @inject IStringLocalizer<SharedResource> L
+@inject IConfigProvider Config
 @namespace FocusGate.Dashboard.Pages
 @addTagHelper *, Microsoft.AspNetCore.Mvc.TagHelpers

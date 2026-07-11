@@ -85,7 +85,7 @@ else
                             </div>
                             <div>
                                 <dt class="text-[11px] text-gray-400 uppercase tracking-wider font-medium">@L["Common.Created"]</dt>
-                                <dd class="text-sm font-medium mt-1">@Model.Modem.CreatedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</dd>
+                                <dd class="text-sm font-medium mt-1">@Model.Modem.CreatedAt.ToDisplayTime(Config).ToString("dd/MM/yyyy HH:mm")</dd>
                             </div>
                             <div class="col-span-2">
                                 <dt class="text-[11px] text-gray-400 uppercase tracking-wider font-medium">@L["ModemDetail.MachineId"]</dt>
@@ -119,11 +119,11 @@ else
                                 </div>
                                 <div class="flex justify-between">
                                     <dt class="text-gray-400">@L["ModemDetail.FirstSeen"]</dt>
-                                    <dd class="text-xs">@Model.Sim.FirstSeen.ToLocalTime().ToString("dd/MM/yyyy")</dd>
+                                    <dd class="text-xs">@Model.Sim.FirstSeen.ToDisplayTime(Config).ToString("dd/MM/yyyy")</dd>
                                 </div>
                                 <div class="flex justify-between">
                                     <dt class="text-gray-400">@L["Modems.LastSeen"]</dt>
-                                    <dd class="text-xs">@Model.Sim.LastSeen.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</dd>
+                                    <dd class="text-xs">@Model.Sim.LastSeen.ToDisplayTime(Config).ToString("dd/MM/yyyy HH:mm")</dd>
                                 </div>
                             </dl>
 
@@ -179,7 +179,7 @@ else
                                     <div class="flex-1 min-w-0">
                                         <div class="flex items-baseline justify-between">
                                             <span class="font-semibold text-sm">@b.Balance.ToString("N2") DA</span>
-                                            <span class="text-gray-400 text-[11px]">@b.RecordedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</span>
+                                            <span class="text-gray-400 text-[11px]">@b.RecordedAt.ToDisplayTime(Config).ToString("dd/MM/yyyy HH:mm")</span>
                                         </div>
                                         <p class="text-xs text-gray-400 mt-0.5">
                                             @b.Source
@@ -226,7 +226,7 @@ else
                                             <div class="flex items-center gap-2 mb-1">
                                                 <span class="text-sm font-semibold text-gray-900">@sms.SenderNumber</span>
                                                 <span class="text-[10px] text-gray-300">&middot;</span>
-                                                <span class="text-[11px] text-gray-400">@sms.ReceivedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</span>
+                                                <span class="text-[11px] text-gray-400">@sms.ReceivedAt.ToDisplayTime(Config).ToString("dd/MM/yyyy HH:mm")</span>
                                             </div>
                                             <p class="text-sm text-gray-600 leading-relaxed">@sms.Content</p>
                                         </div>

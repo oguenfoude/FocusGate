@@ -78,9 +78,9 @@
                                         <span class="badge badge-danger">✕ @L["Withdrawals.Rejected"]</span>
                                     }
                                 </td>
-                                <td class="px-4 py-3.5 text-xs text-gray-400 whitespace-nowrap">@r.RequestedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</td>
+<td class="px-4 py-3.5 text-xs text-gray-400 whitespace-nowrap">@r.RequestedAt.ToDisplayTime(Config).ToString("dd/MM/yyyy HH:mm")</td>
                                 <td class="px-4 py-3.5 text-xs text-gray-400 whitespace-nowrap">
-                                    @(r.ProcessedAt?.ToLocalTime().ToString("dd/MM/yyyy HH:mm") ?? "—")
+                                    @(r.ProcessedAt?.ToDisplayTime(Config).ToString("dd/MM/yyyy HH:mm") ?? "—")
                                 </td>
                                 <td class="px-4 py-3.5 text-xs text-gray-400 max-w-[160px] truncate" title="@r.Note">@(r.Note ?? "—")</td>
                                 <td class="px-4 py-3.5 text-right">

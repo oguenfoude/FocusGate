@@ -412,7 +412,7 @@ public partial class HiLinkCommandService : IAtCommandService
                     dt = DateTime.UtcNow;
                 else
                 {
-                    var tzOffset = _config.Get<int>("modem.timezone_offset_hours", 0);
+                    var tzOffset = _config.Get<int>("modem.timezone_offset_hours", 1);
                     if (tzOffset != 0)
                         dt = dt.AddHours(-tzOffset);
                     dt = DateTime.SpecifyKind(dt, DateTimeKind.Utc);

@@ -14,7 +14,7 @@ namespace FocusGate.AT.Services;
 
 public class AtModemOrchestrator : BackgroundService
 {
-    private const int MaxModems = 15;
+    private readonly int _maxModems;
     private readonly IServiceProvider _services;
     private readonly DatabaseWriteChannel _db;
     private readonly ILogger<AtModemOrchestrator> _log;
@@ -30,6 +30,7 @@ public class AtModemOrchestrator : BackgroundService
         _db = db;
         _log = log;
         _config = config;
+        _maxModems = _config.Get("modem.max_count", 15);
     }
 
     protected override async Task ExecuteAsync(CancellationToken ct)
@@ -41,7 +42,7 @@ public class AtModemOrchestrator : BackgroundService
             return;
         }
 
-        _log.LogInformation("AT Orchestrator started (max {Max} modems)", MaxModems);
+        _log.LogInformation("AT Orchestrator started (max {Max} modems)", _maxModems);
 
         while (!ct.IsCancellationRequested)
         {
@@ -71,7 +72,7 @@ public class AtModemOrchestrator : BackgroundService
 
     private async Task ScanAsync(CancellationToken ct)
     {
-        if (_handlers.Count >= MaxModems) return;
+        if (_handlers.Count >= _maxModems) return;
 
         var ports = SerialPort.GetPortNames();
 
@@ -90,7 +91,7 @@ public class AtModemOrchestrator : BackgroundService
         foreach (var key in _failedPorts.Keys.Where(k => !currentPorts.Contains(k)).ToList())
             _failedPorts.TryRemove(key, out _);
 
-        var toProbe = ports.Where(p => !_handlers.ContainsKey(p) && !_failedPorts.ContainsKey(p) && _handlers.Count < MaxModems).ToList();
+        var toProbe = ports.Where(p => !_handlers.ContainsKey(p) && !_failedPorts.ContainsKey(p) && _handlers.Count < _maxModems).ToList();
         if (toProbe.Count == 0) return;
 
         var probes = toProbe.Select(p => (Port: p, Task: ProbeAsync(p, ct))).ToList();
@@ -99,7 +100,7 @@ public class AtModemOrchestrator : BackgroundService
 
         foreach (var (port, task) in probes)
         {
-            if (_handlers.Count >= MaxModems) break;
+            if (_handlers.Count >= _maxModems) break;
             if (!task.IsCompletedSuccessfully) continue;
 
             var (handler, imei, modemId) = task.Result;

@@ -145,7 +145,7 @@
                                 </td>
                                 <!-- Last Seen -->
                                 <td class="px-4 py-3.5 text-xs text-gray-400 whitespace-nowrap">
-                                    @m.LastSeen.ToLocalTime().ToString("dd/MM/yyyy HH:mm")
+                                    @m.LastSeen.ToDisplayTime(Config).ToString("dd/MM/yyyy HH:mm")
                                 </td>
                                 <!-- Actions -->
                                 <td class="px-4 py-3.5 text-right" onclick="event.stopPropagation()">

@@ -33,7 +33,7 @@ else
                         <span class="badge badge-gray">@L["Users.Archived"]</span>
                     }
                 </div>
-                <p class="text-xs text-gray-400 mt-1">@Model.User.DisplayName &middot; @L["UserDetail.Since"] @Model.User.CreatedAt.ToLocalTime().ToString("dd/MM/yyyy")</p>
+                <p class="text-xs text-gray-400 mt-1">@Model.User.DisplayName &middot; @L["UserDetail.Since"] @Model.User.CreatedAt.ToDisplayTime(Config).ToString("dd/MM/yyyy")</p>
             </div>
             <div class="flex items-center gap-3 flex-shrink-0">
                 @if (Model.User.Role != FocusGate.Core.Enums.UserRole.Admin)
@@ -172,7 +172,7 @@ else
                                 @foreach (var b in Model.BalanceHistory)
                                 {
                                     <tr class="table-row">
-                                        <td class="px-5 py-3 text-gray-400 text-xs whitespace-nowrap">@b.RecordedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</td>
+                                        <td class="px-5 py-3 text-gray-400 text-xs whitespace-nowrap">@b.RecordedAt.ToDisplayTime(Config).ToString("dd/MM/yyyy HH:mm")</td>
                                         <td class="px-5 py-3">
                                             <span class="badge @(b.Type == 0 ? "badge-success" : "badge-danger")">
                                                 @(b.Type == 0 ? L["UserDetail.Credit"] : L["UserDetail.Withdrawal"])
@@ -224,7 +224,7 @@ else
                                 @foreach (var sms in Model.SmsMessages)
                                 {
                                     <tr class="table-row">
-                                        <td class="px-5 py-3 text-gray-400 text-xs whitespace-nowrap">@sms.ReceivedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</td>
+                                        <td class="px-5 py-3 text-gray-400 text-xs whitespace-nowrap">@sms.ReceivedAt.ToDisplayTime(Config).ToString("dd/MM/yyyy HH:mm")</td>
                                         <td class="px-5 py-3">
                                             <div class="flex items-center gap-2">
                                                 <div class="w-7 h-7 bg-gray-100 rounded-full flex items-center justify-center text-[10px] font-bold text-gray-500 flex-shrink-0">
