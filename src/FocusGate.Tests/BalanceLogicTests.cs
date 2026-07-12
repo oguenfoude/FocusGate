@@ -423,6 +423,45 @@ public class BalanceLogicTests
 
     #endregion
 
+    #region ExtractTimestampFromContent
+
+    [Theory]
+    [InlineData("Vous avez rechargé 1800.00 DZD DA avec succès le 11/07/2026 23:02:42.", 2026, 7, 11, 22, 2, 42)]
+    [InlineData("Vous avez rechargé 1500.00 DZD DA avec succès le 11/07/2026 22:54:59.", 2026, 7, 11, 21, 54, 59)]
+    [InlineData("Vous avez rechargé 600.00 DZD DA avec succès le 11/07/2026 22:15:03.", 2026, 7, 11, 21, 15, 3)]
+    [InlineData("Vous avez rechargé 100.00 DZD DA avec succès le 11/07/2026 22:09:31.", 2026, 7, 11, 21, 9, 31)]
+    [InlineData("Vous avez rechargé 4990.00 DZD DA avec succès le 11/07/2026 21:50:09.", 2026, 7, 11, 20, 50, 9)]
+    [InlineData("Vous avez rechargé 1120.00 DZD DA avec succès le 11/07/2026 21:54:55.", 2026, 7, 11, 20, 54, 55)]
+    public void ExtractTimestampFromContent_RechargeSms_ReturnsUtcCorrectly(
+        string content, int y, int m, int d, int h, int mn, int s)
+    {
+        var result = HiLinkCommandService.ExtractTimestampFromContent(content);
+        Assert.NotNull(result);
+        Assert.Equal(new DateTime(y, m, d, h, mn, s, DateTimeKind.Utc), result);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("Votre offre a expiré")]
+    [InlineData("Solde de votre compte: 5000 DZD")]
+    [InlineData("Sama, Solde 15.868,06DA")]
+    [InlineData("Test message")]
+    public void ExtractTimestampFromContent_NoTimestamp_ReturnsNull(string content)
+    {
+        Assert.Null(HiLinkCommandService.ExtractTimestampFromContent(content));
+    }
+
+    [Fact]
+    public void ExtractTimestampFromContent_MidnightBoundary_ReturnsCorrectUtc()
+    {
+        var result = HiLinkCommandService.ExtractTimestampFromContent(
+            "Vous avez rechargé 500.00 DZD DA avec succès le 01/01/2027 00:30:00.");
+        Assert.NotNull(result);
+        Assert.Equal(new DateTime(2026, 12, 31, 23, 30, 0, DateTimeKind.Utc), result);
+    }
+
+    #endregion
+
     #region Helpers
 
     private static DatabaseWriteChannel CreateDatabaseWriteChannel()

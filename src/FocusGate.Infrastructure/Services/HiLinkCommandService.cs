@@ -418,6 +418,10 @@ public partial class HiLinkCommandService : IAtCommandService
                     dt = DateTime.SpecifyKind(dt, DateTimeKind.Utc);
                 }
 
+                var contentTime = ExtractTimestampFromContent(content);
+                if (contentTime.HasValue)
+                    dt = contentTime.Value;
+
                 messages.Add(new RawSmsMessage
                 {
                     Index = idx,
@@ -722,6 +726,28 @@ public partial class HiLinkCommandService : IAtCommandService
 
         request.Headers.Add("X-Requested-With", "XMLHttpRequest");
     }
+
+    internal static DateTime? ExtractTimestampFromContent(string content)
+    {
+        if (string.IsNullOrEmpty(content)) return null;
+        var match = ContentTimestampRegex().Match(content);
+        if (!match.Success) return null;
+        if (!int.TryParse(match.Groups[1].Value, out var dd)) return null;
+        if (!int.TryParse(match.Groups[2].Value, out var mm)) return null;
+        if (!int.TryParse(match.Groups[3].Value, out var yyyy)) return null;
+        if (!int.TryParse(match.Groups[4].Value, out var hh)) return null;
+        if (!int.TryParse(match.Groups[5].Value, out var mnn)) return null;
+        if (!int.TryParse(match.Groups[6].Value, out var ss)) return null;
+        if (yyyy < 2000 || yyyy > 2099 || mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
+        if (hh > 23 || mnn > 59 || ss > 59) return null;
+        var local = new DateTime(yyyy, mm, dd, hh, mnn, ss, DateTimeKind.Unspecified);
+        var algeriaTz = TimeZoneInfo.FindSystemTimeZoneById("Africa/Algiers");
+        var utc = TimeZoneInfo.ConvertTimeToUtc(local, algeriaTz);
+        return utc;
+    }
+
+    [GeneratedRegex(@"le\s+(\d{1,2})/(\d{1,2})/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})")]
+    private static partial Regex ContentTimestampRegex();
 
     [GeneratedRegex(@"(\d[\d.,]+)")]
     private static partial Regex BalanceRegex();
