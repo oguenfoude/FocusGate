@@ -10,6 +10,19 @@ using Microsoft.Extensions.Logging;
 using Serilog;
 using Serilog.Events;
 
+AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+{
+    var ex = e.ExceptionObject as Exception;
+    Console.WriteLine($"[FATAL] Unhandled exception: {ex?.Message ?? e.ExceptionObject.ToString()}");
+    Console.WriteLine($"[FATAL] Terminating: {e.IsTerminating}");
+};
+
+TaskScheduler.UnobservedTaskException += (_, e) =>
+{
+    Console.WriteLine($"[ERROR] Unobserved task exception: {e.Exception.Message}");
+    e.SetObserved();
+};
+
 System.Diagnostics.Process? dashboardProcess = null;
 
 Console.CancelKeyPress += (_, e) =>
@@ -36,110 +49,136 @@ if (!createdNew)
     await Task.Delay(2000);
     return;
 }
+
 try
 {
+    var dataDir = PathService.DataDirectory;
+    Directory.CreateDirectory(dataDir);
+    Directory.CreateDirectory(PathService.LogsDirectory);
 
-var dataDir = PathService.DataDirectory;
-Directory.CreateDirectory(dataDir);
-Directory.CreateDirectory(PathService.LogsDirectory);
+    var configPath = PathService.ConfigPath;
+    ConfigMerger.EnsureConfig(configPath);
 
-var configPath = PathService.ConfigPath;
-ConfigMerger.EnsureConfig(configPath);
+    const int maxRestarts = 5;
+    int restartCount = 0;
 
-DatabaseWriteChannel? writeChannel = null;
-
-var host = Host.CreateDefaultBuilder(args)
-    .UseContentRoot(AppContext.BaseDirectory)
-    .ConfigureAppConfiguration((ctx, cfg) =>
+    while (true)
     {
-        if (File.Exists(configPath))
+        DatabaseWriteChannel? writeChannel = null;
+
+        try
         {
-            cfg.AddJsonFile(configPath, optional: true, reloadOnChange: false);
+            var host = Host.CreateDefaultBuilder(args)
+                .UseContentRoot(AppContext.BaseDirectory)
+                .ConfigureAppConfiguration((ctx, cfg) =>
+                {
+                    if (File.Exists(configPath))
+                    {
+                        cfg.AddJsonFile(configPath, optional: true, reloadOnChange: false);
+                    }
+                })
+                .UseSerilog((ctx, lc) => lc
+                    .MinimumLevel.Information()
+                    .MinimumLevel.Override("Microsoft.EntityFrameworkCore.Database.Command", Serilog.Events.LogEventLevel.Warning)
+                    .MinimumLevel.Override("Microsoft.EntityFrameworkCore", Serilog.Events.LogEventLevel.Warning)
+                    .MinimumLevel.Override("MongoDB", Serilog.Events.LogEventLevel.Warning)
+                    .WriteTo.Console()
+                    .WriteTo.File(Path.Combine(PathService.LogsDirectory, "focusgate-hilink-.log"),
+                        rollingInterval: RollingInterval.Day,
+                        retainedFileCountLimit: 30))
+                .ConfigureServices((ctx, services) =>
+                {
+                    services.AddFocusGate(ctx.Configuration, dataDir);
+                    services.AddSingleton<HiLinkModemOrchestrator>();
+                    services.AddHostedService(sp => sp.GetRequiredService<HiLinkModemOrchestrator>());
+                })
+                .Build();
+
+            using var scope = host.Services.CreateScope();
+            var context = scope.ServiceProvider.GetRequiredService<FocusGateDbContext>();
+            var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+            var machineInfo = scope.ServiceProvider.GetRequiredService<MachineInfoService>();
+
+            DatabaseInitializer.Initialize(context, logger);
+
+            var machineIdConfig = host.Services.GetRequiredService<IConfiguration>()["machine.id"] ?? "";
+            context.MachineId = string.IsNullOrEmpty(machineIdConfig) ? machineInfo.MachineId : machineIdConfig;
+
+            if (string.IsNullOrEmpty(machineIdConfig))
+            {
+                PersistMachineId(configPath, context.MachineId);
+                logger.LogInformation("MachineId persisted to config: {Machine}", context.MachineId);
+            }
+
+            writeChannel = scope.ServiceProvider.GetRequiredService<DatabaseWriteChannel>();
+            linkedCts = CancellationTokenSource.CreateLinkedTokenSource(appCts.Token);
+            writeChannel.Start(linkedCts.Token);
+
+            Console.WriteLine();
+            Console.WriteLine("  ┌─────────────────────────────────────────┐");
+            Console.WriteLine("  │       FocusGate HiLink Gateway           │");
+            Console.WriteLine("  └─────────────────────────────────────────┘");
+            Console.WriteLine();
+            Console.WriteLine($"  Machine  : {context.MachineId}");
+            Console.WriteLine($"  Database : {PathService.DatabasePath}");
+            Console.WriteLine($"  Config   : {configPath}");
+            Console.WriteLine();
+            Console.WriteLine("  Commands: help, status, modems, exit");
+            Console.WriteLine();
+
+            dashboardProcess = StartDashboard();
+            if (dashboardProcess != null)
+                Console.WriteLine("  Dashboard: http://localhost:5080");
+
+            logger.LogInformation("FocusGate HiLink started | DB: {DbPath} | Machine: {Machine}",
+                PathService.DatabasePath, context.MachineId);
+
+            if (restartCount > 0)
+                logger.LogWarning("Auto-restart attempt {Count}/{Max}", restartCount, maxRestarts);
+
+            var lifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
+            lifetime.ApplicationStopping.Register(() =>
+            {
+                linkedCts?.Cancel();
+            });
+
+            lifetime.ApplicationStopped.Register(() =>
+            {
+                if (dashboardProcess != null && !dashboardProcess.HasExited)
+                {
+                    try { dashboardProcess.Kill(); dashboardProcess.WaitForExit(3000); } catch { }
+                }
+            });
+
+            await host.RunAsync();
+
+            try { writeChannel?.CompleteAsync().GetAwaiter().GetResult(); }
+            catch { }
+            linkedCts?.Cancel();
+            linkedCts?.Dispose();
+
+            break;
         }
-    })
-    .UseSerilog((ctx, lc) => lc
-        .MinimumLevel.Information()
-        .MinimumLevel.Override("Microsoft.EntityFrameworkCore.Database.Command", Serilog.Events.LogEventLevel.Warning)
-        .MinimumLevel.Override("Microsoft.EntityFrameworkCore", Serilog.Events.LogEventLevel.Warning)
-        .MinimumLevel.Override("MongoDB", Serilog.Events.LogEventLevel.Warning)
-        .WriteTo.Console()
-        .WriteTo.File(Path.Combine(PathService.LogsDirectory, "focusgate-hilink-.log"),
-            rollingInterval: RollingInterval.Day,
-            retainedFileCountLimit: 30))
-    .ConfigureServices((ctx, services) =>
-    {
-        services.AddFocusGate(ctx.Configuration, dataDir);
-        services.AddSingleton<HiLinkModemOrchestrator>();
-        services.AddHostedService(sp => sp.GetRequiredService<HiLinkModemOrchestrator>());
-    })
-    .Build();
+        catch (Exception ex)
+        {
+            try { linkedCts?.Cancel(); } catch { }
+            try { linkedCts?.Dispose(); } catch { }
 
-using var scope = host.Services.CreateScope();
-var context = scope.ServiceProvider.GetRequiredService<FocusGateDbContext>();
-var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
-var machineInfo = scope.ServiceProvider.GetRequiredService<MachineInfoService>();
+            restartCount++;
+            if (restartCount >= maxRestarts)
+            {
+                ShowErrorDialog("FocusGate HiLink - Fatal Error",
+                    $"Process crashed {maxRestarts} times. Giving up.\n\n{ex.Message}\n\n{ex.InnerException?.Message}");
+                break;
+            }
 
-try
-{
-    DatabaseInitializer.Initialize(context, logger);
-
-    var machineIdConfig = host.Services.GetRequiredService<IConfiguration>()["machine.id"] ?? "";
-    context.MachineId = string.IsNullOrEmpty(machineIdConfig) ? machineInfo.MachineId : machineIdConfig;
-
-    if (string.IsNullOrEmpty(machineIdConfig))
-    {
-        PersistMachineId(configPath, context.MachineId);
-        logger.LogInformation("MachineId persisted to config: {Machine}", context.MachineId);
+            Console.WriteLine();
+            Console.WriteLine($"[!] Process error: {ex.Message}");
+            Console.WriteLine($"    Restarting in 5 seconds... ({restartCount}/{maxRestarts})");
+            Console.WriteLine();
+            await Task.Delay(5000);
+        }
     }
-
-    writeChannel = scope.ServiceProvider.GetRequiredService<DatabaseWriteChannel>();
-    linkedCts = CancellationTokenSource.CreateLinkedTokenSource(appCts.Token);
-    writeChannel.Start(linkedCts.Token);
-
-    Console.WriteLine();
-    Console.WriteLine("  ┌─────────────────────────────────────────┐");
-    Console.WriteLine("  │       FocusGate HiLink Gateway           │");
-    Console.WriteLine("  └─────────────────────────────────────────┘");
-    Console.WriteLine();
-    Console.WriteLine($"  Machine  : {context.MachineId}");
-    Console.WriteLine($"  Database : {PathService.DatabasePath}");
-    Console.WriteLine($"  Config   : {configPath}");
-    Console.WriteLine();
-    Console.WriteLine("  Commands: help, status, modems, exit");
-    Console.WriteLine();
-
-    dashboardProcess = StartDashboard();
-    if (dashboardProcess != null)
-        Console.WriteLine("  Dashboard: http://localhost:5080");
-
-    logger.LogInformation("FocusGate HiLink started | DB: {DbPath} | Machine: {Machine}",
-        PathService.DatabasePath, context.MachineId);
-
-    var lifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
-    lifetime.ApplicationStopping.Register(() =>
-    {
-        linkedCts?.Cancel();
-    });
-
-    lifetime.ApplicationStopped.Register(() =>
-    {
-        if (dashboardProcess != null && !dashboardProcess.HasExited)
-        {
-            try { dashboardProcess.Kill(); dashboardProcess.WaitForExit(3000); } catch { }
-        }
-    });
-}
-catch (Exception ex)
-{
-    ShowErrorDialog("FocusGate HiLink - Startup Error", $"Failed to start:\n\n{ex.Message}\n\n{ex.InnerException?.Message}");
-}
-
-await host.RunAsync();
-
-try { writeChannel?.CompleteAsync().GetAwaiter().GetResult(); }
-catch { }
-linkedCts?.Cancel();
-linkedCts?.Dispose();
 }
 finally
 {
