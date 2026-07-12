@@ -1,3 +1,4 @@
+using System.IO.Pipes;
 using FocusGate.Core.Enums;
 using FocusGate.Infrastructure.Data;
 using Microsoft.AspNetCore.Mvc;
@@ -10,6 +11,7 @@ namespace FocusGate.Dashboard.Pages;
 
 public class AdminSettingsModel : PageModel
 {
+    private const string PipeName = "FocusGate_Restart";
     private readonly FocusGateDbContext _db;
     private readonly IStringLocalizer<SharedResource> _localizer;
 
@@ -89,5 +91,28 @@ public class AdminSettingsModel : PageModel
         TempData["ToastMessage"] = _localizer["Settings.PasswordUpdated"].Value;
         TempData["ToastType"] = "success";
         return RedirectToPage();
+    }
+
+    public async Task<IActionResult> OnPostShutdownAsync()
+    {
+        try
+        {
+            await using var client = new NamedPipeClientStream(".", PipeName, PipeDirection.Out);
+            await client.ConnectAsync(3000);
+            await using var writer = new StreamWriter(client);
+            await writer.WriteLineAsync("stop");
+            await writer.FlushAsync();
+
+            TempData["ToastMessage"] = _localizer["Settings.ShutdownSent"].Value;
+            TempData["ToastType"] = "success";
+        }
+        catch (Exception)
+        {
+            TempData["ToastMessage"] = _localizer["Settings.ShutdownFailed"].Value;
+            TempData["ToastType"] = "error";
+        }
+
+        Response.Headers["HX-Redirect"] = "/AdminSettings";
+        return new EmptyResult();
     }
 }

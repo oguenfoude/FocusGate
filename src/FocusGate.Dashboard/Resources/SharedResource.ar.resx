@@ -164,4 +164,10 @@
   <data name="Users.EditConfirmPassword"><value>تأكيد كلمة المرور الجديدة</value></data>
   <data name="Toast.UserUpdated"><value>تم تحديث المستخدم بنجاح</value></data>
   <data name="Settings.DisplayName"><value>اسم العرض</value></data>
+  <data name="Settings.ShutdownSystem"><value>إيقاف النظام</value></data>
+  <data name="Settings.ShutdownDescription"><value>إيقاف خدمة البوابة. سيؤدي ذلك إلى إيقاف جميع اتصالات المودم ولوحة التحكم. سينهي العملية العمليات الجارية قبل التوقف.</value></data>
+  <data name="Settings.ShutdownButton"><value>إيقاف</value></data>
+  <data name="Settings.ShutdownConfirm"><value>هل أنت متأكد أنك تريد إيقاف النظام؟ سيتم إيقاف جميع اتصالات المودم.</value></data>
+  <data name="Settings.ShutdownSent"><value>تم إرسال إشارة الإيقاف بنجاح</value></data>
+  <data name="Settings.ShutdownFailed"><value>فشل في إرسال إشارة الإيقاف. قد تكون الخدمة غير قيد التشغيل.</value></data>
 </root>

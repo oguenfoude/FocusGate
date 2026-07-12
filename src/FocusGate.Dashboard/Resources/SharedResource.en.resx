@@ -154,4 +154,10 @@
   <data name="Users.EditConfirmPassword"><value>Confirm New Password</value></data>
   <data name="Toast.UserUpdated"><value>User updated successfully</value></data>
   <data name="Settings.DisplayName"><value>Display Name</value></data>
+  <data name="Settings.ShutdownSystem"><value>Shutdown System</value></data>
+  <data name="Settings.ShutdownDescription"><value>Shut down the gateway service. This will stop all modem connections and the dashboard. The process will finish current operations before stopping.</value></data>
+  <data name="Settings.ShutdownButton"><value>Shutdown</value></data>
+  <data name="Settings.ShutdownConfirm"><value>Are you sure you want to shut down the system? All modem connections will be stopped.</value></data>
+  <data name="Settings.ShutdownSent"><value>Shutdown signal sent successfully</value></data>
+  <data name="Settings.ShutdownFailed"><value>Failed to send shutdown signal. The service may not be running.</value></data>
 </root>

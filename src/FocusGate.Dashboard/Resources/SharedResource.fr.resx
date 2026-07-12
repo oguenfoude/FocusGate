@@ -164,4 +164,10 @@
   <data name="Users.EditConfirmPassword"><value>Confirmer le nouveau mot de passe</value></data>
   <data name="Toast.UserUpdated"><value>Utilisateur mis à jour avec succès</value></data>
   <data name="Settings.DisplayName"><value>Nom d'affichage</value></data>
+  <data name="Settings.ShutdownSystem"><value>Arrêter le système</value></data>
+  <data name="Settings.ShutdownDescription"><value>Arrêter le service passerelle. Cela arrêtera toutes les connexions modem et le tableau de bord. Le processus terminera les opérations en cours avant de s'arrêter.</value></data>
+  <data name="Settings.ShutdownButton"><value>Arrêter</value></data>
+  <data name="Settings.ShutdownConfirm"><value>Êtes-vous sûr de vouloir arrêter le système ? Toutes les connexions modem seront arrêtées.</value></data>
+  <data name="Settings.ShutdownSent"><value>Signal d'arrêt envoyé avec succès</value></data>
+  <data name="Settings.ShutdownFailed"><value>Échec de l'envoi du signal d'arrêt. Le service peut ne pas être en cours d'exécution.</value></data>
 </root>
