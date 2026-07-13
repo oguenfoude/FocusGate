@@ -47,7 +47,14 @@ public class MongoSyncService : BackgroundService
     }
 
     private const int RetryDelaySeconds = 30;
+    private const int MaxRetryDelaySeconds = 300;
     private const int StartupDelaySeconds = 15;
+
+    private int GetRetryDelay(int retryCount)
+    {
+        var delay = RetryDelaySeconds * (int)Math.Pow(2, Math.Min(retryCount, 5));
+        return Math.Min(delay, MaxRetryDelaySeconds);
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -71,20 +78,22 @@ public class MongoSyncService : BackgroundService
                 }
 
                 retryCount++;
+                var delay = GetRetryDelay(retryCount);
                 if (retryCount % 5 == 0)
-                    _logger.LogWarning("MongoDB still disconnected after {Count} attempts — check network/firewall/atlas IP whitelist", retryCount);
+                    _logger.LogWarning("MongoDB still disconnected after {Count} attempts — check network/firewall/atlas IP whitelist (next retry in {Delay}s)", retryCount, delay);
                 else
                     _logger.LogWarning("MongoDB connection failed (attempt {Attempt}), retrying in {Delay}s...",
-                        retryCount, RetryDelaySeconds);
-                await Task.Delay(TimeSpan.FromSeconds(RetryDelaySeconds), stoppingToken);
+                        retryCount, delay);
+                await Task.Delay(TimeSpan.FromSeconds(delay), stoppingToken);
             }
             catch (OperationCanceledException) { return; }
             catch (Exception ex)
             {
                 retryCount++;
+                var delay = GetRetryDelay(retryCount);
                 _logger.LogWarning(ex, "MongoDB connection error (attempt {Attempt}), retrying in {Delay}s...",
-                    retryCount, RetryDelaySeconds);
-                await Task.Delay(TimeSpan.FromSeconds(RetryDelaySeconds), stoppingToken);
+                    retryCount, delay);
+                await Task.Delay(TimeSpan.FromSeconds(delay), stoppingToken);
             }
         }
 
@@ -97,10 +106,13 @@ public class MongoSyncService : BackgroundService
                     await _mongo.TestConnectionAsync();
                     if (!_mongo.IsConnected)
                     {
-                        await Task.Delay(TimeSpan.FromSeconds(RetryDelaySeconds), stoppingToken);
+                        var reconnectDelay = GetRetryDelay(retryCount);
+                        retryCount++;
+                        await Task.Delay(TimeSpan.FromSeconds(reconnectDelay), stoppingToken);
                         continue;
                     }
                     _logger.LogInformation("MongoDB now available — resuming sync");
+                    retryCount = 0;
                 }
 
                 _lastSyncStarted = DateTime.UtcNow;
@@ -120,13 +132,16 @@ public class MongoSyncService : BackgroundService
             catch (InvalidOperationException ex)
             {
                 _lastError = ex.Message;
-                _logger.LogWarning("MongoDB sync error — retrying in {Delay}s: {Error}", RetryDelaySeconds, ex.Message);
+                var errDelay = GetRetryDelay(retryCount);
+                retryCount++;
+                _logger.LogWarning("MongoDB sync error — retrying in {Delay}s: {Error}", errDelay, ex.Message);
                 _mongo.IsConnected = false;
             }
             catch (Exception ex)
             {
                 _lastError = ex.Message;
-                _logger.LogError(ex, "Sync cycle failed");
+                retryCount++;
+                _logger.LogError(ex, "Sync cycle failed (next retry in {Delay}s)", GetRetryDelay(retryCount));
             }
 
             await Task.Delay(TimeSpan.FromSeconds(_intervalSeconds), stoppingToken);

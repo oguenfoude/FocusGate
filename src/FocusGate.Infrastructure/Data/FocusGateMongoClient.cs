@@ -168,14 +168,14 @@ public class FocusGateMongoClient
 
         try
         {
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
             await _db.RunCommandAsync<BsonDocument>(new BsonDocument("ping", 1), cancellationToken: cts.Token);
             IsConnected = true;
             return true;
         }
         catch (OperationCanceledException)
         {
-            _logger.LogWarning("MongoDB ping timed out after 20s");
+            _logger.LogWarning("MongoDB ping timed out after 10s");
             IsConnected = false;
             return false;
         }
