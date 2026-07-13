@@ -241,7 +241,7 @@ public class BalanceLogicTests
     #region ConfigMerger Timezone Migration
 
     [Fact]
-    public void ConfigMerger_MigratesTimezone1To0()
+    public void ConfigMerger_Timezone1_KeptAsIs()
     {
         var tempDir = Path.Combine(Path.GetTempPath(), $"fg_test_{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempDir);
@@ -261,7 +261,7 @@ public class BalanceLogicTests
             ConfigMerger.EnsureConfig(configPath);
 
             var result = System.Text.Json.JsonDocument.Parse(File.ReadAllText(configPath));
-            Assert.Equal("0", result.RootElement.GetProperty("modem.timezone_offset_hours").GetString());
+            Assert.Equal("1", result.RootElement.GetProperty("modem.timezone_offset_hours").GetString());
         }
         finally
         {
@@ -344,7 +344,7 @@ public class BalanceLogicTests
             ConfigMerger.EnsureConfig(configPath);
 
             var result = System.Text.Json.JsonDocument.Parse(File.ReadAllText(configPath));
-            Assert.Equal("0", result.RootElement.GetProperty("modem.timezone_offset_hours").GetString());
+            Assert.Equal("1", result.RootElement.GetProperty("modem.timezone_offset_hours").GetString());
             Assert.Equal("Test", result.RootElement.GetProperty("gateway.name").GetString());
             Assert.True(result.RootElement.TryGetProperty("modem.max_count", out _));
         }

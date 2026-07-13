@@ -468,13 +468,17 @@ public partial class HiLinkCommandService : IAtCommandService
 
             if (IsSmsInboxFull)
             {
-                _log.LogWarning("[HiLink] ReadAllSms returned empty on 125002 — deleting by index fallback (1–50)");
-                for (int i = 1; i <= 50; i++)
+                _log.LogWarning("[HiLink] ReadAllSms returned empty on 125002 — deleting by index fallback (1–100)");
+                for (int i = 1; i <= 100; i++)
                 {
                     try
                     {
                         var body = $@"<request><Index>{i}</Index></request>";
                         await SendPostAsync("/api/sms/delete-sms", body);
+                    }
+                    catch (HttpRequestException)
+                    {
+                        break;
                     }
                     catch (Exception ex)
                     {

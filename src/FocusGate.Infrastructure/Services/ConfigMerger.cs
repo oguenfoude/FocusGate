@@ -30,7 +30,7 @@ public static class ConfigMerger
         ["hilink.probe_timeout_ms"] = "2000",
         ["at.enabled"] = "true",
         ["at.probe_timeout_ms"] = "8000",
-        ["modem.timezone_offset_hours"] = "0",
+        ["modem.timezone_offset_hours"] = "1",
         ["modem.max_count"] = "15",
         ["display.timezone_offset_hours"] = "",
         ["app.version"] = "1.0.0"
@@ -70,13 +70,6 @@ public static class ConfigMerger
                 existing[kvp.Key] = kvp.Value;
                 changed = true;
             }
-        }
-
-        // Migrate timezone_offset_hours: "1" was wrong default (HiLink returns UTC, not local)
-        if (existing.TryGetValue("modem.timezone_offset_hours", out var tzVal) && tzVal == "1")
-        {
-            existing["modem.timezone_offset_hours"] = "0";
-            changed = true;
         }
 
         var deadKeys = new[] { "huawei.hilink.auto_switch", "huawei.hilink.gateway_ips" };
