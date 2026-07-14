@@ -160,4 +160,12 @@
   <data name="Settings.ShutdownConfirm"><value>Are you sure you want to shut down the system? All modem connections will be stopped.</value></data>
   <data name="Settings.ShutdownSent"><value>Shutdown signal sent successfully</value></data>
   <data name="Settings.ShutdownFailed"><value>Failed to send shutdown signal. The service may not be running.</value></data>
+  <data name="UserDetail.AddBalance"><value>Add Balance</value></data>
+  <data name="UserDetail.RemoveBalance"><value>Remove Balance</value></data>
+  <data name="UserDetail.ConfirmAdd"><value>Add Funds</value></data>
+  <data name="UserDetail.ConfirmRemove"><value>Remove Funds</value></data>
+  <data name="UserDetail.AddBalancePlaceholder"><value>Reason for adding balance...</value></data>
+  <data name="UserDetail.RemoveBalancePlaceholder"><value>Reason for removing balance...</value></data>
+  <data name="Toast.BalanceAdded"><value>Balance added successfully</value></data>
+  <data name="Toast.BalanceRemoved"><value>Balance removed successfully</value></data>
 </root>

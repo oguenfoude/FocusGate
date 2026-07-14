@@ -170,4 +170,12 @@
   <data name="Settings.ShutdownConfirm"><value>هل أنت متأكد أنك تريد إيقاف النظام؟ سيتم إيقاف جميع اتصالات المودم.</value></data>
   <data name="Settings.ShutdownSent"><value>تم إرسال إشارة الإيقاف بنجاح</value></data>
   <data name="Settings.ShutdownFailed"><value>فشل في إرسال إشارة الإيقاف. قد تكون الخدمة غير قيد التشغيل.</value></data>
+  <data name="UserDetail.AddBalance"><value>إضافة رصيد</value></data>
+  <data name="UserDetail.RemoveBalance"><value>سحب رصيد</value></data>
+  <data name="UserDetail.ConfirmAdd"><value>إضافة الأموال</value></data>
+  <data name="UserDetail.ConfirmRemove"><value>سحب الأموال</value></data>
+  <data name="UserDetail.AddBalancePlaceholder"><value>سبب إضافة الرصيد...</value></data>
+  <data name="UserDetail.RemoveBalancePlaceholder"><value>سبب سحب الرصيد...</value></data>
+  <data name="Toast.BalanceAdded"><value>تمت إضافة الرصيد بنجاح</value></data>
+  <data name="Toast.BalanceRemoved"><value>تم سحب الرصيد بنجاح</value></data>
 </root>

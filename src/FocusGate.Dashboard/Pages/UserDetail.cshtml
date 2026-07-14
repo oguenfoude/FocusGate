@@ -142,9 +142,17 @@ else
                     <p class="text-5xl font-bold text-brand-600 mt-3">@Model.User.Balance.ToString("N2")</p>
                     <p class="text-sm text-gray-400 mt-1">DZD</p>
 
-                    <div class="mt-8 pt-6 border-t border-gray-100">
+                    <div class="mt-8 pt-6 border-t border-gray-100 flex gap-3 justify-center">
+                        <button onclick="document.getElementById('addBalanceModal').classList.remove('hidden')"
+                                class="btn btn-success px-6">
+                            <i class="fas fa-plus"></i> @L["UserDetail.AddBalance"]
+                        </button>
+                        <button onclick="document.getElementById('removeBalanceModal').classList.remove('hidden')"
+                                class="btn btn-danger px-6">
+                            <i class="fas fa-minus"></i> @L["UserDetail.RemoveBalance"]
+                        </button>
                         <button onclick="document.getElementById('withdrawalModal').classList.remove('hidden')"
-                                class="btn btn-primary px-8">
+                                class="btn btn-primary px-6">
                             <i class="fas fa-money-bill-wave"></i> @L["UserDetail.CreateWithdrawal"]
                         </button>
                     </div>
@@ -274,6 +282,57 @@ else
                 <div class="flex gap-3 pt-2">
                     <button type="submit" class="btn btn-primary flex-1">@L["UserDetail.CreateRequest"]</button>
                     <button type="button" onclick="document.getElementById('withdrawalModal').classList.add('hidden')" class="btn btn-outline">@L["Common.Cancel"]</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Add Balance Modal -->
+    <div id="addBalanceModal" class="hidden fixed inset-0 z-50 modal-overlay flex items-center justify-center p-4" onclick="if(event.target===this)this.classList.add('hidden')">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm">
+            <div class="px-5 py-4 border-b border-gray-100">
+                <h3 class="text-base font-semibold text-gray-900">@L["UserDetail.AddBalance"]</h3>
+            </div>
+            <form hx-post="/UserDetail?handler=AddBalance&userId=@Model.User.Id"
+                  hx-swap="none"
+                  class="p-5 space-y-4">
+                <div>
+                    <label class="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">@L["UserDetail.Amount"] *</label>
+                    <input type="number" name="amount" step="0.01" min="0.01" required class="input" placeholder="0.00" />
+                </div>
+                <div>
+                    <label class="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">@L["UserDetail.NoteOptional"]</label>
+                    <textarea name="note" rows="2" class="input" placeholder="@L["UserDetail.AddBalancePlaceholder"]"></textarea>
+                </div>
+                <div class="flex gap-3 pt-2">
+                    <button type="submit" class="btn btn-success flex-1">@L["UserDetail.ConfirmAdd"]</button>
+                    <button type="button" onclick="document.getElementById('addBalanceModal').classList.add('hidden')" class="btn btn-outline">@L["Common.Cancel"]</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Remove Balance Modal -->
+    <div id="removeBalanceModal" class="hidden fixed inset-0 z-50 modal-overlay flex items-center justify-center p-4" onclick="if(event.target===this)this.classList.add('hidden')">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm">
+            <div class="px-5 py-4 border-b border-gray-100">
+                <h3 class="text-base font-semibold text-gray-900">@L["UserDetail.RemoveBalance"]</h3>
+            </div>
+            <form hx-post="/UserDetail?handler=RemoveBalance&userId=@Model.User.Id"
+                  hx-swap="none"
+                  class="p-5 space-y-4">
+                <div>
+                    <label class="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">@L["UserDetail.Amount"] *</label>
+                    <input type="number" name="amount" step="0.01" min="0.01" max="@Model.User.Balance" required class="input" placeholder="0.00" />
+                    <p class="text-[11px] text-gray-400 mt-1">@L["UserDetail.Available"]: @Model.User.Balance.ToString("N2") DA</p>
+                </div>
+                <div>
+                    <label class="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">@L["UserDetail.NoteOptional"]</label>
+                    <textarea name="note" rows="2" class="input" placeholder="@L["UserDetail.RemoveBalancePlaceholder"]"></textarea>
+                </div>
+                <div class="flex gap-3 pt-2">
+                    <button type="submit" class="btn btn-danger flex-1">@L["UserDetail.ConfirmRemove"]</button>
+                    <button type="button" onclick="document.getElementById('removeBalanceModal').classList.add('hidden')" class="btn btn-outline">@L["Common.Cancel"]</button>
                 </div>
             </form>
         </div>

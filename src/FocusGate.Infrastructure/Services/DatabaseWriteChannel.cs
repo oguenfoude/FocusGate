@@ -476,35 +476,7 @@ public class DatabaseWriteChannel
         }
         else if (IsRechargeSms(sms.Content))
         {
-            var rechargeAmount = ExtractRechargeAmountFromContent(sms.Content);
-            if (rechargeAmount.HasValue && rechargeAmount.Value > 0 && rechargeAmount.Value < 50000)
-            {
-                var oldSimBalance = sim.Balance;
-                sim.Balance += rechargeAmount.Value;
-                sim.VerifiedAt = DateTime.UtcNow;
-                sim.LastSeen = DateTime.UtcNow;
-
-                var userId = await ModemHelper.ResolveUserIdForModemAsync(db, sim.ModemId, ct);
-
-                db.BalanceHistories.Add(new BalanceHistory
-                {
-                    SimCardId = sim.Id,
-                    ModemId = sim.ModemId,
-                    UserId = userId,
-                    Balance = sim.Balance,
-                    PreviousBalance = oldSimBalance,
-                    Source = BalanceSource.SMS,
-                    RecordedAt = DateTime.UtcNow
-                });
-
-                if (userId > 0)
-                {
-                    CreditUserBalance(db, userId, rechargeAmount.Value, sim.Id);
-                    _logger.LogInformation("Balance credited via recharge SMS: Sim={SimId} Amount={Amount:F2}, New Balance={New:F2}", sim.Id, rechargeAmount.Value, sim.Balance);
-                }
-
-                await db.SaveChangesAsync(ct);
-            }
+            _logger.LogInformation("Recharge SMS detected (trigger handled by *222#): Sim={SimId}", sim.Id);
         }
 
         return true;

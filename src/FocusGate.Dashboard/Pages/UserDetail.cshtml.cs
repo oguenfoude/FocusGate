@@ -230,6 +230,102 @@ public class UserDetailModel : PageModel
         return new EmptyResult();
     }
 
+    public async Task<IActionResult> OnPostAddBalanceAsync(long userId, decimal amount, string? note)
+    {
+        if (amount <= 0)
+        {
+            Response.Headers["HX-Redirect"] = $"/UserDetail?id={userId}";
+            return new EmptyResult();
+        }
+
+        var user = await _db.Users.FindAsync(userId);
+        if (user == null)
+        {
+            Response.Headers["HX-Redirect"] = $"/UserDetail?id={userId}";
+            return new EmptyResult();
+        }
+
+        var oldBalance = user.Balance;
+        user.Balance += amount;
+        user.UpdatedAt = DateTime.UtcNow;
+
+        _db.BalanceHistories.Add(new BalanceHistory
+        {
+            SimCardId = null,
+            ModemId = null,
+            UserId = user.Id,
+            Balance = user.Balance,
+            PreviousBalance = oldBalance,
+            Source = BalanceSource.Manual,
+            RecordedAt = DateTime.UtcNow
+        });
+
+        _db.UserBalanceHistories.Add(new UserBalanceHistory
+        {
+            UserId = user.Id,
+            Amount = amount,
+            BalanceAfter = user.Balance,
+            Type = 0,
+            SimCardId = null,
+            Note = string.IsNullOrWhiteSpace(note) ? "Manual top-up" : note,
+            RecordedAt = DateTime.UtcNow
+        });
+
+        await _db.SaveChangesAsync();
+        TempData["ToastMessage"] = _localizer["Toast.BalanceAdded"].Value;
+        TempData["ToastType"] = "success";
+        Response.Headers["HX-Redirect"] = $"/UserDetail?id={userId}";
+        return new EmptyResult();
+    }
+
+    public async Task<IActionResult> OnPostRemoveBalanceAsync(long userId, decimal amount, string? note)
+    {
+        if (amount <= 0)
+        {
+            Response.Headers["HX-Redirect"] = $"/UserDetail?id={userId}";
+            return new EmptyResult();
+        }
+
+        var user = await _db.Users.FindAsync(userId);
+        if (user == null || user.Balance < amount)
+        {
+            Response.Headers["HX-Redirect"] = $"/UserDetail?id={userId}";
+            return new EmptyResult();
+        }
+
+        var oldBalance = user.Balance;
+        user.Balance -= amount;
+        user.UpdatedAt = DateTime.UtcNow;
+
+        _db.BalanceHistories.Add(new BalanceHistory
+        {
+            SimCardId = null,
+            ModemId = null,
+            UserId = user.Id,
+            Balance = user.Balance,
+            PreviousBalance = oldBalance,
+            Source = BalanceSource.Manual,
+            RecordedAt = DateTime.UtcNow
+        });
+
+        _db.UserBalanceHistories.Add(new UserBalanceHistory
+        {
+            UserId = user.Id,
+            Amount = -amount,
+            BalanceAfter = user.Balance,
+            Type = 1,
+            SimCardId = null,
+            Note = string.IsNullOrWhiteSpace(note) ? "Manual deduction" : note,
+            RecordedAt = DateTime.UtcNow
+        });
+
+        await _db.SaveChangesAsync();
+        TempData["ToastMessage"] = _localizer["Toast.BalanceRemoved"].Value;
+        TempData["ToastType"] = "success";
+        Response.Headers["HX-Redirect"] = $"/UserDetail?id={userId}";
+        return new EmptyResult();
+    }
+
     public class AssignedModem
     {
         public int ModemId { get; set; }

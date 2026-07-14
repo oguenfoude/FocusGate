@@ -170,4 +170,12 @@
   <data name="Settings.ShutdownConfirm"><value>Êtes-vous sûr de vouloir arrêter le système ? Toutes les connexions modem seront arrêtées.</value></data>
   <data name="Settings.ShutdownSent"><value>Signal d'arrêt envoyé avec succès</value></data>
   <data name="Settings.ShutdownFailed"><value>Échec de l'envoi du signal d'arrêt. Le service peut ne pas être en cours d'exécution.</value></data>
+  <data name="UserDetail.AddBalance"><value>Ajouter un solde</value></data>
+  <data name="UserDetail.RemoveBalance"><value>Retirer un solde</value></data>
+  <data name="UserDetail.ConfirmAdd"><value>Ajouter les fonds</value></data>
+  <data name="UserDetail.ConfirmRemove"><value>Retirer les fonds</value></data>
+  <data name="UserDetail.AddBalancePlaceholder"><value>Raison de l'ajout de solde...</value></data>
+  <data name="UserDetail.RemoveBalancePlaceholder"><value>Raison du retrait de solde...</value></data>
+  <data name="Toast.BalanceAdded"><value>Solde ajouté avec succès</value></data>
+  <data name="Toast.BalanceRemoved"><value>Solde retiré avec succès</value></data>
 </root>
