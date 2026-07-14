@@ -54,9 +54,27 @@ public class WithdrawalsModel : PageModel
 
     public async Task<IActionResult> OnPostApproveAsync(long id)
     {
+        var admin = await _db.Users.AsNoTracking()
+            .FirstOrDefaultAsync(u => u.Role == UserRole.Admin);
+
+        var adminId = admin?.Id;
+        var affected = await _db.WithdrawalRequests
+            .Where(w => w.Id == id && w.Status == WithdrawalStatus.Pending)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(w => w.Status, WithdrawalStatus.Approved)
+                .SetProperty(w => w.ProcessedAt, DateTime.UtcNow)
+                .SetProperty(w => w.ProcessedByAdminId, adminId)
+                .SetProperty(w => w.UpdatedAt, DateTime.UtcNow));
+
+        if (affected == 0)
+        {
+            Response.Headers["HX-Redirect"] = "/Withdrawals";
+            return new EmptyResult();
+        }
+
         var request = await _db.WithdrawalRequests
             .Include(w => w.User)
-            .FirstOrDefaultAsync(w => w.Id == id && w.Status == WithdrawalStatus.Pending);
+            .FirstOrDefaultAsync(w => w.Id == id);
 
         if (request?.User == null)
         {
@@ -71,16 +89,9 @@ public class WithdrawalsModel : PageModel
             return new EmptyResult();
         }
 
-        var admin = await _db.Users.AsNoTracking()
-            .FirstOrDefaultAsync(u => u.Role == UserRole.Admin);
-
+        var oldBalance = user.Balance;
         user.Balance -= request.Amount;
         user.UpdatedAt = DateTime.UtcNow;
-
-        request.Status = WithdrawalStatus.Approved;
-        request.ProcessedAt = DateTime.UtcNow;
-        request.ProcessedByAdminId = admin?.Id;
-        request.UpdatedAt = DateTime.UtcNow;
 
         _db.UserBalanceHistories.Add(new UserBalanceHistory
         {
@@ -97,7 +108,7 @@ public class WithdrawalsModel : PageModel
         {
             UserId = request.UserId,
             Balance = user.Balance,
-            PreviousBalance = user.Balance + request.Amount,
+            PreviousBalance = oldBalance,
             Source = BalanceSource.Withdrawal,
             RecordedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow

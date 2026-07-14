@@ -451,18 +451,15 @@ public class DatabaseWriteChannel
 
                     if (userId > 0 && balance.Value > oldSimBalance)
                     {
-                        var isRechargeTransfer = sms.Content.Contains("montant de", StringComparison.OrdinalIgnoreCase)
-                            && sms.Content.Contains("reçu", StringComparison.OrdinalIgnoreCase);
-
-                        if (isRechargeTransfer || TryClaimPendingBalanceCheck(sim.ModemId))
+                        if (TryClaimPendingBalanceCheck(sim.ModemId))
                         {
                             var delta = balance.Value - oldSimBalance;
                             CreditUserBalance(db, userId, delta, sim.Id);
-                            _logger.LogInformation("Balance increased via Solde SMS: Sim={SimId} Old={Old:F2} → New={New:F2}, User credited +{Delta:F2} DZD (recharge={IsRecharge})", sim.Id, oldSimBalance, balance.Value, delta, isRechargeTransfer);
+                            _logger.LogInformation("Balance increased via Solde SMS (pending claim): Sim={SimId} Old={Old:F2} → New={New:F2}, User credited +{Delta:F2} DZD", sim.Id, oldSimBalance, balance.Value, delta);
                         }
                         else
                         {
-                            _logger.LogDebug("Balance increased via Solde SMS but no pending check and not recharge: Sim={SimId}", sim.Id);
+                            _logger.LogDebug("Balance increased via Solde SMS but no pending *222# flag: Sim={SimId} — sim.Balance updated, user NOT credited (will credit via *222#)", sim.Id);
                         }
                     }
                     else if (balance.Value < oldSimBalance)
