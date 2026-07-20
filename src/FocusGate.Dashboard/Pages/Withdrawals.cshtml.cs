@@ -39,42 +39,21 @@ public class WithdrawalsModel : PageModel
             RequestedAt = w.RequestedAt, ProcessedAt = w.ProcessedAt, Note = w.Note
         }).ToList();
 
-        var filtered = string.IsNullOrEmpty(status) || !Enum.TryParse<WithdrawalStatus>(status, out var s)
-            ? all
-            : all.Where(w => w.Status == s).ToList();
-
-        Requests = filtered.Select(w => new WithdrawalRow
+        if (string.IsNullOrEmpty(status) || !Enum.TryParse<WithdrawalStatus>(status, out var s))
         {
-            Id = w.Id, UserId = w.UserId,
-            Username = w.User?.Username ?? "Unknown",
-            Amount = w.Amount, Status = w.Status.ToString(),
-            RequestedAt = w.RequestedAt, ProcessedAt = w.ProcessedAt, Note = w.Note
-        }).ToList();
+            Requests = AllRequests;
+        }
+        else
+        {
+            Requests = AllRequests.Where(r => r.Status == s.ToString()).ToList();
+        }
     }
 
     public async Task<IActionResult> OnPostApproveAsync(long id)
     {
-        var admin = await _db.Users.AsNoTracking()
-            .FirstOrDefaultAsync(u => u.Role == UserRole.Admin);
-
-        var adminId = admin?.Id;
-        var affected = await _db.WithdrawalRequests
-            .Where(w => w.Id == id && w.Status == WithdrawalStatus.Pending)
-            .ExecuteUpdateAsync(s => s
-                .SetProperty(w => w.Status, WithdrawalStatus.Approved)
-                .SetProperty(w => w.ProcessedAt, DateTime.UtcNow)
-                .SetProperty(w => w.ProcessedByAdminId, adminId)
-                .SetProperty(w => w.UpdatedAt, DateTime.UtcNow));
-
-        if (affected == 0)
-        {
-            Response.Headers["HX-Redirect"] = "/Withdrawals";
-            return new EmptyResult();
-        }
-
         var request = await _db.WithdrawalRequests
             .Include(w => w.User)
-            .FirstOrDefaultAsync(w => w.Id == id);
+            .FirstOrDefaultAsync(w => w.Id == id && w.Status == WithdrawalStatus.Pending);
 
         if (request?.User == null)
         {
@@ -82,16 +61,29 @@ public class WithdrawalsModel : PageModel
             return new EmptyResult();
         }
 
-        var user = request.User;
-        if (user.Balance < request.Amount)
+        if (request.User.Balance < request.Amount)
         {
+            TempData["ToastMessage"] = _localizer["Toast.InsufficientBalance"].Value;
+            TempData["ToastType"] = "error";
             Response.Headers["HX-Redirect"] = "/Withdrawals";
             return new EmptyResult();
         }
 
+        var admin = await _db.Users.AsNoTracking()
+            .FirstOrDefaultAsync(u => u.Role == UserRole.Admin);
+
+        var adminId = admin?.Id;
+        var now = DateTime.UtcNow;
+
+        request.Status = WithdrawalStatus.Approved;
+        request.ProcessedAt = now;
+        request.ProcessedByAdminId = adminId;
+        request.UpdatedAt = now;
+
+        var user = request.User;
         var oldBalance = user.Balance;
         user.Balance -= request.Amount;
-        user.UpdatedAt = DateTime.UtcNow;
+        user.UpdatedAt = now;
 
         _db.UserBalanceHistories.Add(new UserBalanceHistory
         {
@@ -100,8 +92,8 @@ public class WithdrawalsModel : PageModel
             BalanceAfter = user.Balance,
             Type = 1,
             Note = $"Withdrawal approved: {request.Amount:N2} DA",
-            RecordedAt = DateTime.UtcNow,
-            UpdatedAt = DateTime.UtcNow
+            RecordedAt = now,
+            UpdatedAt = now
         });
 
         _db.BalanceHistories.Add(new BalanceHistory
@@ -110,8 +102,8 @@ public class WithdrawalsModel : PageModel
             Balance = user.Balance,
             PreviousBalance = oldBalance,
             Source = BalanceSource.Withdrawal,
-            RecordedAt = DateTime.UtcNow,
-            UpdatedAt = DateTime.UtcNow
+            RecordedAt = now,
+            UpdatedAt = now
         });
 
         await _db.SaveChangesAsync();

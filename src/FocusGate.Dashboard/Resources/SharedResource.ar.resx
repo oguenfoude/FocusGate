@@ -178,4 +178,5 @@
   <data name="UserDetail.RemoveBalancePlaceholder"><value>سبب سحب الرصيد...</value></data>
   <data name="Toast.BalanceAdded"><value>تمت إضافة الرصيد بنجاح</value></data>
   <data name="Toast.BalanceRemoved"><value>تم سحب الرصيد بنجاح</value></data>
+  <data name="Toast.InsufficientBalance"><value>رصيد غير كافٍ لهذا السحب</value></data>
 </root>

@@ -178,4 +178,5 @@
   <data name="UserDetail.RemoveBalancePlaceholder"><value>Raison du retrait de solde...</value></data>
   <data name="Toast.BalanceAdded"><value>Solde ajouté avec succès</value></data>
   <data name="Toast.BalanceRemoved"><value>Solde retiré avec succès</value></data>
+  <data name="Toast.InsufficientBalance"><value>Solde insuffisant pour ce retrait</value></data>
 </root>

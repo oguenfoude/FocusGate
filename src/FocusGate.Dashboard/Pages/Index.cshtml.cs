@@ -26,20 +26,19 @@ public class IndexModel : PageModel
     {
         ModemsTotal = await _db.Modems.CountAsync();
         var cutoff = DateTime.UtcNow.AddMinutes(-10);
-        ModemsOnline = await _db.Modems.CountAsync(m => m.Status == Core.Enums.ModemStatus.Online && m.UpdatedAt >= cutoff);
-
         var onlineModemIds = await _db.Modems
             .Where(m => m.Status == Core.Enums.ModemStatus.Online && m.UpdatedAt >= cutoff)
             .Select(m => m.Id)
             .ToListAsync();
-        SimCount = await _db.SimCards.CountAsync(s => s.IsActive && onlineModemIds.Contains(s.ModemId));
-        TotalSimBalance = (await _db.SimCards
-            .Where(s => s.IsActive && onlineModemIds.Contains(s.ModemId))
-            .Select(s => s.Balance)
-            .ToListAsync()).Sum();
+        ModemsOnline = onlineModemIds.Count;
 
-        UserCount = await _db.Users.CountAsync(u => u.ArchivedAt == null && u.Role != FocusGate.Core.Enums.UserRole.Admin);
-        TotalUserBalance = (await _db.Users.Where(u => u.ArchivedAt == null && u.Role != FocusGate.Core.Enums.UserRole.Admin).Select(u => u.Balance).ToListAsync()).Sum();
+        var activeOnlineSims = _db.SimCards.Where(s => s.IsActive && onlineModemIds.Contains(s.ModemId));
+        SimCount = await activeOnlineSims.CountAsync();
+        TotalSimBalance = (await activeOnlineSims.Select(s => s.Balance).ToListAsync()).Sum();
+
+        var activeUsers = _db.Users.Where(u => u.ArchivedAt == null && u.Role != FocusGate.Core.Enums.UserRole.Admin);
+        UserCount = await activeUsers.CountAsync();
+        TotalUserBalance = (await activeUsers.Select(u => u.Balance).ToListAsync()).Sum();
 
         PendingWithdrawals = await _db.WithdrawalRequests.CountAsync(w => w.Status == Core.Enums.WithdrawalStatus.Pending);
 

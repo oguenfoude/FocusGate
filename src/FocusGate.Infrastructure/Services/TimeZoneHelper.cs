@@ -1,19 +1,16 @@
 using FocusGate.Core.Interfaces;
 
-namespace FocusGate.Dashboard;
+namespace FocusGate.Infrastructure.Services;
 
 public static class TimeZoneHelper
 {
-    private static readonly TimeZoneInfo? AlgeriaTz = ResolveAlgeriaTz();
-
-    private static TimeZoneInfo? ResolveAlgeriaTz()
+    private static TimeZoneInfo? _cachedAlgeriaTz;
+    private static TimeZoneInfo ResolveAlgeriaTz()
     {
-        try { return TimeZoneInfo.FindSystemTimeZoneById("Africa/Algiers"); }
-        catch
-        {
-            try { return TimeZoneInfo.FindSystemTimeZoneById("Romance Standard Time"); }
-            catch { return null; }
-        }
+        if (_cachedAlgeriaTz != null) return _cachedAlgeriaTz;
+        try { _cachedAlgeriaTz = TimeZoneInfo.FindSystemTimeZoneById("Africa/Algiers"); }
+        catch { try { _cachedAlgeriaTz = TimeZoneInfo.FindSystemTimeZoneById("Romance Standard Time"); } catch { _cachedAlgeriaTz = TimeZoneInfo.Utc; } }
+        return _cachedAlgeriaTz;
     }
 
     public static DateTime ToDisplayTime(this DateTime utc, IConfigProvider? config = null)
@@ -28,8 +25,7 @@ public static class TimeZoneHelper
                 return utc.AddHours(offset);
             }
         }
-        if (AlgeriaTz != null)
-            return TimeZoneInfo.ConvertTimeFromUtc(utc, AlgeriaTz);
-        return utc;
+        try { return TimeZoneInfo.ConvertTimeFromUtc(utc, ResolveAlgeriaTz()); }
+        catch { return utc; }
     }
 }

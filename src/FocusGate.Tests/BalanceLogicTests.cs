@@ -1,6 +1,8 @@
 using FocusGate.Core.DTOs;
 using FocusGate.Infrastructure.Services;
 using Microsoft.Extensions.Logging;
+using System.Collections.Concurrent;
+using System.Reflection;
 
 namespace FocusGate.Tests;
 
@@ -206,9 +208,12 @@ public class BalanceLogicTests
         var channel = CreateDatabaseWriteChannel();
         channel.MarkPendingBalanceCheck(101);
 
-        // Simulate old timestamp by directly manipulating the dictionary
-        // We test the window boundary by checking that 5 minutes works
-        Assert.True(channel.TryClaimPendingBalanceCheck(101));
+        // Simulate expired timestamp by setting to 10 minutes ago (beyond the 5-minute window)
+        var field = typeof(DatabaseWriteChannel).GetField("_pendingBalanceChecks", BindingFlags.NonPublic | BindingFlags.Instance);
+        var dict = (ConcurrentDictionary<long, DateTime>)field!.GetValue(channel)!;
+        dict[101] = DateTime.UtcNow.AddMinutes(-10);
+
+        Assert.False(channel.TryClaimPendingBalanceCheck(101));
     }
 
     [Fact]

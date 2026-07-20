@@ -10,5 +10,7 @@ public enum ModemBrand
     SierraWireless = 5,
     Ericsson = 6,
     MediaTek = 7,
+    Alaafi = 8,
+    FlexiDZ = 9,
     Other = 99
 }

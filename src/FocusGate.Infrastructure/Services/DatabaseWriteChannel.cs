@@ -50,12 +50,25 @@ public class DatabaseWriteChannel
     public void MarkPendingBalanceCheck(long modemId) =>
         _pendingBalanceChecks[modemId] = DateTime.UtcNow;
 
-    public bool TryClaimPendingBalanceCheck(long modemId) =>
-        _pendingBalanceChecks.TryRemove(modemId, out var pendingAt)
-        && DateTime.UtcNow - pendingAt < TimeSpan.FromMinutes(5);
+    public bool TryClaimPendingBalanceCheck(long modemId)
+    {
+        CleanupStalePendingBalanceChecks();
+        return _pendingBalanceChecks.TryRemove(modemId, out var pendingAt)
+            && DateTime.UtcNow - pendingAt < TimeSpan.FromMinutes(5);
+    }
 
     public void ClearPendingBalanceCheck(long modemId) =>
         _pendingBalanceChecks.TryRemove(modemId, out _);
+
+    private void CleanupStalePendingBalanceChecks()
+    {
+        var cutoff = DateTime.UtcNow - TimeSpan.FromMinutes(10);
+        foreach (var kvp in _pendingBalanceChecks)
+        {
+            if (kvp.Value < cutoff)
+                _pendingBalanceChecks.TryRemove(kvp.Key, out _);
+        }
+    }
 
     public async Task CompleteAsync()
     {
@@ -168,11 +181,10 @@ public class DatabaseWriteChannel
             UpdatedAt = DateTime.UtcNow
         };
         db.Modems.Add(modem);
-        await db.SaveChangesAsync(ct);
 
         var sim = new SimCard
         {
-            ModemId = modem.Id,
+            Modem = modem,
             IMSI = imsi,
             PhoneNumber = phone,
             IsActive = true,
@@ -181,6 +193,7 @@ public class DatabaseWriteChannel
             CreatedAt = DateTime.UtcNow
         };
         db.SimCards.Add(sim);
+
         await db.SaveChangesAsync(ct);
 
         _logger.LogInformation("New modem: Id={Id} IMEI={IMEI} SIM IMSI={IMSI}", modem.Id, imei, imsi);
@@ -291,15 +304,14 @@ public class DatabaseWriteChannel
     {
         var d = Deserialize(data);
         var modemId = d["ModemId"].GetInt32();
+        var now = DateTime.UtcNow;
 
-        var active = await db.SimCards.Where(s => s.ModemId == modemId && s.IsActive).ToListAsync(ct);
-        foreach (var sim in active)
-        {
-            sim.IsActive = false;
-            sim.RemovedAt = DateTime.UtcNow;
-            sim.LastSeen = DateTime.UtcNow;
-        }
-        await db.SaveChangesAsync(ct);
+        await db.SimCards
+            .Where(s => s.ModemId == modemId && s.IsActive)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(x => x.IsActive, false)
+                .SetProperty(x => x.RemovedAt, now)
+                .SetProperty(x => x.LastSeen, now), ct);
     }
 
     private async Task<bool> HandleUpdateSimBalanceAsync(FocusGateDbContext db, object data, CancellationToken ct)
@@ -413,16 +425,24 @@ public class DatabaseWriteChannel
         }
 
         db.SmsRecords.Add(sms);
+
+        var isMobilisSms = sms.SenderNumber == "Mobilis" || sms.SenderNumber == "77111" || sms.SenderNumber == "610";
+        if (isMobilisSms)
+        {
+            var sim = await db.SimCards.FirstOrDefaultAsync(s => s.Id == sms.SimCardId && s.IsActive, ct);
+            if (sim == null) isMobilisSms = false;
+            else await ProcessMobilisSmsAsync(db, sim, sms, ct);
+        }
+
         await db.SaveChangesAsync(ct);
+        return true;
+    }
 
-        if (sms.SenderNumber != "Mobilis" && sms.SenderNumber != "77111" && sms.SenderNumber != "610") return true;
-
-        var sim = await db.SimCards.FindAsync(new object[] { sms.SimCardId }, ct);
-        if (sim == null) return true;
-
-        sim.VerifiedAt = DateTime.UtcNow;
-        sim.LastSeen = DateTime.UtcNow;
-        await db.SaveChangesAsync(ct);
+    private async Task ProcessMobilisSmsAsync(FocusGateDbContext db, SimCard sim, SmsRecord sms, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        sim.VerifiedAt = now;
+        sim.LastSeen = now;
 
         if (sms.Content.Contains("Solde", StringComparison.OrdinalIgnoreCase))
         {
@@ -431,8 +451,8 @@ public class DatabaseWriteChannel
             {
                 var oldSimBalance = sim.Balance;
                 sim.Balance = balance.Value;
-                sim.VerifiedAt = DateTime.UtcNow;
-                sim.LastSeen = DateTime.UtcNow;
+                sim.VerifiedAt = now;
+                sim.LastSeen = now;
 
                 if (oldSimBalance != balance.Value)
                 {
@@ -446,7 +466,7 @@ public class DatabaseWriteChannel
                         Balance = balance.Value,
                         PreviousBalance = oldSimBalance,
                         Source = BalanceSource.SMS,
-                        RecordedAt = DateTime.UtcNow
+                        RecordedAt = now
                     });
 
                     if (userId > 0 && balance.Value > oldSimBalance)
@@ -467,16 +487,12 @@ public class DatabaseWriteChannel
                         _logger.LogDebug("Balance decreased via Solde SMS: Sim={SimId} Old={Old:F2} → New={New:F2}", sim.Id, oldSimBalance, balance.Value);
                     }
                 }
-
-                await db.SaveChangesAsync(ct);
             }
         }
         else if (IsRechargeSms(sms.Content))
         {
             _logger.LogInformation("Recharge SMS detected (trigger handled by *222#): Sim={SimId}", sim.Id);
         }
-
-        return true;
     }
 
     internal static decimal? ExtractBalanceFromContent(string content)
@@ -556,26 +572,35 @@ public class DatabaseWriteChannel
         var activeImeis = d["ActiveImeis"].EnumerateArray()
             .Select(x => x.GetString() ?? "").ToHashSet();
 
-        var online = await db.Modems
-            .Where(m => m.Status != ModemStatus.Offline && m.Status != ModemStatus.Error && m.Status != ModemStatus.Detected && m.Status != ModemStatus.PendingNetwork)
-            .ToListAsync(ct);
-
-        var orphaned = 0;
-        foreach (var modem in online)
+        if (activeImeis.Count == 0)
         {
-            if (!activeImeis.Contains(modem.IMEI))
-            {
-                _logger.LogWarning("Modem {Id} ({IMEI}) orphaned -> Offline (active: {ActiveCount}, checked: {CheckedCount})",
-                    modem.Id, modem.IMEI, activeImeis.Count, online.Count);
-                modem.Status = ModemStatus.Offline;
-                modem.ComPort = null;
-                modem.UpdatedAt = DateTime.UtcNow;
-                orphaned++;
-            }
+            int allOrphaned = await db.Modems
+                .Where(m => m.Status != ModemStatus.Offline && m.Status != ModemStatus.Error
+                         && m.Status != ModemStatus.Detected && m.Status != ModemStatus.PendingNetwork)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(m => m.Status, ModemStatus.Offline)
+                    .SetProperty(m => m.ComPort, (string?)null)
+                    .SetProperty(m => m.UpdatedAt, DateTime.UtcNow), ct);
+
+            if (allOrphaned > 0)
+                _logger.LogWarning("All {Count} online modems orphaned -> Offline", allOrphaned);
+            return;
         }
-        if (online.Count > 0)
-            _logger.LogDebug("Orphan check: {Orphaned}/{Total} modems orphaned (active IMEIs: {ActiveCount})", orphaned, online.Count, activeImeis.Count);
-        await db.SaveChangesAsync(ct);
+
+        var orphaned = await db.Modems
+            .Where(m => m.Status != ModemStatus.Offline && m.Status != ModemStatus.Error
+                     && m.Status != ModemStatus.Detected && m.Status != ModemStatus.PendingNetwork
+                     && !activeImeis.Contains(m.IMEI))
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(m => m.Status, ModemStatus.Offline)
+                .SetProperty(m => m.ComPort, (string?)null)
+                .SetProperty(m => m.UpdatedAt, DateTime.UtcNow), ct);
+
+        if (orphaned > 0)
+        {
+            _logger.LogWarning("{Count} modems orphaned -> Offline (active: {ActiveCount})",
+                orphaned, activeImeis.Count);
+        }
     }
 
     private async Task<bool> HandleCreateWithdrawalRequestAsync(FocusGateDbContext db, object data, CancellationToken ct)

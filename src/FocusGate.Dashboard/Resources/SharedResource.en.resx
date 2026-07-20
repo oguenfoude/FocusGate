@@ -168,4 +168,5 @@
   <data name="UserDetail.RemoveBalancePlaceholder"><value>Reason for removing balance...</value></data>
   <data name="Toast.BalanceAdded"><value>Balance added successfully</value></data>
   <data name="Toast.BalanceRemoved"><value>Balance removed successfully</value></data>
+  <data name="Toast.InsufficientBalance"><value>Insufficient balance for this withdrawal</value></data>
 </root>

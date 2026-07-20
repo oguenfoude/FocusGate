@@ -22,7 +22,7 @@ public static class ConfigMerger
         ["modem.ussd.phone_code"] = "*101#",
         ["modem.ussd.balance_code"] = "*222#",
         ["modem.ussd.dcs"] = "15",
-        ["mongodb.uri"] = "mongodb+srv://admin:admin@cluster0.ycqvmop.mongodb.net/?appName=Cluster0",
+        ["mongodb.uri"] = "mongodb+srv://user:password@cluster.example.net/?appName=Cluster0",
         ["mongodb.database"] = "focusgate",
         ["sync.interval_seconds"] = "30",
         ["hilink.enabled"] = "true",
@@ -31,7 +31,7 @@ public static class ConfigMerger
         ["at.enabled"] = "true",
         ["at.probe_timeout_ms"] = "8000",
         ["modem.timezone_offset_hours"] = "1",
-        ["modem.max_count"] = "15",
+        ["modem.max_count"] = "30",
         ["display.timezone_offset_hours"] = "",
         ["app.version"] = "1.0.0"
     };

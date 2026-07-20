@@ -11,6 +11,8 @@ public static class ModemHelper
         var mfg = (manufacturer ?? "").ToLowerInvariant();
         var mdl = (model ?? "").ToLowerInvariant();
 
+        if (mdl.Contains("alaafi") || mfg.Contains("alaafi")) return ModemBrand.Alaafi;
+        if (mdl.Contains("flexi") || mdl.Contains("flixi") || mfg.Contains("flexi") || mfg.Contains("flixi") || mdl.Contains("flixidz") || mdl.Contains("flexidz")) return ModemBrand.FlexiDZ;
         if (mfg.Contains("zte") || mdl.Contains("zte")) return ModemBrand.ZTE;
         if (mfg.Contains("huawei") || mdl.Contains("huawei")) return ModemBrand.Huawei;
         if (mfg.Contains("quectel") || mdl.Contains("quectel")) return ModemBrand.Quectel;

@@ -62,86 +62,62 @@ public partial class HiLinkCommandService : IAtCommandService
     public async Task OpenAsync(string ip)
     {
         ip = ip.Trim();
-        _baseUrl = $"http://{ip}";
 
         try
         {
-            var response = await _http.GetAsync($"{_baseUrl}/api/webserver/SesTokInfo");
-            var xml = await response.Content.ReadAsStringAsync();
-            var doc = XDocument.Parse(xml);
-            var root = doc.Root!;
-
-            var sesInfo = GetElement(root, "SesInfo");
-            var tokInfo = GetElement(root, "TokInfo");
-
-            if (!string.IsNullOrEmpty(sesInfo))
-                _sessionCookie = sesInfo;
-
-            if (!string.IsNullOrEmpty(tokInfo))
-                _csrfToken = tokInfo;
-
-            if (string.IsNullOrEmpty(_sessionCookie))
-            {
-                _log.LogWarning("HiLink {Ip}: HTTP connected but no SesInfo — session may not work", ip);
-            }
-
-            _isOpen = true;
-            _log.LogInformation("HiLink {Ip}: Connected (HTTP)", ip);
-
+            _baseUrl = $"http://{ip}";
+            await ConnectAsync(_baseUrl, ip, isHttps: false);
             await RefreshCsrfFromGetAsync("/api/device/information");
         }
         catch (Exception ex) when (ex is HttpRequestException or System.Xml.XmlException)
         {
-            try
+            _log.LogDebug("HiLink {Ip}: HTTP failed ({Error}), trying HTTPS...", ip, ex.GetType().Name);
+            var handler = new HttpClientHandler
             {
-                _log.LogDebug("HiLink {Ip}: HTTP failed ({Error}), trying HTTPS...", ip, ex.GetType().Name);
-                var handler = new HttpClientHandler
-                {
-                    ServerCertificateCustomValidationCallback = (_, _, _, _) => true,
-                    SslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13
-                };
-                using var https = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
-                _baseUrl = $"https://{ip}";
-                var response = await https.GetAsync($"{_baseUrl}/api/webserver/SesTokInfo");
-                var xml = await response.Content.ReadAsStringAsync();
-                var doc = XDocument.Parse(xml);
-                var root = doc.Root!;
-
-                var sesInfo = GetElement(root, "SesInfo");
-                var tokInfo = GetElement(root, "TokInfo");
-
-                if (!string.IsNullOrEmpty(sesInfo))
-                    _sessionCookie = sesInfo;
-
-                if (!string.IsNullOrEmpty(tokInfo))
-                    _csrfToken = tokInfo;
-
-                if (string.IsNullOrEmpty(_sessionCookie))
-                {
-                    _log.LogWarning("HiLink {Ip}: HTTPS connected but no SesInfo — session may not work", ip);
-                }
-
-                _isOpen = true;
-                _log.LogInformation("HiLink {Ip}: Connected (HTTPS)", ip);
-
-                await RefreshCsrfFromGetAsync("/api/device/information");
-            }
-            catch (Exception ex2)
-            {
-                _log.LogError(ex2, "HiLink {Ip}: Connection failed on both HTTP and HTTPS", ip);
-                _isOpen = false;
-                throw new InvalidOperationException($"HiLink connection failed at {ip}: {ex2.Message}");
-            }
+                ServerCertificateCustomValidationCallback = (_, _, _, _) => true,
+                SslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13
+            };
+            using var https = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
+            _baseUrl = $"https://{ip}";
+            await ConnectAsync(_baseUrl, ip, isHttps: true, client: https);
+            await RefreshCsrfFromGetAsync("/api/device/information", client: https);
         }
     }
 
-    private async Task RefreshCsrfFromGetAsync(string path)
+    private async Task ConnectAsync(string baseUrl, string ip, bool isHttps, HttpClient? client = null)
+    {
+        var http = client ?? _http;
+        var response = await http.GetAsync($"{baseUrl}/api/webserver/SesTokInfo");
+        var xml = await response.Content.ReadAsStringAsync();
+        var doc = XDocument.Parse(xml);
+        var root = doc.Root!;
+
+        var sesInfo = GetElement(root, "SesInfo");
+        var tokInfo = GetElement(root, "TokInfo");
+
+        if (!string.IsNullOrEmpty(sesInfo))
+            _sessionCookie = sesInfo;
+
+        if (!string.IsNullOrEmpty(tokInfo))
+            _csrfToken = tokInfo;
+
+        if (string.IsNullOrEmpty(_sessionCookie))
+        {
+            _log.LogWarning("HiLink {Ip}: {Scheme} connected but no SesInfo — session may not work", ip, isHttps ? "HTTPS" : "HTTP");
+        }
+
+        _isOpen = true;
+        _log.LogInformation("HiLink {Ip}: Connected ({Scheme})", ip, isHttps ? "HTTPS" : "HTTP");
+    }
+
+    private async Task RefreshCsrfFromGetAsync(string path, HttpClient? client = null)
     {
         try
         {
             var request = new HttpRequestMessage(HttpMethod.Get, $"{_baseUrl}{path}");
             ApplyHeaders(request);
-            var response = await _http.SendAsync(request);
+            var http = client ?? _http;
+            var response = await http.SendAsync(request);
             UpdateCsrfFromResponse(response);
             _ = await response.Content.ReadAsStringAsync();
         }
@@ -408,15 +384,31 @@ public partial class HiLinkCommandService : IAtCommandService
 
                 if (!int.TryParse(indexStr, out var idx)) idx = 0;
                 if (!DateTime.TryParse(dateStr, System.Globalization.CultureInfo.InvariantCulture,
-                    System.Globalization.DateTimeStyles.None, out var dt))
+                    System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
+                    out var dt))
                     dt = DateTime.UtcNow;
-                else
+
+                var brandId = _config.Get<int>("modem.brand", (int)ModemBrand.Huawei);
+                var tzOffset = brandId == (int)ModemBrand.FlexiDZ ? -3 : _config.Get<int>("modem.timezone_offset_hours", 1);
+
+                if (tzOffset > 0)
                 {
-                    var tzOffset = _config.Get<int>("modem.timezone_offset_hours", 1);
-                    if (tzOffset != 0)
-                        dt = dt.AddHours(-tzOffset);
-                    dt = DateTime.SpecifyKind(dt, DateTimeKind.Utc);
+                    var unspecified = DateTime.SpecifyKind(dt, DateTimeKind.Unspecified);
+                    try
+                    {
+                        var alTz = TimeZoneInfo.FindSystemTimeZoneById("Africa/Algiers") ?? TimeZoneInfo.Utc;
+                        dt = TimeZoneInfo.ConvertTimeToUtc(unspecified, alTz);
+                    }
+                    catch
+                    {
+                        dt = unspecified.AddHours(-tzOffset);
+                    }
                 }
+                else if (tzOffset != 0)
+                {
+                    dt = dt.AddHours(-tzOffset);
+                }
+                dt = DateTime.SpecifyKind(dt, DateTimeKind.Utc);
 
                 var contentTime = ExtractTimestampFromContent(content);
                 if (contentTime.HasValue)
@@ -648,9 +640,9 @@ public partial class HiLinkCommandService : IAtCommandService
 
     public Task<bool> TrySetCharsetAsync(string charset) => Task.FromResult(true);
 
-    public async Task<string> SendCommandAsync(string command, int timeoutMs = 5000)
+    public Task<string> SendCommandAsync(string command, int timeoutMs = 5000)
     {
-        return "OK";
+        throw new NotSupportedException("AT commands are not supported on HiLink modems (use HTTP API methods instead).");
     }
 
     public void Dispose()

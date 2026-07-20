@@ -18,6 +18,7 @@ public class HiLinkModemOrchestrator : BackgroundService
     private readonly DatabaseWriteChannel _db;
     private readonly ILogger<HiLinkModemOrchestrator> _log;
     private readonly IConfigProvider _config;
+    private readonly ILoggerFactory _loggerFactory;
     private readonly ConcurrentDictionary<string, (ModemHandler handler, string imei)> _handlers = new();
     private readonly ConcurrentDictionary<string, byte> _activeImeis = new();
     private readonly ConcurrentDictionary<string, int> _blacklistedIps = new();
@@ -26,13 +27,14 @@ public class HiLinkModemOrchestrator : BackgroundService
     private const int MaxIpFailures = 3;
 
     public HiLinkModemOrchestrator(IServiceProvider services, DatabaseWriteChannel db,
-        ILogger<HiLinkModemOrchestrator> log, IConfigProvider config)
+        ILogger<HiLinkModemOrchestrator> log, IConfigProvider config, ILoggerFactory loggerFactory)
     {
         _services = services;
         _db = db;
         _log = log;
         _config = config;
-        _maxModems = _config.Get("modem.max_count", 15);
+        _loggerFactory = loggerFactory;
+        _maxModems = _config.Get("modem.max_count", 30);
     }
 
     protected override async Task ExecuteAsync(CancellationToken ct)
@@ -189,9 +191,7 @@ public class HiLinkModemOrchestrator : BackgroundService
 
             try
             {
-                var config = scope.ServiceProvider.GetRequiredService<IConfigProvider>();
-                var hilinkLog = scope.ServiceProvider.GetRequiredService<ILogger<HiLinkCommandService>>();
-                var hilink = new HiLinkCommandService(hilinkLog, config);
+                var hilink = new HiLinkCommandService(_loggerFactory.CreateLogger<HiLinkCommandService>(), _config);
 
                 await hilink.OpenAsync(device.Ip);
 
@@ -245,9 +245,7 @@ public class HiLinkModemOrchestrator : BackgroundService
 
                 if (modem == null) { _log.LogWarning("{Ip}: Modem not found after insert — freeing IMEI {IMEI}", device.Ip, imei); _activeImeis.TryRemove(imei, out _); try { hilink.Dispose(); } catch { } continue; }
 
-                var handlerLog = scope.ServiceProvider.GetRequiredService<ILogger<ModemHandler>>();
-                var writeChannel = scope.ServiceProvider.GetRequiredService<DatabaseWriteChannel>();
-                var handler = new ModemHandler(hilink, writeChannel, handlerLog, config, modem.Id, device.Ip, isHiLink: true);
+                var handler = new ModemHandler(hilink, _db, _loggerFactory.CreateLogger<ModemHandler>(), _config, modem.Id, device.Ip, isHiLink: true);
 
                 _handlers[device.Ip] = (handler, imei);
                 startedNewHandlers = true;

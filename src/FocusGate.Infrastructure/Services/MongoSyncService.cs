@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
+using System.Linq.Expressions;
 
 namespace FocusGate.Infrastructure.Services;
 
@@ -177,8 +178,8 @@ public class MongoSyncService : BackgroundService
 
         if (pushOk && pullOk)
         {
-            _lastSyncAt = DateTime.MinValue;
-            _logger.LogInformation("Full sync complete — next cycle will re-scan all records");
+            _lastSyncAt = DateTime.UtcNow;
+            _logger.LogInformation("Full sync complete — incremental syncs will resume from this point");
         }
         else
         {
@@ -539,7 +540,15 @@ public class MongoSyncService : BackgroundService
             if (mongoDocs.Count == 0) return 0;
 
             var ids = new HashSet<long>(mongoDocs.Select(getId));
-            var localDocs = await db.Set<T>().IgnoreQueryFilters().ToListAsync(ct);
+            var idList = ids.ToList();
+
+            var param = Expression.Parameter(typeof(T), "x");
+            var prop = Expression.Property(param, "Id");
+            var containsMethod = typeof(List<long>).GetMethod("Contains", new[] { typeof(long) })!;
+            var call = Expression.Call(Expression.Constant(idList), containsMethod, prop);
+            var predicate = Expression.Lambda<Func<T, bool>>(call, param);
+
+            var localDocs = await db.Set<T>().IgnoreQueryFilters().Where(predicate).ToListAsync(ct);
             var localMap = localDocs.Where(x => ids.Contains(getId(x))).ToDictionary(getId);
 
             var count = 0;

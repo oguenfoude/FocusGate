@@ -17,11 +17,12 @@ public class ModemHandler : IDisposable
     private readonly string _comPort;
     private readonly bool _isHiLink;
     private long _simCardId;
-    private bool _disposed;
+    private volatile bool _disposed;
     private CancellationTokenSource _loopCts;
     private Task? _watchdogLoop;
     private Task? _pollLoop;
     private Task? _networkRetryLoop;
+    private Task? _postStartupBalanceCheckTask;
     private readonly SemaphoreSlim _atLock = new(1, 1);
     private DateTime? _ussdUnavailableSince;
     private int _hiLinkFailureCount;
@@ -29,6 +30,7 @@ public class ModemHandler : IDisposable
     private ModemStatus _lastWrittenStatus = ModemStatus.Unknown;
     private DateTime _lastHeartbeatWriteUtc = DateTime.MinValue;
     private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan DisposeLoopTimeout = TimeSpan.FromSeconds(3);
     private DateTime? _smsCooldownUntil;
 
     public bool IsAlive => !_disposed && _at?.IsOpen == true;
@@ -186,12 +188,17 @@ public class ModemHandler : IDisposable
 
             if (status == ModemStatus.Online)
             {
-                _ = Task.Run(async () =>
+                _postStartupBalanceCheckTask = Task.Run(async () =>
                 {
-                    if (startupBalanceTrigger)
-                        await RunBalanceCheckFromSmsAsync(loopToken);
-                    else
-                        await TryGetPhoneAndBalanceAsync(loopToken);
+                    try
+                    {
+                        if (startupBalanceTrigger)
+                            await RunBalanceCheckFromSmsAsync(loopToken);
+                        else
+                            await TryGetPhoneAndBalanceAsync(loopToken);
+                    }
+                    catch (OperationCanceledException) { }
+                    catch (Exception ex) { _log.LogWarning(ex, "Modem {Id}: Post-startup balance check failed", _modemId); }
                 }, loopToken);
             }
 
@@ -218,7 +225,7 @@ public class ModemHandler : IDisposable
             {
                 await _atLock.WaitAsync(ct);
                 try { await WatchdogAsync(); }
-                finally { if (!_disposed) _atLock.Release(); }
+                finally { SafeReleaseAtLock(); }
             }
             catch (OperationCanceledException) { break; }
             catch (ObjectDisposedException) { break; }
@@ -242,7 +249,7 @@ public class ModemHandler : IDisposable
             {
                 await _atLock.WaitAsync(ct);
                 try { needsBalanceCheck = await PollSmsAsync(); }
-                finally { if (!_disposed) _atLock.Release(); }
+                finally { SafeReleaseAtLock(); }
             }
             catch (OperationCanceledException) { break; }
             catch (ObjectDisposedException) { break; }
@@ -254,7 +261,7 @@ public class ModemHandler : IDisposable
                 {
                     await _atLock.WaitAsync(ct);
                     try { await RunBalanceCheckFromSmsAsync(ct); }
-                    finally { if (!_disposed) _atLock.Release(); }
+                    finally { SafeReleaseAtLock(); }
                 }
                 catch (OperationCanceledException) { break; }
                 catch (ObjectDisposedException) { break; }
@@ -335,22 +342,41 @@ public class ModemHandler : IDisposable
 
     public void Dispose()
     {
+        if (_disposed) return;
         _disposed = true;
-        _loopCts.Cancel();
+        try { _loopCts.Cancel(); } catch { }
         try
         {
             var task = Task.Run(async () =>
             {
-                if (_watchdogLoop != null) try { await _watchdogLoop; } catch { }
-                if (_pollLoop != null) try { await _pollLoop; } catch { }
-                if (_networkRetryLoop != null) try { await _networkRetryLoop; } catch { }
+                try
+                {
+                    var tasks = new List<Task>();
+                    if (_watchdogLoop != null) tasks.Add(_watchdogLoop);
+                    if (_pollLoop != null) tasks.Add(_pollLoop);
+                    if (_networkRetryLoop != null) tasks.Add(_networkRetryLoop);
+                    if (_postStartupBalanceCheckTask != null) tasks.Add(_postStartupBalanceCheckTask);
+                    if (tasks.Count > 0)
+                    {
+                        try { await Task.WhenAll(tasks); }
+                        catch (OperationCanceledException) { }
+                    }
+                }
+                catch (Exception ex) { _log.LogDebug(ex, "Modem {Id}: Loop shutdown error", _modemId); }
             });
-            task.Wait(TimeSpan.FromSeconds(3));
+            task.Wait(DisposeLoopTimeout);
         }
         catch { }
         try { _loopCts.Dispose(); } catch { }
         try { _atLock.Dispose(); } catch { }
         try { _at?.Dispose(); } catch { }
+    }
+
+    private void SafeReleaseAtLock()
+    {
+        try { _atLock.Release(); }
+        catch (ObjectDisposedException) { }
+        catch (SemaphoreFullException) { }
     }
 
     private async Task WatchdogAsync()
@@ -423,7 +449,14 @@ public class ModemHandler : IDisposable
         var heartbeatDue = (now - _lastHeartbeatWriteUtc) >= HeartbeatInterval;
 
         if (!statusChanged && !heartbeatDue)
+            return;
+
+        _lastWrittenStatus = status;
+        _lastHeartbeatWriteUtc = now;
+
+        if (!statusChanged)
         {
+            _log.LogDebug("Modem {Id}: Heartbeat due, touching UpdatedAt", _modemId);
             try
             {
                 await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.TouchModemUpdatedAt, Data = new { ModemId = _modemId } });
@@ -431,9 +464,6 @@ public class ModemHandler : IDisposable
             catch (Exception ex) { _log.LogDebug(ex, "Modem {Id}: TouchModemUpdatedAt failed", _modemId); }
             return;
         }
-
-        _lastWrittenStatus = status;
-        _lastHeartbeatWriteUtc = now;
 
         _log.LogInformation("Modem {Id}: Status={Status} (changed={Changed}), writing to DB", _modemId, status, statusChanged);
 
@@ -552,7 +582,7 @@ public class ModemHandler : IDisposable
         {
             await _atLock.WaitAsync(ct);
             try { await TryGetPhoneAndBalanceInnerAsync(ct); }
-            finally { if (!_disposed) _atLock.Release(); }
+            finally { SafeReleaseAtLock(); }
         }
         catch (OperationCanceledException) { }
         catch (ObjectDisposedException) { }
@@ -614,7 +644,7 @@ public class ModemHandler : IDisposable
 
                     await WriteStatusIfChangedAsync(ModemStatus.Online);
                 }
-                finally { if (!_disposed) _atLock.Release(); }
+                finally { SafeReleaseAtLock(); }
             }
             catch (OperationCanceledException) { break; }
             catch (ObjectDisposedException) { break; }

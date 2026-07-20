@@ -19,18 +19,20 @@ public class AtModemOrchestrator : BackgroundService
     private readonly DatabaseWriteChannel _db;
     private readonly ILogger<AtModemOrchestrator> _log;
     private readonly IConfigProvider _config;
+    private readonly ILoggerFactory _loggerFactory;
     private readonly ConcurrentDictionary<string, (ModemHandler handler, string imei)> _handlers = new();
     private readonly ConcurrentDictionary<string, byte> _activeImeis = new();
     private readonly ConcurrentDictionary<string, byte> _failedPorts = new();
 
     public AtModemOrchestrator(IServiceProvider services, DatabaseWriteChannel db,
-        ILogger<AtModemOrchestrator> log, IConfigProvider config)
+        ILogger<AtModemOrchestrator> log, IConfigProvider config, ILoggerFactory loggerFactory)
     {
         _services = services;
         _db = db;
         _log = log;
         _config = config;
-        _maxModems = _config.Get("modem.max_count", 15);
+        _loggerFactory = loggerFactory;
+        _maxModems = _config.Get("modem.max_count", 30);
     }
 
     protected override async Task ExecuteAsync(CancellationToken ct)

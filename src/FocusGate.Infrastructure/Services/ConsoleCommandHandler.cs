@@ -1,4 +1,5 @@
 using FocusGate.Core.Enums;
+using FocusGate.Core.Interfaces;
 using FocusGate.Core.Models;
 using FocusGate.Core.Services;
 using FocusGate.Infrastructure.Data;
@@ -15,15 +16,18 @@ public class ConsoleCommandHandler : BackgroundService
     private readonly ILogger<ConsoleCommandHandler> _log;
     private readonly IHostApplicationLifetime _lifetime;
     private readonly MongoSyncService? _mongoSync;
+    private readonly IConfigProvider _config;
     private CancellationToken _ct;
 
     public ConsoleCommandHandler(IServiceScopeFactory scopeFactory,
         ILogger<ConsoleCommandHandler> log, IHostApplicationLifetime lifetime,
+        IConfigProvider config,
         MongoSyncService? mongoSync = null)
     {
         _scopeFactory = scopeFactory;
         _log = log;
         _lifetime = lifetime;
+        _config = config;
         _mongoSync = mongoSync;
     }
 
@@ -166,7 +170,7 @@ public class ConsoleCommandHandler : BackgroundService
         {
             var mongoStatus = _mongoSync.IsConnected ? "Connected" : "Disconnected";
             var lastSync = _mongoSync.LastSyncCompleted > DateTime.MinValue
-                ? _mongoSync.LastSyncCompleted.ToLocalTime().ToString("HH:mm:ss")
+                ? _mongoSync.LastSyncCompleted.ToDisplayTime(_config).ToString("HH:mm:ss")
                 : "never";
             Console.WriteLine($"  MongoDB: {mongoStatus} | Last sync: {lastSync} | Pushed: {_mongoSync.TotalPushed} | Pulled: {_mongoSync.TotalPulled}");
             if (!string.IsNullOrEmpty(_mongoSync.LastError))
@@ -261,7 +265,7 @@ public class ConsoleCommandHandler : BackgroundService
             Console.WriteLine($"    IMSI:        {sim.IMSI}");
             Console.WriteLine($"    Phone:       {(sim.PhoneNumber > 0 ? sim.PhoneNumber.ToString() : "-")}");
             Console.WriteLine($"    Balance:     {sim.Balance:F2} DZD");
-            Console.WriteLine($"    Verified:    {sim.VerifiedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "-"}");
+            Console.WriteLine($"    Verified:    {sim.VerifiedAt?.ToDisplayTime(_config).ToString("yyyy-MM-dd HH:mm") ?? "-"}");
             Console.WriteLine($"    First Seen:  {sim.FirstSeen:yyyy-MM-dd HH:mm}");
             Console.WriteLine($"    Last Seen:   {sim.LastSeen:yyyy-MM-dd HH:mm}");
         }
@@ -272,9 +276,9 @@ public class ConsoleCommandHandler : BackgroundService
             Console.WriteLine($"  SIM History ({allSims.Count} SIMs):");
             foreach (var s in allSims)
             {
-                var removed = s.RemovedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "active";
+                var removed = s.RemovedAt?.ToDisplayTime(_config).ToString("yyyy-MM-dd HH:mm") ?? "active";
                 var phone = s.PhoneNumber > 0 ? s.PhoneNumber.ToString() : "-";
-                Console.WriteLine($"    {s.IMSI} | {phone} | {s.Balance:F2} DZD | {s.FirstSeen.ToLocalTime():yyyy-MM-dd} -> {removed}");
+                Console.WriteLine($"    {s.IMSI} | {phone} | {s.Balance:F2} DZD | {s.FirstSeen.ToDisplayTime(_config):yyyy-MM-dd} -> {removed}");
             }
             Console.WriteLine();
         }
@@ -295,7 +299,7 @@ public class ConsoleCommandHandler : BackgroundService
         foreach (var s in sms)
         {
             var content = s.Content.Length > 24 ? s.Content[..24] + "..." : s.Content;
-            Console.WriteLine($"{s.Id,-6} {s.ReceivedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss,-19} {s.SimCardId,-6} {s.SenderNumber,-14} {content,-24}");
+            Console.WriteLine($"{s.Id,-6} {s.ReceivedAt.ToDisplayTime(_config):yyyy-MM-dd HH:mm:ss,-19} {s.SimCardId,-6} {s.SenderNumber,-14} {content,-24}");
         }
     }
 
@@ -316,9 +320,9 @@ public class ConsoleCommandHandler : BackgroundService
         Console.WriteLine(new string('-', 76));
         foreach (var s in sims)
         {
-            var status = s.IsActive ? "active" : s.RemovedAt?.ToLocalTime().ToString("yyyy-MM-dd") ?? "removed";
+            var status = s.IsActive ? "active" : s.RemovedAt?.ToDisplayTime(_config).ToString("yyyy-MM-dd") ?? "removed";
             var phone = s.PhoneNumber > 0 ? s.PhoneNumber.ToString() : "-";
-            Console.WriteLine($"{s.IMSI,-16} {phone,-14} {s.Balance,-10:F2} {s.FirstSeen.ToLocalTime():yyyy-MM-dd,-12} {s.LastSeen.ToLocalTime():yyyy-MM-dd,-12} {status,-10}");
+            Console.WriteLine($"{s.IMSI,-16} {phone,-14} {s.Balance,-10:F2} {s.FirstSeen.ToDisplayTime(_config):yyyy-MM-dd,-12} {s.LastSeen.ToDisplayTime(_config):yyyy-MM-dd,-12} {status,-10}");
         }
         if (sims.Count == 0) Console.WriteLine("No SIM history.");
     }
@@ -607,7 +611,7 @@ public class ConsoleCommandHandler : BackgroundService
             var phone = b.SimCard?.PhoneNumber > 0 ? b.SimCard.PhoneNumber.ToString() : "-";
             var change = b.PreviousBalance.HasValue ? b.Balance - b.PreviousBalance.Value : 0m;
             var sign = change >= 0 ? "+" : "";
-            Console.WriteLine($"{b.RecordedAt.ToLocalTime():yyyy-MM-dd HH:mm,-20} {b.ModemId,-7} {phone,-14} {(b.PreviousBalance?.ToString("F2") ?? "-"),-12} {b.Balance:F2,-12} {sign}{change:F2,-12} {b.Source,-10}");
+            Console.WriteLine($"{b.RecordedAt.ToDisplayTime(_config):yyyy-MM-dd HH:mm,-20} {b.ModemId,-7} {phone,-14} {(b.PreviousBalance?.ToString("F2") ?? "-"),-12} {b.Balance:F2,-12} {sign}{change:F2,-12} {b.Source,-10}");
         }
 
         var first = entries.Last();
@@ -646,14 +650,14 @@ public class ConsoleCommandHandler : BackgroundService
             .OrderBy(g => g.Key);
 
         Console.WriteLine($"  Total SMS: {total}");
-        Console.WriteLine($"  Date range: {since.ToLocalTime():yyyy-MM-dd} to {DateTime.UtcNow.ToLocalTime():yyyy-MM-dd}");
+        Console.WriteLine($"  Date range: {since.ToDisplayTime(_config):yyyy-MM-dd} to {DateTime.UtcNow.ToDisplayTime(_config):yyyy-MM-dd}");
         Console.WriteLine();
 
         Console.WriteLine("  By Day:");
         Console.WriteLine($"  {"Date",-14} {"Count",-8}");
         Console.WriteLine("  " + new string('-', 22));
         foreach (var g in byDay)
-            Console.WriteLine($"  {g.Key.ToLocalTime():yyyy-MM-dd,-14} {g.Count(),-8}");
+            Console.WriteLine($"  {g.Key.ToDisplayTime(_config):yyyy-MM-dd,-14} {g.Count(),-8}");
 
         Console.WriteLine();
         Console.WriteLine("  Top Senders:");
@@ -663,7 +667,7 @@ public class ConsoleCommandHandler : BackgroundService
         {
             var first = g.MinBy(s => s.ReceivedAt);
             var last = g.MaxBy(s => s.ReceivedAt);
-            Console.WriteLine($"  {g.Key,-22} {g.Count(),-8} {first?.ReceivedAt.ToLocalTime():yyyy-MM-dd,-12} {last?.ReceivedAt.ToLocalTime():yyyy-MM-dd,-12}");
+            Console.WriteLine($"  {g.Key,-22} {g.Count(),-8} {first?.ReceivedAt.ToDisplayTime(_config):yyyy-MM-dd,-12} {last?.ReceivedAt.ToDisplayTime(_config):yyyy-MM-dd,-12}");
         }
         Console.WriteLine();
     }
