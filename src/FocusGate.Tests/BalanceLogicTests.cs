@@ -246,7 +246,7 @@ public class BalanceLogicTests
     #region ConfigMerger Timezone Migration
 
     [Fact]
-    public void ConfigMerger_Timezone1_KeptAsIs()
+    public void ConfigMerger_Timezone0_KeptAsIs()
     {
         var tempDir = Path.Combine(Path.GetTempPath(), $"fg_test_{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempDir);
@@ -256,7 +256,7 @@ public class BalanceLogicTests
         {
             var config = new Dictionary<string, string>
             {
-                ["modem.timezone_offset_hours"] = "1",
+                ["modem.timezone_offset_hours"] = "0",
                 ["gateway.name"] = "FocusGate",
                 ["machine.id"] = "test123"
             };
@@ -266,7 +266,7 @@ public class BalanceLogicTests
             ConfigMerger.EnsureConfig(configPath);
 
             var result = System.Text.Json.JsonDocument.Parse(File.ReadAllText(configPath));
-            Assert.Equal("1", result.RootElement.GetProperty("modem.timezone_offset_hours").GetString());
+            Assert.Equal("0", result.RootElement.GetProperty("modem.timezone_offset_hours").GetString());
         }
         finally
         {
@@ -349,7 +349,7 @@ public class BalanceLogicTests
             ConfigMerger.EnsureConfig(configPath);
 
             var result = System.Text.Json.JsonDocument.Parse(File.ReadAllText(configPath));
-            Assert.Equal("1", result.RootElement.GetProperty("modem.timezone_offset_hours").GetString());
+            Assert.Equal("0", result.RootElement.GetProperty("modem.timezone_offset_hours").GetString());
             Assert.Equal("Test", result.RootElement.GetProperty("gateway.name").GetString());
             Assert.True(result.RootElement.TryGetProperty("modem.max_count", out _));
         }
