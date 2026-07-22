@@ -383,20 +383,32 @@ public partial class HiLinkCommandService : IAtCommandService
                 var indexStr = GetElement(el, "Index") ?? "0";
 
                 if (!int.TryParse(indexStr, out var idx)) idx = 0;
-                if (!DateTime.TryParse(dateStr, System.Globalization.CultureInfo.InvariantCulture,
-                    System.Globalization.DateTimeStyles.None,
-                    out var dt))
-                    dt = DateTime.UtcNow;
 
-                try
+                // HiLink modems return "dd/MM/yyyy, HH:mm" — InvariantCulture expects MM/dd/yyyy and fails.
+                // Parse manually, then convert from Algeria local to UTC.
+                var dt = DateTime.UtcNow;
+                if (!string.IsNullOrEmpty(dateStr))
                 {
-                    var unspecified = DateTime.SpecifyKind(dt, DateTimeKind.Unspecified);
-                    var alTz = TimeZoneInfo.FindSystemTimeZoneById("Africa/Algiers") ?? TimeZoneInfo.Utc;
-                    dt = TimeZoneInfo.ConvertTimeToUtc(unspecified, alTz);
-                }
-                catch
-                {
-                    dt = DateTime.SpecifyKind(dt, DateTimeKind.Utc);
+                    var clean = dateStr.Replace(",", "").Trim();
+                    string[] formats = ["dd/MM/yyyy HH:mm", "dd/MM/yyyy HH:mm:ss", "yyyy-MM-ddTHH:mm:ssZ", "yyyy-MM-dd HH:mm:ss"];
+                    if (DateTime.TryParseExact(clean, formats, System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.None, out var parsed))
+                    {
+                        var unspecified = DateTime.SpecifyKind(parsed, DateTimeKind.Unspecified);
+                        try
+                        {
+                            var alTz = TimeZoneInfo.FindSystemTimeZoneById("Africa/Algiers") ?? TimeZoneInfo.Utc;
+                            dt = TimeZoneInfo.ConvertTimeToUtc(unspecified, alTz);
+                        }
+                        catch
+                        {
+                            dt = DateTime.SpecifyKind(parsed, DateTimeKind.Utc);
+                        }
+                    }
+                    else
+                    {
+                        dt = DateTime.UtcNow;
+                    }
                 }
                 dt = DateTime.SpecifyKind(dt, DateTimeKind.Utc);
 
