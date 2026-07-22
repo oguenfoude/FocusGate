@@ -1,5 +1,4 @@
-﻿using FocusGate.Core.Enums;
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
 namespace FocusGate.Infrastructure.Data;
@@ -80,8 +79,6 @@ public static class DatabaseInitializer
         ExecuteSql("CREATE INDEX IF NOT EXISTS IX_UserModems_UpdatedAt ON UserModems(UpdatedAt)", context);
         ExecuteSql("CREATE INDEX IF NOT EXISTS IX_WithdrawalRequests_UpdatedAt ON WithdrawalRequests(UpdatedAt)", context);
         ExecuteSql("CREATE INDEX IF NOT EXISTS IX_UserBalanceHistories_UpdatedAt ON UserBalanceHistories(UpdatedAt)", context);
-
-        RunSmsTimeFixMigration(context, logger);
 
         context.Database.CloseConnection();
 
@@ -165,39 +162,5 @@ public static class DatabaseInitializer
         using var cmd = context.Database.GetDbConnection().CreateCommand();
         cmd.CommandText = sql;
         cmd.ExecuteNonQuery();
-    }
-
-    private static void RunSmsTimeFixMigration(FocusGateDbContext context, ILogger logger)
-    {
-        ExecuteSql(@"
-            CREATE TABLE IF NOT EXISTS DataMigrations (
-                Name TEXT PRIMARY KEY,
-                RunAt DATETIME NOT NULL
-            )", context);
-
-        using var checkCmd = context.Database.GetDbConnection().CreateCommand();
-        checkCmd.CommandText = "SELECT 1 FROM DataMigrations WHERE Name = 'fix_sms_times_v1'";
-        var exists = checkCmd.ExecuteScalar() != null;
-        if (exists) return;
-
-        var brandEnum = (int)ModemBrand.FlexiDZ;
-        using var fixCmd = context.Database.GetDbConnection().CreateCommand();
-        fixCmd.CommandText = $@"
-            UPDATE SmsRecords
-            SET ReceivedAt = datetime(ReceivedAt, '-4 hours'),
-                UpdatedAt  = datetime('now')
-            WHERE SimCardId IN (
-                SELECT s.Id FROM SimCards s
-                INNER JOIN Modems m ON s.ModemId = m.Id
-                WHERE m.Brand = {brandEnum}
-            )";
-        var count = fixCmd.ExecuteNonQuery();
-
-        using var markCmd = context.Database.GetDbConnection().CreateCommand();
-        markCmd.CommandText = "INSERT OR IGNORE INTO DataMigrations (Name, RunAt) VALUES ('fix_sms_times_v1', datetime('now'))";
-        markCmd.ExecuteNonQuery();
-
-        if (count > 0)
-            logger.LogInformation("Migration fix_sms_times_v1: adjusted {Count} SMS records (FlexiDZ -4h)", count);
     }
 }
