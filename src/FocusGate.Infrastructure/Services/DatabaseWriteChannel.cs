@@ -34,7 +34,8 @@ public class DatabaseWriteChannel
         CreateWithdrawalRequest,
         ProcessWithdrawal,
         UpdateSimBalanceFromSms,
-        TouchModemUpdatedAt
+        TouchModemUpdatedAt,
+        CreditUserFromRechargeSms
     }
 
     public DatabaseWriteChannel(IServiceProvider services, ILogger<DatabaseWriteChannel> logger)
@@ -141,6 +142,7 @@ public class DatabaseWriteChannel
                     case Op.ProcessWithdrawal: success = await HandleProcessWithdrawalAsync(db, op.Data!, ct); break;
                     case Op.UpdateSimBalanceFromSms: success = await HandleUpdateSimBalanceFromSmsAsync(db, op.Data!, ct); break;
                     case Op.TouchModemUpdatedAt:    await HandleTouchModemUpdatedAtAsync(db, op.Data!, ct); success = true; break;
+                    case Op.CreditUserFromRechargeSms: success = await HandleCreditUserFromRechargeSmsAsync(db, op.Data!, ct); break;
                 }
                 op.Completed?.TrySetResult(success);
             }
@@ -396,6 +398,47 @@ public class DatabaseWriteChannel
             {
                 _logger.LogInformation("Balance decreased via *222# (offer/deduction): Modem={Id} Old={Old:F2} → New={New:F2}", modemId, oldSimBalance, newBalance);
             }
+        }
+
+        await db.SaveChangesAsync(ct);
+        return true;
+    }
+
+    private async Task<bool> HandleCreditUserFromRechargeSmsAsync(FocusGateDbContext db, object data, CancellationToken ct)
+    {
+        var d = Deserialize(data);
+        var modemId = d["ModemId"].GetInt32();
+        var rechargeAmount = d["RechargeAmount"].GetDecimal();
+
+        if (rechargeAmount <= 0) return false;
+
+        ClearPendingBalanceCheck(modemId);
+
+        var sim = await db.SimCards.FirstOrDefaultAsync(s => s.ModemId == modemId && s.IsActive, ct);
+        if (sim == null) return false;
+
+        var oldSimBalance = sim.Balance;
+        sim.Balance += rechargeAmount;
+        sim.VerifiedAt = DateTime.UtcNow;
+        sim.LastSeen = DateTime.UtcNow;
+
+        var userId = await ModemHelper.ResolveUserIdForModemAsync(db, modemId, ct);
+
+        db.BalanceHistories.Add(new BalanceHistory
+        {
+            SimCardId = sim.Id,
+            ModemId = modemId,
+            UserId = userId,
+            Balance = sim.Balance,
+            PreviousBalance = oldSimBalance,
+            Source = BalanceSource.SMS,
+            RecordedAt = DateTime.UtcNow
+        });
+
+        if (userId > 0)
+        {
+            CreditUserBalance(db, userId, rechargeAmount, sim.Id);
+            _logger.LogInformation("Balance credited from recharge SMS (fallback): Modem={Id} Sim={SimId} Old={Old:F2} → New={New:F2}, User credited +{Amount:F2} DZD", modemId, sim.Id, oldSimBalance, sim.Balance, rechargeAmount);
         }
 
         await db.SaveChangesAsync(ct);

@@ -193,7 +193,7 @@ public class ModemHandler : IDisposable
                     try
                     {
                         if (startupBalanceTrigger)
-                            await RunBalanceCheckFromSmsAsync(loopToken);
+                            await RunBalanceCheckFromSmsAsync("", loopToken);
                         else
                             await TryGetPhoneAndBalanceAsync(loopToken);
                     }
@@ -244,23 +244,23 @@ public class ModemHandler : IDisposable
 
             if (_disposed) break;
 
-            bool needsBalanceCheck = false;
+            string? rechargeSmsContent = null;
             try
             {
                 await _atLock.WaitAsync(ct);
-                try { needsBalanceCheck = await PollSmsAsync(); }
+                try { rechargeSmsContent = await PollSmsAsync(); }
                 finally { SafeReleaseAtLock(); }
             }
             catch (OperationCanceledException) { break; }
             catch (ObjectDisposedException) { break; }
             catch (Exception ex) { _log.LogError(ex, "Modem {Id}: Poll loop error", _modemId); }
 
-            if (needsBalanceCheck && !_disposed)
+            if (rechargeSmsContent != null && !_disposed)
             {
                 try
                 {
                     await _atLock.WaitAsync(ct);
-                    try { await RunBalanceCheckFromSmsAsync(ct); }
+                    try { await RunBalanceCheckFromSmsAsync(rechargeSmsContent, ct); }
                     finally { SafeReleaseAtLock(); }
                 }
                 catch (OperationCanceledException) { break; }
@@ -270,7 +270,7 @@ public class ModemHandler : IDisposable
         }
     }
 
-    private async Task RunBalanceCheckFromSmsAsync(CancellationToken ct)
+    private async Task RunBalanceCheckFromSmsAsync(string rechargeSmsContent, CancellationToken ct)
     {
         _log.LogInformation("Modem {Id}: Recharge/transfer SMS detected — running *222# to confirm real balance...", _modemId);
         var balance = await _at.GetBalanceAsync();
@@ -289,7 +289,7 @@ public class ModemHandler : IDisposable
         }
         else
         {
-            _log.LogInformation("Modem {Id}: *222# returned processing — retrying in 15s...", _modemId);
+            _log.LogInformation("Modem {Id}: *222# returned no balance — retrying in 15s...", _modemId);
             try { await Task.Delay(15000, ct); } catch (OperationCanceledException) { return; }
 
             balance = await _at.GetBalanceAsync();
@@ -308,8 +308,25 @@ public class ModemHandler : IDisposable
             }
             else
             {
-                _db.MarkPendingBalanceCheck(_modemId);
-                _log.LogInformation("Modem {Id}: *222# still processing after retry — pending balance check set, waiting for Solde SMS", _modemId);
+                var rechargeAmount = DatabaseWriteChannel.ExtractRechargeAmountFromContent(rechargeSmsContent);
+                if (rechargeAmount.HasValue && rechargeAmount.Value > 0)
+                {
+                    _log.LogInformation("Modem {Id}: *222# unavailable — crediting user directly from recharge SMS amount: {Amount:F2} DZD", _modemId, rechargeAmount.Value);
+                    try
+                    {
+                        await _db.EnqueueAsync(new()
+                        {
+                            Type = DatabaseWriteChannel.Op.CreditUserFromRechargeSms,
+                            Data = new { ModemId = _modemId, RechargeAmount = rechargeAmount.Value }
+                        });
+                    }
+                    catch (Exception ex) { _log.LogDebug(ex, "Modem {Id}: CreditUserFromRechargeSms failed", _modemId); }
+                }
+                else
+                {
+                    _db.MarkPendingBalanceCheck(_modemId);
+                    _log.LogInformation("Modem {Id}: *222# failed and could not extract recharge amount — pending balance check set, waiting for Solde SMS", _modemId);
+                }
             }
         }
     }
@@ -474,14 +491,14 @@ public class ModemHandler : IDisposable
         catch (Exception ex) { _log.LogDebug(ex, "Modem {Id}: UpdateModemStatus failed", _modemId); }
     }
 
-    private async Task<bool> PollSmsAsync()
+    private async Task<string?> PollSmsAsync()
     {
-        if (_at == null || !_at.IsOpen) return false;
+        if (_at == null || !_at.IsOpen) return null;
 
         if (_smsCooldownUntil.HasValue && DateTime.UtcNow < _smsCooldownUntil.Value)
-            return false;
+            return null;
 
-        var balanceTriggerNeeded = false;
+        string? rechargeSmsContent = null;
         try
         {
             List<RawSmsMessage> messages;
@@ -493,7 +510,7 @@ public class ModemHandler : IDisposable
             {
                 _log.LogWarning(ex, "Modem {Id}: Poll - ReadAllSms HTTP failed, disconnecting for re-handshake", _modemId);
                 await DisconnectAsync();
-                return false;
+                return null;
             }
 
             if (_at.IsSmsInboxFull)
@@ -502,13 +519,13 @@ public class ModemHandler : IDisposable
                 try { await _at.DeleteAllSmsAsync(); }
                 catch (Exception ex) { _log.LogWarning(ex, "Modem {Id}: DeleteAllSms failed during 125002 clear", _modemId); }
                 _smsCooldownUntil = DateTime.UtcNow.AddMinutes(3);
-                return false;
+                return null;
             }
 
             if (messages.Count <= 0)
             {
                 _log.LogInformation("Modem {Id}: Poll - 0 SMS on SIM", _modemId);
-                return false;
+                return null;
             }
 
             var savedCount = 0;
@@ -536,8 +553,8 @@ public class ModemHandler : IDisposable
                     else
                         skippedCount++;
 
-                    if (!balanceTriggerNeeded && IsMobilisBalanceTrigger(msg))
-                        balanceTriggerNeeded = true;
+                    if (rechargeSmsContent == null && IsMobilisBalanceTrigger(msg))
+                        rechargeSmsContent = msg.Content;
                 }
                 catch (TimeoutException) when (_disposed) { }
                 catch (OperationCanceledException) when (_disposed) { }
@@ -558,7 +575,7 @@ public class ModemHandler : IDisposable
         catch (InvalidOperationException) { await DisconnectAsync(); }
         catch (OperationCanceledException) when (_disposed) { }
         catch (Exception ex) { _log.LogError(ex, "Modem {Id}: Poll error", _modemId); }
-        return balanceTriggerNeeded;
+        return rechargeSmsContent;
     }
 
     internal static bool IsMobilisBalanceTrigger(RawSmsMessage msg)
