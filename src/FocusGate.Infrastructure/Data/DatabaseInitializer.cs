@@ -81,9 +81,9 @@ public static class DatabaseInitializer
         ExecuteSql("CREATE INDEX IF NOT EXISTS IX_WithdrawalRequests_UpdatedAt ON WithdrawalRequests(UpdatedAt)", context);
         ExecuteSql("CREATE INDEX IF NOT EXISTS IX_UserBalanceHistories_UpdatedAt ON UserBalanceHistories(UpdatedAt)", context);
 
-        context.Database.CloseConnection();
-
         RunSmsTimeFixMigration(context, logger);
+
+        context.Database.CloseConnection();
 
         logger.LogInformation("Database initialized (EnsureCreated + PRAGMAs + MachineId migration)");
     }
