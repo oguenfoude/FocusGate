@@ -373,10 +373,7 @@ public partial class AtCommandService : IAtCommandService
                 }
 
                 // Parse SCTS timestamp from modem; fall back to DateTime.UtcNow
-                var brandId = _config.Get<int>("modem.brand", 0);
-                var tzOffset = brandId == (int)FocusGate.Core.Enums.ModemBrand.FlexiDZ
-                    ? -3
-                    : _config.Get<int>("modem.timezone_offset_hours", 1);
+                var tzOffset = _config.Get<int>("modem.timezone_offset_hours", 1);
                 var receivedAt = ParseSctsTimestamp(cmglParts.Value.Scts ?? "", tzOffset) ?? DateTime.UtcNow;
 
                 var msg = new RawSmsMessage

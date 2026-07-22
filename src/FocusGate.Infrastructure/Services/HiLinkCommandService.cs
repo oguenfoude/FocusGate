@@ -388,8 +388,7 @@ public partial class HiLinkCommandService : IAtCommandService
                     out var dt))
                     dt = DateTime.UtcNow;
 
-                var brandId = _config.Get<int>("modem.brand", (int)ModemBrand.Huawei);
-                var tzOffset = brandId == (int)ModemBrand.FlexiDZ ? -3 : _config.Get<int>("modem.timezone_offset_hours", 1);
+                var tzOffset = _config.Get<int>("modem.timezone_offset_hours", 1);
 
                 if (tzOffset > 0)
                 {

@@ -33,6 +33,7 @@ public static class ConfigMerger
         ["modem.timezone_offset_hours"] = "1",
         ["modem.max_count"] = "30",
         ["display.timezone_offset_hours"] = "",
+        ["migrations.fix_sms_times_v1"] = "false",
         ["app.version"] = "1.0.0"
     };
 

@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using System.Linq.Expressions;
 
@@ -97,6 +98,8 @@ public class MongoSyncService : BackgroundService
                 await Task.Delay(TimeSpan.FromSeconds(delay), stoppingToken);
             }
         }
+
+        await RunMongoSmsTimeFixMigrationAsync(stoppingToken);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -590,6 +593,57 @@ public class MongoSyncService : BackgroundService
 
             // Individual retry approach: re-add and save each entity separately
             // For now, log and skip — next cycle will retry
+        }
+    }
+
+    private async Task RunMongoSmsTimeFixMigrationAsync(CancellationToken ct)
+    {
+        try
+        {
+            var metaCollection = _mongo.SmsRecords.Database.GetCollection<BsonDocument>("datamigrations");
+            var alreadyRun = await metaCollection.Find(new BsonDocument { { "_id", "fix_sms_times_v1" } }).AnyAsync(ct);
+            if (alreadyRun) return;
+
+            var collection = _mongo.SmsRecords.Database.GetCollection<BsonDocument>("smsrecords");
+
+            var allRecords = await collection.Find(FilterDefinition<BsonDocument>.Empty).ToListAsync(ct);
+            if (allRecords.Count == 0)
+            {
+                await metaCollection.InsertOneAsync(new BsonDocument {
+                    { "_id", "fix_sms_times_v1" },
+                    { "runAt", DateTime.UtcNow },
+                    { "recordsFixed", 0 }
+                }, cancellationToken: ct);
+                return;
+            }
+
+            var bulkOps = new List<WriteModel<BsonDocument>>();
+            foreach (var doc in allRecords)
+            {
+                if (!doc.Contains("receivedAt")) continue;
+                var filter = Builders<BsonDocument>.Filter.Eq("_id", doc["_id"]);
+                var update = Builders<BsonDocument>.Update
+                    .Set("receivedAt", doc["receivedAt"].ToUniversalTime().AddHours(-4))
+                    .Set("updatedAt", DateTime.UtcNow);
+                bulkOps.Add(new UpdateOneModel<BsonDocument>(filter, update));
+            }
+
+            if (bulkOps.Count > 0)
+            {
+                var result = await collection.BulkWriteAsync(bulkOps, new BulkWriteOptions { IsOrdered = false }, ct);
+
+                await metaCollection.InsertOneAsync(new BsonDocument {
+                    { "_id", "fix_sms_times_v1" },
+                    { "runAt", DateTime.UtcNow },
+                    { "recordsFixed", result.ModifiedCount }
+                }, cancellationToken: ct);
+
+                _logger.LogInformation("Migration fix_sms_times_v1 (MongoDB): adjusted {Count} SMS records (-4h)", result.ModifiedCount);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "MongoDB SMS time fix migration failed — will retry next restart");
         }
     }
 }
