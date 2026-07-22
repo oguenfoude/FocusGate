@@ -384,28 +384,19 @@ public partial class HiLinkCommandService : IAtCommandService
 
                 if (!int.TryParse(indexStr, out var idx)) idx = 0;
                 if (!DateTime.TryParse(dateStr, System.Globalization.CultureInfo.InvariantCulture,
-                    System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
+                    System.Globalization.DateTimeStyles.None,
                     out var dt))
                     dt = DateTime.UtcNow;
 
-                var tzOffset = _config.Get<int>("modem.timezone_offset_hours", 1);
-
-                if (tzOffset > 0)
+                try
                 {
                     var unspecified = DateTime.SpecifyKind(dt, DateTimeKind.Unspecified);
-                    try
-                    {
-                        var alTz = TimeZoneInfo.FindSystemTimeZoneById("Africa/Algiers") ?? TimeZoneInfo.Utc;
-                        dt = TimeZoneInfo.ConvertTimeToUtc(unspecified, alTz);
-                    }
-                    catch
-                    {
-                        dt = unspecified.AddHours(-tzOffset);
-                    }
+                    var alTz = TimeZoneInfo.FindSystemTimeZoneById("Africa/Algiers") ?? TimeZoneInfo.Utc;
+                    dt = TimeZoneInfo.ConvertTimeToUtc(unspecified, alTz);
                 }
-                else if (tzOffset != 0)
+                catch
                 {
-                    dt = dt.AddHours(-tzOffset);
+                    dt = DateTime.SpecifyKind(dt, DateTimeKind.Utc);
                 }
                 dt = DateTime.SpecifyKind(dt, DateTimeKind.Utc);
 
