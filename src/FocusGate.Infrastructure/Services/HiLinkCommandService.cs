@@ -732,7 +732,7 @@ public partial class HiLinkCommandService : IAtCommandService
         request.Headers.Add("X-Requested-With", "XMLHttpRequest");
     }
 
-    internal static DateTime? ExtractTimestampFromContent(string content)
+    public static DateTime? ExtractTimestampFromContent(string content)
     {
         if (string.IsNullOrEmpty(content)) return null;
         var match = ContentTimestampRegex().Match(content);
@@ -745,9 +745,18 @@ public partial class HiLinkCommandService : IAtCommandService
         var ss = match.Groups[6].Success ? int.Parse(match.Groups[6].Value) : 0;
         if (yyyy < 2000 || yyyy > 2099 || mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
         if (hh > 23 || mnn > 59 || ss > 59) return null;
-        // Content time IS the correct Algeria local time — return as UTC directly
-        // (ToDisplayTime will convert back to local for display)
-        return new DateTime(yyyy, mm, dd, hh, mnn, ss, DateTimeKind.Utc);
+        
+        // Content time IS the correct Algeria local time — we must convert it to UTC.
+        var dtLocal = new DateTime(yyyy, mm, dd, hh, mnn, ss, DateTimeKind.Unspecified);
+        try
+        {
+            var alTz = TimeZoneInfo.FindSystemTimeZoneById("Africa/Algiers") ?? TimeZoneInfo.Utc;
+            return TimeZoneInfo.ConvertTimeToUtc(dtLocal, alTz);
+        }
+        catch
+        {
+            return DateTime.SpecifyKind(dtLocal.AddHours(-1), DateTimeKind.Utc);
+        }
     }
 
     [GeneratedRegex(@"le\s+(\d{1,2})/(\d{1,2})/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?")]

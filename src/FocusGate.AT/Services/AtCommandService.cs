@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.IO.Ports;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -375,6 +375,13 @@ public partial class AtCommandService : IAtCommandService
                 // Parse SCTS timestamp from modem; fall back to DateTime.UtcNow
                 var tzOffset = _config.Get<int>("modem.timezone_offset_hours", 1);
                 var receivedAt = ParseSctsTimestamp(cmglParts.Value.Scts ?? "", tzOffset) ?? DateTime.UtcNow;
+
+                var contentTime = FocusGate.Infrastructure.Services.HiLinkCommandService.ExtractTimestampFromContent(content);
+                if (contentTime.HasValue)
+                {
+                    _logger.LogDebug("[CMGL] Content timestamp override: SCTS={Scts} → Content={Content} (UTC={Utc})", receivedAt, contentTime.Value.AddHours(1), contentTime.Value);
+                    receivedAt = contentTime.Value;
+                }
 
                 var msg = new RawSmsMessage
                 {
