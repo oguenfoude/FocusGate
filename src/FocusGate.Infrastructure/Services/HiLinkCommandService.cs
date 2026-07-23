@@ -395,8 +395,7 @@ public partial class HiLinkCommandService : IAtCommandService
                         System.Globalization.DateTimeStyles.None, out var parsed))
                     {
                         var unspecified = DateTime.SpecifyKind(parsed, DateTimeKind.Unspecified);
-                        var tzOffset = _config?.Get<int>("modem.timezone_offset_hours", 0) ?? 0;
-                        dt = DateTime.SpecifyKind(unspecified.AddHours(-tzOffset), DateTimeKind.Utc);
+                        dt = TimeZoneInfo.ConvertTimeToUtc(unspecified, TimeZoneInfo.Local);
                     }
                     else
                     {
@@ -739,16 +738,15 @@ public partial class HiLinkCommandService : IAtCommandService
         if (yyyy < 2000 || yyyy > 2099 || mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
         if (hh > 23 || mnn > 59 || ss > 59) return null;
         
-        // Content time IS the correct Algeria local time — we must convert it to UTC.
+        // Content time IS the correct local time — convert to UTC using Windows timezone.
         var dtLocal = new DateTime(yyyy, mm, dd, hh, mnn, ss, DateTimeKind.Unspecified);
         try
         {
-            var alTz = TimeZoneInfo.FindSystemTimeZoneById("Africa/Algiers") ?? TimeZoneInfo.Utc;
-            return TimeZoneInfo.ConvertTimeToUtc(dtLocal, alTz);
+            return TimeZoneInfo.ConvertTimeToUtc(dtLocal, TimeZoneInfo.Local);
         }
         catch
         {
-            return DateTime.SpecifyKind(dtLocal.AddHours(-1), DateTimeKind.Utc);
+            return DateTime.SpecifyKind(dtLocal, DateTimeKind.Utc);
         }
     }
 

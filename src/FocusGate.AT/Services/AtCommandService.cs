@@ -373,8 +373,7 @@ public partial class AtCommandService : IAtCommandService
                 }
 
                 // Parse SCTS timestamp from modem; fall back to DateTime.UtcNow
-                var tzOffset = _config.Get<int>("modem.timezone_offset_hours", 0);
-                var receivedAt = ParseSctsTimestamp(cmglParts.Value.Scts ?? "", tzOffset) ?? DateTime.UtcNow;
+                var receivedAt = ParseSctsTimestamp(cmglParts.Value.Scts ?? "") ?? DateTime.UtcNow;
 
                 var contentTime = FocusGate.Infrastructure.Services.HiLinkCommandService.ExtractTimestampFromContent(content);
                 if (contentTime.HasValue)
@@ -577,7 +576,7 @@ public partial class AtCommandService : IAtCommandService
         return (index, status, sender, scts);
     }
 
-    private static DateTime? ParseSctsTimestamp(string scts, int tzOffsetHours)
+    private static DateTime? ParseSctsTimestamp(string scts)
     {
         // Format: "yy/MM/dd,HH:mm:ss" or "yy/MM/dd,HH:mm:ss+/-zz" (zz in quarter hours)
         try
@@ -601,11 +600,13 @@ public partial class AtCommandService : IAtCommandService
 
             // Check for timezone in time part: HH:mm:ss+/-zz
             int modemTzQuarterHours = 0;
+            bool modemHasTz = false;
             var timeStr = timePart;
             var tzSep = timePart.LastIndexOfAny(['+', '-']);
             if (tzSep > 0 && int.TryParse(timePart[(tzSep + 1)..], out var qh))
             {
                 modemTzQuarterHours = timePart[tzSep] == '+' ? qh : -qh;
+                modemHasTz = true;
                 timeStr = timePart[..tzSep];
             }
 
@@ -615,17 +616,18 @@ public partial class AtCommandService : IAtCommandService
             if (!int.TryParse(timeParts[1], out var mm)) return null;
             if (!int.TryParse(timeParts[2], out var ss)) return null;
 
-            var dt = new DateTime(year, MM, dd, hh, mm, ss, DateTimeKind.Utc);
+            var dt = new DateTime(year, MM, dd, hh, mm, ss, DateTimeKind.Unspecified);
 
-            // If modem provided its own timezone, use that; otherwise use config offset
-            if (modemTzQuarterHours != 0)
+            if (modemHasTz)
             {
+                // Modem provided its own timezone offset — use it to convert to UTC
                 var modemOffsetHours = modemTzQuarterHours / 4.0;
-                dt = dt.AddHours(-modemOffsetHours);
+                dt = DateTime.SpecifyKind(dt.AddHours(-modemOffsetHours), DateTimeKind.Utc);
             }
-            else if (tzOffsetHours != 0)
+            else
             {
-                dt = dt.AddHours(-tzOffsetHours);
+                // No modem TZ — treat as Windows local time and convert to UTC
+                dt = TimeZoneInfo.ConvertTimeToUtc(dt, TimeZoneInfo.Local);
             }
 
             return dt;

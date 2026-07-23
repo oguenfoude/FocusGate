@@ -4,32 +4,8 @@ namespace FocusGate.Dashboard;
 
 public static class TimeZoneHelper
 {
-    private static readonly TimeZoneInfo? AlgeriaTz = ResolveAlgeriaTz();
-
-    private static TimeZoneInfo? ResolveAlgeriaTz()
-    {
-        try { return TimeZoneInfo.FindSystemTimeZoneById("Africa/Algiers"); }
-        catch
-        {
-            try { return TimeZoneInfo.FindSystemTimeZoneById("Romance Standard Time"); }
-            catch { return null; }
-        }
-    }
-
     public static DateTime ToDisplayTime(this DateTime utc, IConfigProvider? config = null)
     {
-        if (config != null)
-        {
-            var rawValue = config.Get("display.timezone_offset_hours", null);
-            if (!string.IsNullOrEmpty(rawValue)
-                && double.TryParse(rawValue, System.Globalization.NumberStyles.Any,
-                    System.Globalization.CultureInfo.InvariantCulture, out var offset))
-            {
-                return utc.AddHours(offset);
-            }
-        }
-        if (AlgeriaTz != null)
-            return TimeZoneInfo.ConvertTimeFromUtc(utc, AlgeriaTz);
-        return utc;
+        return utc.ToLocalTime();
     }
 }
