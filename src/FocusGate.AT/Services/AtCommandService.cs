@@ -373,7 +373,7 @@ public partial class AtCommandService : IAtCommandService
                 }
 
                 // Parse SCTS timestamp from modem; fall back to DateTime.UtcNow
-                var tzOffset = _config.Get<int>("modem.timezone_offset_hours", 1);
+                var tzOffset = _config.Get<int>("modem.timezone_offset_hours", 0);
                 var receivedAt = ParseSctsTimestamp(cmglParts.Value.Scts ?? "", tzOffset) ?? DateTime.UtcNow;
 
                 var contentTime = FocusGate.Infrastructure.Services.HiLinkCommandService.ExtractTimestampFromContent(content);
