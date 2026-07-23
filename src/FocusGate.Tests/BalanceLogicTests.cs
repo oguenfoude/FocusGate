@@ -431,12 +431,12 @@ public class BalanceLogicTests
     #region ExtractTimestampFromContent
 
     [Theory]
-    [InlineData("Vous avez rechargé 1800.00 DZD DA avec succès le 11/07/2026 23:02:42.", 2026, 7, 11, 22, 2, 42)]
-    [InlineData("Vous avez rechargé 1500.00 DZD DA avec succès le 11/07/2026 22:54:59.", 2026, 7, 11, 21, 54, 59)]
-    [InlineData("Vous avez rechargé 600.00 DZD DA avec succès le 11/07/2026 22:15:03.", 2026, 7, 11, 21, 15, 3)]
-    [InlineData("Vous avez rechargé 100.00 DZD DA avec succès le 11/07/2026 22:09:31.", 2026, 7, 11, 21, 9, 31)]
-    [InlineData("Vous avez rechargé 4990.00 DZD DA avec succès le 11/07/2026 21:50:09.", 2026, 7, 11, 20, 50, 9)]
-    [InlineData("Vous avez rechargé 1120.00 DZD DA avec succès le 11/07/2026 21:54:55.", 2026, 7, 11, 20, 54, 55)]
+    [InlineData("Vous avez rechargé 1800.00 DZD DA avec succès le 11/07/2026 23:02:42.", 2026, 7, 11, 23, 2, 42)]
+    [InlineData("Vous avez rechargé 1500.00 DZD DA avec succès le 11/07/2026 22:54:59.", 2026, 7, 11, 22, 54, 59)]
+    [InlineData("Vous avez rechargé 600.00 DZD DA avec succès le 11/07/2026 22:15:03.", 2026, 7, 11, 22, 15, 3)]
+    [InlineData("Vous avez rechargé 100.00 DZD DA avec succès le 11/07/2026 22:09:31.", 2026, 7, 11, 22, 9, 31)]
+    [InlineData("Vous avez rechargé 4990.00 DZD DA avec succès le 11/07/2026 21:50:09.", 2026, 7, 11, 21, 50, 9)]
+    [InlineData("Vous avez rechargé 1120.00 DZD DA avec succès le 11/07/2026 21:54:55.", 2026, 7, 11, 21, 54, 55)]
     public void ExtractTimestampFromContent_RechargeSms_ReturnsUtcCorrectly(
         string content, int y, int m, int d, int h, int mn, int s)
     {
@@ -462,12 +462,12 @@ public class BalanceLogicTests
         var result = HiLinkCommandService.ExtractTimestampFromContent(
             "Vous avez rechargé 500.00 DZD DA avec succès le 01/01/2027 00:30:00.");
         Assert.NotNull(result);
-        Assert.Equal(new DateTime(2026, 12, 31, 23, 30, 0, DateTimeKind.Utc), result);
+        Assert.Equal(new DateTime(2027, 1, 1, 0, 30, 0, DateTimeKind.Utc), result);
     }
 
     [Theory]
-    [InlineData("Vous avez rechargé 1000.00 DZD DA avec succès le 23/07/2026 17:18.", 2026, 7, 23, 16, 18, 0)]
-    [InlineData("Vous avez rechargé 500.00 DZD DA avec succès le 23/07/2026 16:41.", 2026, 7, 23, 15, 41, 0)]
+    [InlineData("Vous avez rechargé 1000.00 DZD DA avec succès le 23/07/2026 17:18.", 2026, 7, 23, 17, 18, 0)]
+    [InlineData("Vous avez rechargé 500.00 DZD DA avec succès le 23/07/2026 16:41.", 2026, 7, 23, 16, 41, 0)]
     public void ExtractTimestampFromContent_TruncatedTimestamp_ReturnsUtcCorrectly(
         string content, int y, int m, int d, int h, int mn, int s)
     {

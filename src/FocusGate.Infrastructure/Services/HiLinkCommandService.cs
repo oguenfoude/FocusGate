@@ -745,10 +745,9 @@ public partial class HiLinkCommandService : IAtCommandService
         var ss = match.Groups[6].Success ? int.Parse(match.Groups[6].Value) : 0;
         if (yyyy < 2000 || yyyy > 2099 || mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
         if (hh > 23 || mnn > 59 || ss > 59) return null;
-        var local = new DateTime(yyyy, mm, dd, hh, mnn, ss, DateTimeKind.Unspecified);
-        var algeriaTz = TimeZoneInfo.FindSystemTimeZoneById("Africa/Algiers");
-        var utc = TimeZoneInfo.ConvertTimeToUtc(local, algeriaTz);
-        return utc;
+        // Content time IS the correct Algeria local time — return as UTC directly
+        // (ToDisplayTime will convert back to local for display)
+        return new DateTime(yyyy, mm, dd, hh, mnn, ss, DateTimeKind.Utc);
     }
 
     [GeneratedRegex(@"le\s+(\d{1,2})/(\d{1,2})/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?")]
