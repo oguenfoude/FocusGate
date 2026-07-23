@@ -465,6 +465,17 @@ public class BalanceLogicTests
         Assert.Equal(new DateTime(2026, 12, 31, 23, 30, 0, DateTimeKind.Utc), result);
     }
 
+    [Theory]
+    [InlineData("Vous avez rechargé 1000.00 DZD DA avec succès le 23/07/2026 17:18.", 2026, 7, 23, 16, 18, 0)]
+    [InlineData("Vous avez rechargé 500.00 DZD DA avec succès le 23/07/2026 16:41.", 2026, 7, 23, 15, 41, 0)]
+    public void ExtractTimestampFromContent_TruncatedTimestamp_ReturnsUtcCorrectly(
+        string content, int y, int m, int d, int h, int mn, int s)
+    {
+        var result = HiLinkCommandService.ExtractTimestampFromContent(content);
+        Assert.NotNull(result);
+        Assert.Equal(new DateTime(y, m, d, h, mn, s, DateTimeKind.Utc), result);
+    }
+
     #endregion
 
     #region Helpers

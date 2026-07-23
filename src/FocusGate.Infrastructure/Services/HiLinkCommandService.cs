@@ -418,6 +418,10 @@ public partial class HiLinkCommandService : IAtCommandService
                     _log.LogDebug("[HiLink] Content timestamp override: SCTS={Scts} → Content={Content} (UTC={Utc})", dt, contentTime.Value.AddHours(1), contentTime.Value);
                     dt = contentTime.Value;
                 }
+                else if (!string.IsNullOrEmpty(content) && (content.Contains("rechargé", StringComparison.OrdinalIgnoreCase) || content.Contains("Solde", StringComparison.OrdinalIgnoreCase)))
+                {
+                    _log.LogDebug("[HiLink] No content timestamp found in Mobilis SMS ({Length} chars): {Content}", content.Length, content.Length > 80 ? content[..80] : content);
+                }
 
                 messages.Add(new RawSmsMessage
                 {
@@ -738,7 +742,7 @@ public partial class HiLinkCommandService : IAtCommandService
         if (!int.TryParse(match.Groups[3].Value, out var yyyy)) return null;
         if (!int.TryParse(match.Groups[4].Value, out var hh)) return null;
         if (!int.TryParse(match.Groups[5].Value, out var mnn)) return null;
-        if (!int.TryParse(match.Groups[6].Value, out var ss)) return null;
+        var ss = match.Groups[6].Success ? int.Parse(match.Groups[6].Value) : 0;
         if (yyyy < 2000 || yyyy > 2099 || mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
         if (hh > 23 || mnn > 59 || ss > 59) return null;
         var local = new DateTime(yyyy, mm, dd, hh, mnn, ss, DateTimeKind.Unspecified);
@@ -747,7 +751,7 @@ public partial class HiLinkCommandService : IAtCommandService
         return utc;
     }
 
-    [GeneratedRegex(@"le\s+(\d{1,2})/(\d{1,2})/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})")]
+    [GeneratedRegex(@"le\s+(\d{1,2})/(\d{1,2})/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?")]
     private static partial Regex ContentTimestampRegex();
 
     [GeneratedRegex(@"(\d[\d.,]+)")]
