@@ -138,7 +138,7 @@ public class ModemHandler : IDisposable
 
             var messages = await _at.ReadAllSmsAsync();
             _log.LogDebug("Modem {Id}: {Count} SMS on SIM", _modemId, messages.Count);
-            var startupBalanceTrigger = false;
+            string? startupRechargeContent = null;
             if (messages.Count > 0)
             {
                 var tcsList = new List<Task<bool>>();
@@ -158,8 +158,8 @@ public class ModemHandler : IDisposable
                         },
                         Completed = tcs
                     });
-                    if (IsMobilisBalanceTrigger(msg))
-                        startupBalanceTrigger = true;
+                    if (startupRechargeContent == null && IsMobilisBalanceTrigger(msg))
+                        startupRechargeContent = msg.Content;
                 }
                 bool[] results;
                 try { results = await Task.WhenAll(tcsList); }
@@ -192,8 +192,8 @@ public class ModemHandler : IDisposable
                 {
                     try
                     {
-                        if (startupBalanceTrigger)
-                            await RunBalanceCheckFromSmsAsync("", loopToken);
+                        if (startupRechargeContent != null)
+                            await RunBalanceCheckFromSmsAsync(startupRechargeContent, loopToken);
                         else
                             await TryGetPhoneAndBalanceAsync(loopToken);
                     }

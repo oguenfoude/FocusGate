@@ -414,7 +414,10 @@ public partial class HiLinkCommandService : IAtCommandService
 
                 var contentTime = ExtractTimestampFromContent(content);
                 if (contentTime.HasValue)
+                {
+                    _log.LogDebug("[HiLink] Content timestamp override: SCTS={Scts} → Content={Content} (UTC={Utc})", dt, contentTime.Value.AddHours(1), contentTime.Value);
                     dt = contentTime.Value;
+                }
 
                 messages.Add(new RawSmsMessage
                 {
