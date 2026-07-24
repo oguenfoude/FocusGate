@@ -55,7 +55,7 @@ public class DatabaseWriteChannel
     {
         CleanupStalePendingBalanceChecks();
         return _pendingBalanceChecks.TryRemove(modemId, out var pendingAt)
-            && DateTime.UtcNow - pendingAt < TimeSpan.FromMinutes(5);
+            && DateTime.UtcNow - pendingAt < TimeSpan.FromMinutes(10);
     }
 
     public void ClearPendingBalanceCheck(long modemId) =>
@@ -63,7 +63,7 @@ public class DatabaseWriteChannel
 
     private void CleanupStalePendingBalanceChecks()
     {
-        var cutoff = DateTime.UtcNow - TimeSpan.FromMinutes(10);
+        var cutoff = DateTime.UtcNow - TimeSpan.FromMinutes(15);
         foreach (var kvp in _pendingBalanceChecks)
         {
             if (kvp.Value < cutoff)
@@ -398,6 +398,15 @@ public class DatabaseWriteChannel
             {
                 _logger.LogInformation("Balance decreased via *222# (offer/deduction): Modem={Id} Old={Old:F2} → New={New:F2}", modemId, oldSimBalance, newBalance);
             }
+            else if (userId <= 0 && newBalance > oldSimBalance)
+            {
+                _logger.LogWarning("Balance increased via *222# but no user assigned to modem {ModemId} — SIM balance updated, user NOT credited (+{Delta:F2} DZD orphaned)", modemId, newBalance - oldSimBalance);
+            }
+        }
+        else
+        {
+            _logger.LogWarning("Balance unchanged after *222# (carrier may not have processed recharge yet): Modem={Id} Balance={Balance:F2} — setting pending flag for Solde SMS fallback", modemId, newBalance);
+            MarkPendingBalanceCheck(modemId);
         }
 
         await db.SaveChangesAsync(ct);
@@ -439,6 +448,10 @@ public class DatabaseWriteChannel
         {
             CreditUserBalance(db, userId, rechargeAmount, sim.Id);
             _logger.LogInformation("Balance credited from recharge SMS (fallback): Modem={Id} Sim={SimId} Old={Old:F2} → New={New:F2}, User credited +{Amount:F2} DZD", modemId, sim.Id, oldSimBalance, sim.Balance, rechargeAmount);
+        }
+        else
+        {
+            _logger.LogWarning("Recharge SMS fallback: SIM balance updated but no user assigned to modem {ModemId} — +{Amount:F2} DZD orphaned", modemId, rechargeAmount);
         }
 
         await db.SaveChangesAsync(ct);
@@ -522,7 +535,7 @@ public class DatabaseWriteChannel
                         }
                         else
                         {
-                            _logger.LogDebug("Balance increased via Solde SMS but no pending *222# flag: Sim={SimId} — sim.Balance updated, user NOT credited (will credit via *222#)", sim.Id);
+                            _logger.LogWarning("Balance increased via Solde SMS but no pending *222# flag: Sim={SimId} Old={Old:F2} → New={New:F2} — sim.Balance updated, user NOT credited (no pending flag from *222#)", sim.Id, oldSimBalance, balance.Value);
                         }
                     }
                     else if (balance.Value < oldSimBalance)
@@ -576,11 +589,15 @@ public class DatabaseWriteChannel
 
     internal static decimal? ExtractRechargeAmountFromContent(string content)
     {
-        var match = System.Text.RegularExpressions.Regex.Match(content, @"montant\s+de\s*(\d[\d.,]*)", RegexOptions.IgnoreCase);
+        var match = System.Text.RegularExpressions.Regex.Match(content, @"montant\s+de\s*(?:un\s+)?(\d[\d.,]*)", RegexOptions.IgnoreCase);
         if (match.Success)
             return ParseAmount(match.Groups[1].Value);
 
-        match = System.Text.RegularExpressions.Regex.Match(content, @"rechargé\s*(\d[\d.,]*)", RegexOptions.IgnoreCase);
+        match = System.Text.RegularExpressions.Regex.Match(content, @"rechargé\s+(?:de\s+)?(\d[\d.,]*)", RegexOptions.IgnoreCase);
+        if (match.Success)
+            return ParseAmount(match.Groups[1].Value);
+
+        match = System.Text.RegularExpressions.Regex.Match(content, @"(\d[\d.,]+)\s*(?:DZD|DA)", RegexOptions.IgnoreCase);
         if (match.Success)
             return ParseAmount(match.Groups[1].Value);
 

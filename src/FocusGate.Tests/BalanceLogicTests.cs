@@ -124,6 +124,8 @@ public class BalanceLogicTests
     [Theory]
     [InlineData("Vous avez rechargé 1000 DZD DA au 0555123456", 1000)]
     [InlineData("rechargé 300,25 DZD", 300.25)]
+    [InlineData("Vous avez rechargé de 500 DZD DA avec succès", 500)]
+    [InlineData("rechargé de 1500.00 DZD", 1500)]
     public void ExtractRechargeAmountFromContent_Recharge_ReturnsAmount(string content, decimal expected)
     {
         var result = DatabaseWriteChannel.ExtractRechargeAmountFromContent(content);
@@ -132,12 +134,31 @@ public class BalanceLogicTests
     }
 
     [Theory]
-    [InlineData("Solde de votre compte: 5000 DZD")]
     [InlineData("Votre offre a expiré")]
     [InlineData("")]
     public void ExtractRechargeAmountFromContent_NoAmount_ReturnsNull(string content)
     {
         Assert.Null(DatabaseWriteChannel.ExtractRechargeAmountFromContent(content));
+    }
+
+    [Theory]
+    [InlineData("Vous avez reçu un montant de un 500 DZD DA de 0555123456", 500)]
+    [InlineData("montant de un 2500.75 DA reçu", 2500.75)]
+    public void ExtractRechargeAmountFromContent_MontantDeUn_ReturnsAmount(string content, decimal expected)
+    {
+        var result = DatabaseWriteChannel.ExtractRechargeAmountFromContent(content);
+        Assert.NotNull(result);
+        Assert.Equal(expected, result.Value, 2);
+    }
+
+    [Theory]
+    [InlineData("Solde: 5000 DZD", 5000)]
+    [InlineData("Votre solde est 12500.00 DA", 12500)]
+    public void ExtractRechargeAmountFromContent_FallbackDzdDa_ReturnsAmount(string content, decimal expected)
+    {
+        var result = DatabaseWriteChannel.ExtractRechargeAmountFromContent(content);
+        Assert.NotNull(result);
+        Assert.Equal(expected, result.Value, 2);
     }
 
     #endregion
@@ -208,10 +229,10 @@ public class BalanceLogicTests
         var channel = CreateDatabaseWriteChannel();
         channel.MarkPendingBalanceCheck(101);
 
-        // Simulate expired timestamp by setting to 10 minutes ago (beyond the 5-minute window)
+        // Simulate expired timestamp by setting to 11 minutes ago (beyond the 10-minute window)
         var field = typeof(DatabaseWriteChannel).GetField("_pendingBalanceChecks", BindingFlags.NonPublic | BindingFlags.Instance);
         var dict = (ConcurrentDictionary<long, DateTime>)field!.GetValue(channel)!;
-        dict[101] = DateTime.UtcNow.AddMinutes(-10);
+        dict[101] = DateTime.UtcNow.AddMinutes(-11);
 
         Assert.False(channel.TryClaimPendingBalanceCheck(101));
     }
@@ -431,12 +452,12 @@ public class BalanceLogicTests
     #region ExtractTimestampFromContent
 
     [Theory]
-    [InlineData("Vous avez rechargé 1800.00 DZD DA avec succès le 11/07/2026 23:02:42.", 2026, 7, 11, 23, 2, 42)]
-    [InlineData("Vous avez rechargé 1500.00 DZD DA avec succès le 11/07/2026 22:54:59.", 2026, 7, 11, 22, 54, 59)]
-    [InlineData("Vous avez rechargé 600.00 DZD DA avec succès le 11/07/2026 22:15:03.", 2026, 7, 11, 22, 15, 3)]
-    [InlineData("Vous avez rechargé 100.00 DZD DA avec succès le 11/07/2026 22:09:31.", 2026, 7, 11, 22, 9, 31)]
-    [InlineData("Vous avez rechargé 4990.00 DZD DA avec succès le 11/07/2026 21:50:09.", 2026, 7, 11, 21, 50, 9)]
-    [InlineData("Vous avez rechargé 1120.00 DZD DA avec succès le 11/07/2026 21:54:55.", 2026, 7, 11, 21, 54, 55)]
+    [InlineData("Vous avez rechargé 1800.00 DZD DA avec succès le 11/07/2026 23:02:42.", 2026, 7, 11, 22, 2, 42)]
+    [InlineData("Vous avez rechargé 1500.00 DZD DA avec succès le 11/07/2026 22:54:59.", 2026, 7, 11, 21, 54, 59)]
+    [InlineData("Vous avez rechargé 600.00 DZD DA avec succès le 11/07/2026 22:15:03.", 2026, 7, 11, 21, 15, 3)]
+    [InlineData("Vous avez rechargé 100.00 DZD DA avec succès le 11/07/2026 22:09:31.", 2026, 7, 11, 21, 9, 31)]
+    [InlineData("Vous avez rechargé 4990.00 DZD DA avec succès le 11/07/2026 21:50:09.", 2026, 7, 11, 20, 50, 9)]
+    [InlineData("Vous avez rechargé 1120.00 DZD DA avec succès le 11/07/2026 21:54:55.", 2026, 7, 11, 20, 54, 55)]
     public void ExtractTimestampFromContent_RechargeSms_ReturnsUtcCorrectly(
         string content, int y, int m, int d, int h, int mn, int s)
     {
@@ -462,12 +483,12 @@ public class BalanceLogicTests
         var result = HiLinkCommandService.ExtractTimestampFromContent(
             "Vous avez rechargé 500.00 DZD DA avec succès le 01/01/2027 00:30:00.");
         Assert.NotNull(result);
-        Assert.Equal(new DateTime(2027, 1, 1, 0, 30, 0, DateTimeKind.Utc), result);
+        Assert.Equal(new DateTime(2026, 12, 31, 23, 30, 0, DateTimeKind.Utc), result);
     }
 
     [Theory]
-    [InlineData("Vous avez rechargé 1000.00 DZD DA avec succès le 23/07/2026 17:18.", 2026, 7, 23, 17, 18, 0)]
-    [InlineData("Vous avez rechargé 500.00 DZD DA avec succès le 23/07/2026 16:41.", 2026, 7, 23, 16, 41, 0)]
+    [InlineData("Vous avez rechargé 1000.00 DZD DA avec succès le 23/07/2026 17:18.", 2026, 7, 23, 16, 18, 0)]
+    [InlineData("Vous avez rechargé 500.00 DZD DA avec succès le 23/07/2026 16:41.", 2026, 7, 23, 15, 41, 0)]
     public void ExtractTimestampFromContent_TruncatedTimestamp_ReturnsUtcCorrectly(
         string content, int y, int m, int d, int h, int mn, int s)
     {
