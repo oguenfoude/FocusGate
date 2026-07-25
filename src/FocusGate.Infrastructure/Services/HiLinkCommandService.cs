@@ -357,6 +357,13 @@ public partial class HiLinkCommandService : IAtCommandService
         {
             numStr = numStr.Replace(",", ".");
         }
+        else if (numStr.Contains('.'))
+        {
+            var lastDot = numStr.LastIndexOf('.');
+            var afterDot = numStr[(lastDot + 1)..];
+            if (afterDot.Length == 3)
+                numStr = numStr.Replace(".", "");
+        }
 
         if (decimal.TryParse(numStr, System.Globalization.NumberStyles.Any,
             System.Globalization.CultureInfo.InvariantCulture, out var amount))

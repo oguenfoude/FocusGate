@@ -7,6 +7,7 @@ namespace FocusGate.Infrastructure.Services;
 public class RestartService : BackgroundService
 {
     private const string PipeName = "FocusGate_Restart";
+    private static readonly TimeSpan AutoRestartInterval = TimeSpan.FromHours(8);
     private readonly IHostApplicationLifetime _lifetime;
     private readonly ILogger<RestartService> _logger;
 
@@ -19,6 +20,8 @@ public class RestartService : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("Restart service started, listening on pipe: {Pipe}", PipeName);
+
+        var autoRestartTask = RunAutoRestartAsync(stoppingToken);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -64,5 +67,16 @@ public class RestartService : BackgroundService
                 await Task.Delay(1000, stoppingToken);
             }
         }
+    }
+
+    private async Task RunAutoRestartAsync(CancellationToken ct)
+    {
+        try
+        {
+            await Task.Delay(AutoRestartInterval, ct);
+            _logger.LogInformation("Auto-restart triggered after {Hours} hours — shutting down for clean restart", (int)AutoRestartInterval.TotalHours);
+            _lifetime.StopApplication();
+        }
+        catch (OperationCanceledException) { }
     }
 }
