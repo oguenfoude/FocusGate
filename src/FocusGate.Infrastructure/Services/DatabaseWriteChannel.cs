@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
@@ -349,11 +350,30 @@ public class DatabaseWriteChannel
                     Source = BalanceSource.USSD,
                     RecordedAt = DateTime.UtcNow
                 });
+
+                _logger.LogInformation("Startup *222# balance: Modem={ModemId} Sim={SimId} Old={Old:F2} → New={New:F2} UserId={UserId}",
+                    modemId, sim.Id, oldBalance, newBalance, userId);
+
+                if (userId > 0 && newBalance > oldBalance)
+                {
+                    var delta = newBalance - oldBalance;
+                    var (credited, userOld, userNew) = CreditUserBalance(db, userId, delta, sim.Id);
+                    if (credited)
+                        _logger.LogInformation("Startup credit: Modem={ModemId} Sim={SimId} User={UserId} +{Delta:F2} DZD, Wallet: {UserOld:F2} → {UserNew:F2}", modemId, sim.Id, userId, delta, userOld, userNew);
+                    else
+                        _logger.LogWarning("Startup credit FAILED: Modem={ModemId} Sim={SimId} +{Delta:F2} DZD — user {UserId} not found in DB", modemId, sim.Id, delta, userId);
+                }
+            }
+            else
+            {
+                _logger.LogInformation("Startup *222# balance unchanged: Modem={ModemId} Sim={SimId} Balance={Balance:F2} UserId={UserId}",
+                    modemId, sim.Id, newBalance, userId);
             }
 
             await db.SaveChangesAsync(ct);
             return true;
         }
+        _logger.LogWarning("Startup *222# balance: No active SIM on modem {ModemId}", modemId);
         return false;
     }
 
@@ -391,16 +411,19 @@ public class DatabaseWriteChannel
             if (userId > 0 && newBalance > oldSimBalance)
             {
                 var delta = newBalance - oldSimBalance;
-                CreditUserBalance(db, userId, delta, sim.Id);
-                _logger.LogInformation("Balance increased via *222#: Modem={Id} Old={Old:F2} → New={New:F2}, User credited +{Delta:F2} DZD", modemId, oldSimBalance, newBalance, delta);
+                var (credited, userOld, userNew) = CreditUserBalance(db, userId, delta, sim.Id);
+                if (credited)
+                    _logger.LogInformation("CREDIT via *222#: Modem={ModemId} Sim={SimId} User={UserId} +{Delta:F2} DZD, SIM: {Old:F2} → {New:F2}, Wallet: {UserOld:F2} → {UserNew:F2}", modemId, sim.Id, userId, delta, oldSimBalance, newBalance, userOld, userNew);
+                else
+                    _logger.LogWarning("CREDIT FAILED via *222#: Modem={ModemId} Sim={SimId} +{Delta:F2} DZD — user {UserId} not found", modemId, sim.Id, delta, userId);
             }
             else if (newBalance < oldSimBalance)
             {
-                _logger.LogInformation("Balance decreased via *222# (offer/deduction): Modem={Id} Old={Old:F2} → New={New:F2}", modemId, oldSimBalance, newBalance);
+                _logger.LogInformation("Balance decreased via *222# (offer/deduction): Modem={ModemId} Sim={SimId} Old={Old:F2} → New={New:F2}", modemId, sim.Id, oldSimBalance, newBalance);
             }
             else if (userId <= 0 && newBalance > oldSimBalance)
             {
-                _logger.LogWarning("Balance increased via *222# but no user assigned to modem {ModemId} — SIM balance updated, user NOT credited (+{Delta:F2} DZD orphaned)", modemId, newBalance - oldSimBalance);
+                _logger.LogWarning("CREDIT ORPHANED: Modem={ModemId} Sim={SimId} +{Delta:F2} DZD — no user assigned", modemId, sim.Id, newBalance - oldSimBalance);
             }
         }
         else
@@ -446,12 +469,15 @@ public class DatabaseWriteChannel
 
         if (userId > 0)
         {
-            CreditUserBalance(db, userId, rechargeAmount, sim.Id);
-            _logger.LogInformation("Balance credited from recharge SMS (fallback): Modem={Id} Sim={SimId} Old={Old:F2} → New={New:F2}, User credited +{Amount:F2} DZD", modemId, sim.Id, oldSimBalance, sim.Balance, rechargeAmount);
+            var (credited, userOld, userNew) = CreditUserBalance(db, userId, rechargeAmount, sim.Id);
+            if (credited)
+                _logger.LogInformation("CREDIT via recharge SMS: Modem={ModemId} Sim={SimId} User={UserId} +{Amount:F2} DZD, SIM: {Old:F2} → {New:F2}, Wallet: {UserOld:F2} → {UserNew:F2}", modemId, sim.Id, userId, rechargeAmount, oldSimBalance, sim.Balance, userOld, userNew);
+            else
+                _logger.LogWarning("CREDIT FAILED via recharge SMS: Modem={ModemId} Sim={SimId} +{Amount:F2} DZD — user {UserId} not found", modemId, sim.Id, rechargeAmount, userId);
         }
         else
         {
-            _logger.LogWarning("Recharge SMS fallback: SIM balance updated but no user assigned to modem {ModemId} — +{Amount:F2} DZD orphaned", modemId, rechargeAmount);
+            _logger.LogWarning("CREDIT ORPHANED via recharge SMS: Modem={ModemId} Sim={SimId} +{Amount:F2} DZD — no user assigned", modemId, sim.Id, rechargeAmount);
         }
 
         await db.SaveChangesAsync(ct);
@@ -481,6 +507,10 @@ public class DatabaseWriteChannel
         }
 
         db.SmsRecords.Add(sms);
+
+        var smsType = ClassifySmsType(sms.SenderNumber, sms.Content ?? "");
+        _logger.LogInformation("SMS saved: Sim={SimId} Sender={Sender} Type={Type} Content={Content}",
+            sms.SimCardId, sms.SenderNumber, smsType, (sms.Content ?? "").Substring(0, Math.Min(80, sms.Content?.Length ?? 0)));
 
         var isMobilisSms = sms.SenderNumber == "Mobilis" || sms.SenderNumber == "77111" || sms.SenderNumber == "610";
         if (isMobilisSms)
@@ -530,12 +560,15 @@ public class DatabaseWriteChannel
                         if (TryClaimPendingBalanceCheck(sim.ModemId))
                         {
                             var delta = balance.Value - oldSimBalance;
-                            CreditUserBalance(db, userId, delta, sim.Id);
-                            _logger.LogInformation("Balance increased via Solde SMS (pending claim): Sim={SimId} Old={Old:F2} → New={New:F2}, User credited +{Delta:F2} DZD", sim.Id, oldSimBalance, balance.Value, delta);
+                            var (credited, userOld, userNew) = CreditUserBalance(db, userId, delta, sim.Id);
+                            if (credited)
+                                _logger.LogInformation("CREDIT via Solde SMS (pending claim): Sim={SimId} Modem={ModemId} User={UserId} +{Delta:F2} DZD, SIM: {Old:F2} → {New:F2}, Wallet: {UserOld:F2} → {UserNew:F2}", sim.Id, sim.ModemId, userId, delta, oldSimBalance, balance.Value, userOld, userNew);
+                            else
+                                _logger.LogWarning("CREDIT FAILED via Solde SMS: Sim={SimId} Modem={ModemId} +{Delta:F2} DZD — user {UserId} not found", sim.Id, sim.ModemId, delta, userId);
                         }
                         else
                         {
-                            _logger.LogWarning("Balance increased via Solde SMS but no pending *222# flag: Sim={SimId} Old={Old:F2} → New={New:F2} — sim.Balance updated, user NOT credited (no pending flag from *222#)", sim.Id, oldSimBalance, balance.Value);
+                            _logger.LogWarning("Solde SMS balance increased but NO pending *222# flag: Sim={SimId} Modem={ModemId} SIM: {Old:F2} → {New:F2} — user NOT credited (no pending flag)", sim.Id, sim.ModemId, oldSimBalance, balance.Value);
                         }
                     }
                     else if (balance.Value < oldSimBalance)
@@ -585,6 +618,18 @@ public class DatabaseWriteChannel
     {
         return content.Contains("montant de", StringComparison.OrdinalIgnoreCase)
             && content.Contains("reçu", StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static string ClassifySmsType(string sender, string content)
+    {
+        if (sender != "Mobilis" && sender != "77111" && sender != "610") return "other";
+        if (content.Contains("Solde", StringComparison.OrdinalIgnoreCase)) return "balance";
+        if (content.Contains("montant de", StringComparison.OrdinalIgnoreCase)
+            && content.Contains("reçu", StringComparison.OrdinalIgnoreCase)) return "transfer";
+        if (content.Contains("rechargé", StringComparison.OrdinalIgnoreCase)) return "recharge";
+        if (content.Contains("Votre offre", StringComparison.OrdinalIgnoreCase)
+            || content.Contains("offre", StringComparison.OrdinalIgnoreCase)) return "offer";
+        return "mobilis-other";
     }
 
     internal static decimal? ExtractRechargeAmountFromContent(string content)
@@ -764,12 +809,12 @@ public class DatabaseWriteChannel
         return true;
     }
 
-    private static void CreditUserBalance(FocusGateDbContext db, long? userId, decimal amount, long? simCardId)
+    private static (bool credited, decimal oldBalance, decimal newBalance) CreditUserBalance(FocusGateDbContext db, long? userId, decimal amount, long? simCardId)
     {
-        if (amount <= 0 || !userId.HasValue) return;
+        if (amount <= 0 || !userId.HasValue) return (false, 0, 0);
 
         var user = db.Users.FirstOrDefault(u => u.Id == userId.Value);
-        if (user == null) return;
+        if (user == null) return (false, 0, 0);
 
         var oldBalance = user.Balance;
         user.Balance += amount;
@@ -784,6 +829,7 @@ public class DatabaseWriteChannel
             Note = "Credit from SIM",
             RecordedAt = DateTime.UtcNow
         });
+        return (true, oldBalance, user.Balance);
     }
 
     private static Dictionary<string, JsonElement> Deserialize(object data)

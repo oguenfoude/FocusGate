@@ -1,3 +1,4 @@
+using System;
 using System.IO;
 using FocusGate.Core.DTOs;
 using FocusGate.Core.Enums;
@@ -141,6 +142,7 @@ public class ModemHandler : IDisposable
             string? startupRechargeContent = null;
             if (messages.Count > 0)
             {
+                var smsTypes = new Dictionary<string, int>();
                 var tcsList = new List<Task<bool>>();
                 foreach (var msg in messages)
                 {
@@ -153,11 +155,13 @@ public class ModemHandler : IDisposable
                         {
                             SimCardId = _simCardId,
                             SenderNumber = msg.Sender,
-                            Content = msg.Content,
+                            Content = msg.Content ?? "",
                             ReceivedAt = msg.ReceivedAt
                         },
                         Completed = tcs
                     });
+                    var smsType = DatabaseWriteChannel.ClassifySmsType(msg.Sender, msg.Content ?? "");
+                    smsTypes[smsType] = smsTypes.GetValueOrDefault(smsType) + 1;
                     if (startupRechargeContent == null && IsMobilisBalanceTrigger(msg))
                         startupRechargeContent = msg.Content;
                 }
@@ -172,7 +176,8 @@ public class ModemHandler : IDisposable
                 var skippedCount = results.Length - savedCount;
                 try { await _at.DeleteAllSmsAsync(); }
                 catch (Exception ex) { _log.LogWarning(ex, "Modem {Id}: Startup DeleteAllSms failed", _modemId); }
-                _log.LogInformation("Modem {Id}: Processed {TotalCount} startup SMS ({SavedCount} saved, {SkippedCount} skipped/duplicates) and deleted from SIM", _modemId, messages.Count, savedCount, skippedCount);
+                var typeBreakdown = string.Join(", ", smsTypes.Select(kvp => $"{kvp.Key}={kvp.Value}"));
+                _log.LogInformation("Modem {Id}: Startup SMS processed: {TotalCount} total ({SavedCount} saved, {SkippedCount} skipped) Types: [{Types}]", _modemId, messages.Count, savedCount, skippedCount, typeBreakdown);
             }
 
             var status = netReg == NetworkRegistration.Registered ? ModemStatus.Online : ModemStatus.PendingNetwork;
@@ -272,7 +277,8 @@ public class ModemHandler : IDisposable
 
     private async Task RunBalanceCheckFromSmsAsync(string rechargeSmsContent, CancellationToken ct)
     {
-        _log.LogInformation("Modem {Id}: Recharge/transfer SMS detected — running *222# to confirm real balance...", _modemId);
+        var smsType = DatabaseWriteChannel.ClassifySmsType("Mobilis", rechargeSmsContent);
+        _log.LogInformation("Modem {Id}: Mobilis {SmsType} SMS detected — running *222# to confirm real balance... Content: {Content}", _modemId, smsType, rechargeSmsContent.Substring(0, Math.Min(80, rechargeSmsContent.Length)));
         var balance = await _at.GetBalanceAsync();
         if (balance.HasValue)
         {
@@ -542,7 +548,7 @@ public class ModemHandler : IDisposable
                         {
                             SimCardId = _simCardId,
                             SenderNumber = msg.Sender,
-                            Content = msg.Content,
+                            Content = msg.Content ?? "",
                             ReceivedAt = msg.ReceivedAt
                         },
                         Completed = tcs
@@ -553,8 +559,12 @@ public class ModemHandler : IDisposable
                     else
                         skippedCount++;
 
+                    var smsType = DatabaseWriteChannel.ClassifySmsType(msg.Sender, msg.Content ?? "");
                     if (rechargeSmsContent == null && IsMobilisBalanceTrigger(msg))
+                    {
                         rechargeSmsContent = msg.Content;
+                        _log.LogInformation("Modem {Id}: Mobilis {SmsType} trigger detected — will run *222# after poll", _modemId, smsType);
+                    }
                 }
                 catch (TimeoutException) when (_disposed) { }
                 catch (OperationCanceledException) when (_disposed) { }
