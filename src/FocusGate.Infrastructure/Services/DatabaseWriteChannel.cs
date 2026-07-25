@@ -213,6 +213,14 @@ public class DatabaseWriteChannel
             .ExecuteUpdateAsync(s => s
                 .SetProperty(m => m.Status, status)
                 .SetProperty(m => m.UpdatedAt, DateTime.UtcNow), ct);
+
+        if (status == ModemStatus.Offline)
+        {
+            await db.SimCards
+                .Where(s => s.ModemId == modemId && s.IsActive)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(s => s.LastSeen, DateTime.UtcNow), ct);
+        }
     }
 
     private async Task HandleTouchModemUpdatedAtAsync(FocusGateDbContext db, object data, CancellationToken ct)
@@ -338,7 +346,7 @@ public class DatabaseWriteChannel
 
             var userId = await ModemHelper.ResolveUserIdForModemAsync(db, modemId, ct);
             
-            if (oldBalance != newBalance)
+            if (oldBalance != newBalance && newBalance > oldBalance)
             {
                 db.BalanceHistories.Add(new BalanceHistory
                 {
@@ -354,7 +362,7 @@ public class DatabaseWriteChannel
                 _logger.LogInformation("Startup *222# balance: Modem={ModemId} Sim={SimId} Old={Old:F2} → New={New:F2} UserId={UserId}",
                     modemId, sim.Id, oldBalance, newBalance, userId);
 
-                if (userId > 0 && newBalance > oldBalance)
+                if (userId > 0)
                 {
                     var delta = newBalance - oldBalance;
                     var (credited, userOld, userNew) = CreditUserBalance(db, userId, delta, sim.Id);
@@ -382,6 +390,7 @@ public class DatabaseWriteChannel
         var d = Deserialize(data);
         var modemId = d["ModemId"].GetInt32();
         var newBalance = d["Balance"].GetDecimal();
+        var rechargeSmsContent = d.ContainsKey("RechargeSmsContent") ? d["RechargeSmsContent"].GetString() ?? "" : "";
 
         ClearPendingBalanceCheck(modemId);
 
@@ -397,38 +406,38 @@ public class DatabaseWriteChannel
 
         if (oldSimBalance != newBalance)
         {
-            db.BalanceHistories.Add(new BalanceHistory
-            {
-                SimCardId = sim.Id,
-                ModemId = modemId,
-                UserId = userId,
-                Balance = newBalance,
-                PreviousBalance = oldSimBalance,
-                Source = BalanceSource.USSD,
-                RecordedAt = DateTime.UtcNow
-            });
+            var delta = newBalance - oldSimBalance;
 
-            if (userId > 0 && newBalance > oldSimBalance)
+            if (delta > 0 && userId > 0)
             {
-                var delta = newBalance - oldSimBalance;
+                db.BalanceHistories.Add(new BalanceHistory
+                {
+                    SimCardId = sim.Id,
+                    ModemId = modemId,
+                    UserId = userId,
+                    Balance = newBalance,
+                    PreviousBalance = oldSimBalance,
+                    Source = BalanceSource.USSD,
+                    RecordedAt = DateTime.UtcNow
+                });
+
                 var (credited, userOld, userNew) = CreditUserBalance(db, userId, delta, sim.Id);
                 if (credited)
                     _logger.LogInformation("CREDIT via *222#: Modem={ModemId} Sim={SimId} User={UserId} +{Delta:F2} DZD, SIM: {Old:F2} → {New:F2}, Wallet: {UserOld:F2} → {UserNew:F2}", modemId, sim.Id, userId, delta, oldSimBalance, newBalance, userOld, userNew);
                 else
                     _logger.LogWarning("CREDIT FAILED via *222#: Modem={ModemId} Sim={SimId} +{Delta:F2} DZD — user {UserId} not found", modemId, sim.Id, delta, userId);
             }
-            else if (newBalance < oldSimBalance)
+            else
             {
-                _logger.LogInformation("Balance decreased via *222# (offer/deduction): Modem={ModemId} Sim={SimId} Old={Old:F2} → New={New:F2}", modemId, sim.Id, oldSimBalance, newBalance);
-            }
-            else if (userId <= 0 && newBalance > oldSimBalance)
-            {
-                _logger.LogWarning("CREDIT ORPHANED: Modem={ModemId} Sim={SimId} +{Delta:F2} DZD — no user assigned", modemId, sim.Id, newBalance - oldSimBalance);
+                if (newBalance < oldSimBalance)
+                    _logger.LogInformation("Balance decreased via *222# (offer/deduction): Modem={ModemId} Sim={SimId} Old={Old:F2} → New={New:F2}", modemId, sim.Id, oldSimBalance, newBalance);
+                else if (userId <= 0 && newBalance > oldSimBalance)
+                    _logger.LogWarning("CREDIT ORPHANED: Modem={ModemId} Sim={SimId} +{Delta:F2} DZD — no user assigned", modemId, sim.Id, delta);
             }
         }
         else
         {
-            _logger.LogWarning("Balance unchanged after *222# (carrier may not have processed recharge yet): Modem={Id} Balance={Balance:F2} — setting pending flag for Solde SMS fallback", modemId, newBalance);
+            _logger.LogWarning("Balance unchanged after *222# (carrier may not have processed recharge yet): Modem={ModemId} Balance={Balance:F2} — setting pending flag for Solde SMS fallback", modemId, newBalance);
             MarkPendingBalanceCheck(modemId);
         }
 
@@ -512,7 +521,7 @@ public class DatabaseWriteChannel
         _logger.LogInformation("SMS saved: Sim={SimId} Sender={Sender} Type={Type} Content={Content}",
             sms.SimCardId, sms.SenderNumber, smsType, (sms.Content ?? "").Substring(0, Math.Min(80, sms.Content?.Length ?? 0)));
 
-        var isMobilisSms = sms.SenderNumber == "Mobilis" || sms.SenderNumber == "77111" || sms.SenderNumber == "610";
+        var isMobilisSms = sms.SenderNumber?.Trim() is "Mobilis" or "77111" or "610";
         if (isMobilisSms)
         {
             var sim = await db.SimCards.FirstOrDefaultAsync(s => s.Id == sms.SimCardId && s.IsActive, ct);
@@ -540,7 +549,7 @@ public class DatabaseWriteChannel
                 sim.VerifiedAt = now;
                 sim.LastSeen = now;
 
-                if (oldSimBalance != balance.Value)
+                if (oldSimBalance != balance.Value && balance.Value > oldSimBalance)
                 {
                     var userId = await ModemHelper.ResolveUserIdForModemAsync(db, sim.ModemId, ct);
 
@@ -568,7 +577,14 @@ public class DatabaseWriteChannel
                         }
                         else
                         {
-                            _logger.LogWarning("Solde SMS balance increased but NO pending *222# flag: Sim={SimId} Modem={ModemId} SIM: {Old:F2} → {New:F2} — user NOT credited (no pending flag)", sim.Id, sim.ModemId, oldSimBalance, balance.Value);
+                            var delta = balance.Value - oldSimBalance;
+                            MarkPendingBalanceCheck(sim.ModemId);
+                            _logger.LogInformation("Solde SMS balance increased with no pending flag — crediting user directly +{Delta:F2} DZD: Sim={SimId} Modem={ModemId} SIM: {Old:F2} → {New:F2}", delta, sim.Id, sim.ModemId, oldSimBalance, balance.Value);
+                            var (credited, userOld, userNew) = CreditUserBalance(db, userId, delta, sim.Id);
+                            if (credited)
+                                _logger.LogInformation("CREDIT via Solde SMS (direct): Sim={SimId} Modem={ModemId} User={UserId} +{Delta:F2} DZD, SIM: {Old:F2} → {New:F2}, Wallet: {UserOld:F2} → {UserNew:F2}", sim.Id, sim.ModemId, userId, delta, oldSimBalance, balance.Value, userOld, userNew);
+                            else
+                                _logger.LogWarning("CREDIT FAILED via Solde SMS (direct): Sim={SimId} Modem={ModemId} +{Delta:F2} DZD — user {UserId} not found", sim.Id, sim.ModemId, delta, userId);
                         }
                     }
                     else if (balance.Value < oldSimBalance)
@@ -663,6 +679,13 @@ public class DatabaseWriteChannel
         else if (numStr.Contains(','))
         {
             numStr = numStr.Replace(",", ".");
+        }
+        else if (numStr.Contains('.'))
+        {
+            var lastDot = numStr.LastIndexOf('.');
+            var afterDot = numStr[(lastDot + 1)..];
+            if (afterDot.Length == 3)
+                numStr = numStr.Replace(".", "");
         }
 
         if (decimal.TryParse(numStr, System.Globalization.NumberStyles.Any,

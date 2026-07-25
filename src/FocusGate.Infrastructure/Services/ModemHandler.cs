@@ -288,7 +288,7 @@ public class ModemHandler : IDisposable
                 await _db.EnqueueAsync(new()
                 {
                     Type = DatabaseWriteChannel.Op.UpdateSimBalanceFromSms,
-                    Data = new { ModemId = _modemId, Balance = balance.Value }
+                    Data = new { ModemId = _modemId, Balance = balance.Value, RechargeSmsContent = rechargeSmsContent }
                 });
             }
             catch (Exception ex) { _log.LogDebug(ex, "Modem {Id}: UpdateSimBalanceFromSms failed", _modemId); }
@@ -307,7 +307,7 @@ public class ModemHandler : IDisposable
                     await _db.EnqueueAsync(new()
                     {
                         Type = DatabaseWriteChannel.Op.UpdateSimBalanceFromSms,
-                        Data = new { ModemId = _modemId, Balance = balance.Value }
+                        Data = new { ModemId = _modemId, Balance = balance.Value, RechargeSmsContent = rechargeSmsContent }
                     });
                 }
                 catch (Exception ex) { _log.LogDebug(ex, "Modem {Id}: UpdateSimBalanceFromSms failed", _modemId); }

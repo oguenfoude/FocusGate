@@ -41,40 +41,23 @@ dotnet run --project src/FocusGate.HiLink    # HiLink modems + auto-launches Das
 dotnet run --project src/FocusGate.AT         # AT modems + auto-launches Dashboard
 dotnet run --project src/FocusGate.Dashboard  # Dashboard only (port 5080)
 
-# Publish self-contained (Alaafi)
-dotnet publish src/FocusGate.HiLink -c Release -r win-x64 --self-contained -o dist/alaafi
-dotnet publish src/FocusGate.Dashboard -c Release -r win-x64 --self-contained -o dist/alaafi-dashboard
+# Publish self-contained (single dist)
+dotnet publish src/FocusGate.HiLink -c Release -r win-x64 --self-contained -o dist/focusgate
+dotnet publish src/FocusGate.Dashboard -c Release -r win-x64 --self-contained -o dist/focusgate-dashboard
 
-# Publish self-contained (FlexiDZ)
-dotnet publish src/FocusGate.HiLink -c Release -r win-x64 --self-contained -o dist/flixiDz
-dotnet publish src/FocusGate.Dashboard -c Release -r win-x64 --self-contained -o dist/flixiDz-dashboard
-
-# After publishing Dashboard, copy to each brand dist:
-Copy-Item dist\alaafi-dashboard\FocusGate.Dashboard.exe dist\alaafi\ -Force
-Copy-Item dist\alaafi-dashboard\FocusGate.Dashboard.dll dist\alaafi\ -Force
-Copy-Item dist\alaafi-dashboard\FocusGate.Dashboard.pdb dist\alaafi\ -Force
-Copy-Item dist\alaafi-dashboard\FocusGate.Dashboard.deps.json dist\alaafi\ -Force
-Copy-Item dist\alaafi-dashboard\FocusGate.Dashboard.runtimeconfig.json dist\alaafi\ -Force
-Copy-Item dist\alaafi-dashboard\FocusGate.Dashboard.staticwebassets.endpoints.json dist\alaafi\ -Force
-Copy-Item dist\alaafi-dashboard\appsettings.json dist\alaafi\ -Force
-Copy-Item dist\alaafi-dashboard\web.config dist\alaafi\ -Force
-Copy-Item dist\alaafi-dashboard\en dist\alaafi\en -Recurse -Force
-Copy-Item dist\alaafi-dashboard\fr dist\alaafi\fr -Recurse -Force
-Copy-Item dist\alaafi-dashboard\ar dist\alaafi\ar -Recurse -Force
-Copy-Item dist\alaafi-dashboard\wwwroot dist\alaafi\wwwroot -Recurse -Force
-
-Copy-Item dist\flixiDz-dashboard\FocusGate.Dashboard.exe dist\flixiDz\ -Force
-Copy-Item dist\flixiDz-dashboard\FocusGate.Dashboard.dll dist\flixiDz\ -Force
-Copy-Item dist\flixiDz-dashboard\FocusGate.Dashboard.pdb dist\flixiDz\ -Force
-Copy-Item dist\flixiDz-dashboard\FocusGate.Dashboard.deps.json dist\flixiDz\ -Force
-Copy-Item dist\flixiDz-dashboard\FocusGate.Dashboard.runtimeconfig.json dist\flixiDz\ -Force
-Copy-Item dist\flixiDz-dashboard\FocusGate.Dashboard.staticwebassets.endpoints.json dist\flixiDz\ -Force
-Copy-Item dist\flixiDz-dashboard\appsettings.json dist\flixiDz\ -Force
-Copy-Item dist\flixiDz-dashboard\web.config dist\flixiDz\ -Force
-Copy-Item dist\flixiDz-dashboard\en dist\flixiDz\en -Recurse -Force
-Copy-Item dist\flixiDz-dashboard\fr dist\flixiDz\fr -Recurse -Force
-Copy-Item dist\flixiDz-dashboard\ar dist\flixiDz\ar -Recurse -Force
-Copy-Item dist\flixiDz-dashboard\wwwroot dist\flixiDz\wwwroot -Recurse -Force
+# Merge Dashboard into HiLink dist
+Copy-Item dist\focusgate-dashboard\FocusGate.Dashboard.exe dist\focusgate\ -Force
+Copy-Item dist\focusgate-dashboard\FocusGate.Dashboard.dll dist\focusgate\ -Force
+Copy-Item dist\focusgate-dashboard\FocusGate.Dashboard.pdb dist\focusgate\ -Force
+Copy-Item dist\focusgate-dashboard\FocusGate.Dashboard.deps.json dist\focusgate\ -Force
+Copy-Item dist\focusgate-dashboard\FocusGate.Dashboard.runtimeconfig.json dist\focusgate\ -Force
+Copy-Item dist\focusgate-dashboard\FocusGate.Dashboard.staticwebassets.endpoints.json dist\focusgate\ -Force
+Copy-Item dist\focusgate-dashboard\appsettings.json dist\focusgate\ -Force
+Copy-Item dist\focusgate-dashboard\web.config dist\focusgate\ -Force
+Copy-Item dist\focusgate-dashboard\en dist\focusgate\en -Recurse -Force
+Copy-Item dist\focusgate-dashboard\fr dist\focusgate\fr -Recurse -Force
+Copy-Item dist\focusgate-dashboard\ar dist\focusgate\ar -Recurse -Force
+Copy-Item dist\focusgate-dashboard\wwwroot dist\focusgate\wwwroot -Recurse -Force
 ```
 
 ### Next.js Web App
@@ -103,8 +86,8 @@ npm start        # Production server
 - **MongoDB collection names are ALL lowercase** — .NET `FocusGateMongoClient.cs` uses `"modems"`, `"simcards"`, etc. Next.js Mongoose models must match.
 - **MongoDB `_id` is Number (long)** — NOT ObjectId. `BsonClassMap.MapIdMember(m => m.Id)` maps C# `long Id` to MongoDB `_id`.
 - **Balance architecture:** Two sources for balance tracking:
-  - `*222#` USSD → primary source. Credits user on increase. Creates BalanceHistory (Source=USSD).
-  - "Solde" SMS → fallback when *222# returns "processing". Updates `sim.Balance` + BalanceHistory (Source=SMS). Only credits user if `_pendingBalanceChecks` flag was set (within 2 minutes).
+  - `*222#` USSD → primary source. Credits user on increase (full delta, not individual SMS amounts). Creates BalanceHistory (Source=USSD).
+  - "Solde" SMS → fallback when *222# returns "processing". Updates `sim.Balance` + BalanceHistory (Source=SMS). Credits user if balance increased (pending flag or direct).
   - **Pending flag:** When *222# returns "processing", `MarkPendingBalanceCheck(modemId)` is called. When "Solde" SMS arrives, `TryClaimPendingBalanceCheck(modemId)` gates the user credit. This prevents double-crediting and avoids crediting old startup SMS.
   - Never parse amounts from SMS text for crediting — only `*222#` or pending-flagged "Solde" SMS credit the user.
 - **MachineId:** Each machine has a unique ID from `MachineInfoService`. Dev machine: `d26b1c221259fb12`. Client (BERRAR): `419c0cfc97666753`.
@@ -290,7 +273,7 @@ BackgroundService. Bidirectional sync every 30s:
 
 - **MachineId:** `419c0cfc97666753`
 - **Data path:** `C:\Users\BERRAR\AppData\Roaming\FocusGate\`
-- **Deploy:** Copy `dist\hilink\*` to client PC, run `FocusGate.HiLink.exe`
+- **Deploy:** Copy `dist\focusgate\*` to client PC, run `FocusGate.HiLink.exe`
 - **Database reset:** Delete `focusgate.db` + `-shm` + `-wal` files, restart to re-seed `admin:admin`
 
 ### Client PC (Alaafi)
@@ -298,7 +281,7 @@ BackgroundService. Bidirectional sync every 30s:
 - **MachineId:** `fb96ac5207011ae1`
 - **Data path:** `C:\Users\DELL\AppData\Roaming\FocusGate\`
 - **Content root:** `C:\Users\DELL\Documents\alaafi\`
-- **Deploy:** Copy `dist\alaafi\*` to content root, run `FocusGate.HiLink.exe`
+- **Deploy:** Copy `dist\focusgate\*` to content root, run `FocusGate.HiLink.exe`
 - **Database reset:** Delete `focusgate.db` + `-shm` + `-wal` files, restart to re-seed `admin:admin`
 
 ### Mutexes & Pipes
