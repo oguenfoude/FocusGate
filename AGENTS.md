@@ -41,40 +41,23 @@ dotnet run --project src/FocusGate.HiLink    # HiLink modems + auto-launches Das
 dotnet run --project src/FocusGate.AT         # AT modems + auto-launches Dashboard
 dotnet run --project src/FocusGate.Dashboard  # Dashboard only (port 5080)
 
-# Publish self-contained (Alaafi)
-dotnet publish src/FocusGate.HiLink -c Release -r win-x64 --self-contained -o dist/alaafi
-dotnet publish src/FocusGate.Dashboard -c Release -r win-x64 --self-contained -o dist/alaafi-dashboard
+# Publish self-contained (single dist)
+dotnet publish src/FocusGate.HiLink -c Release -r win-x64 --self-contained -o dist/focusgate
+dotnet publish src/FocusGate.Dashboard -c Release -r win-x64 --self-contained -o dist/focusgate-dashboard
 
-# Publish self-contained (FlexiDZ)
-dotnet publish src/FocusGate.HiLink -c Release -r win-x64 --self-contained -o dist/flixiDz
-dotnet publish src/FocusGate.Dashboard -c Release -r win-x64 --self-contained -o dist/flixiDz-dashboard
-
-# After publishing Dashboard, copy to each brand dist:
-Copy-Item dist\alaafi-dashboard\FocusGate.Dashboard.exe dist\alaafi\ -Force
-Copy-Item dist\alaafi-dashboard\FocusGate.Dashboard.dll dist\alaafi\ -Force
-Copy-Item dist\alaafi-dashboard\FocusGate.Dashboard.pdb dist\alaafi\ -Force
-Copy-Item dist\alaafi-dashboard\FocusGate.Dashboard.deps.json dist\alaafi\ -Force
-Copy-Item dist\alaafi-dashboard\FocusGate.Dashboard.runtimeconfig.json dist\alaafi\ -Force
-Copy-Item dist\alaafi-dashboard\FocusGate.Dashboard.staticwebassets.endpoints.json dist\alaafi\ -Force
-Copy-Item dist\alaafi-dashboard\appsettings.json dist\alaafi\ -Force
-Copy-Item dist\alaafi-dashboard\web.config dist\alaafi\ -Force
-Copy-Item dist\alaafi-dashboard\en dist\alaafi\en -Recurse -Force
-Copy-Item dist\alaafi-dashboard\fr dist\alaafi\fr -Recurse -Force
-Copy-Item dist\alaafi-dashboard\ar dist\alaafi\ar -Recurse -Force
-Copy-Item dist\alaafi-dashboard\wwwroot dist\alaafi\wwwroot -Recurse -Force
-
-Copy-Item dist\flixiDz-dashboard\FocusGate.Dashboard.exe dist\flixiDz\ -Force
-Copy-Item dist\flixiDz-dashboard\FocusGate.Dashboard.dll dist\flixiDz\ -Force
-Copy-Item dist\flixiDz-dashboard\FocusGate.Dashboard.pdb dist\flixiDz\ -Force
-Copy-Item dist\flixiDz-dashboard\FocusGate.Dashboard.deps.json dist\flixiDz\ -Force
-Copy-Item dist\flixiDz-dashboard\FocusGate.Dashboard.runtimeconfig.json dist\flixiDz\ -Force
-Copy-Item dist\flixiDz-dashboard\FocusGate.Dashboard.staticwebassets.endpoints.json dist\flixiDz\ -Force
-Copy-Item dist\flixiDz-dashboard\appsettings.json dist\flixiDz\ -Force
-Copy-Item dist\flixiDz-dashboard\web.config dist\flixiDz\ -Force
-Copy-Item dist\flixiDz-dashboard\en dist\flixiDz\en -Recurse -Force
-Copy-Item dist\flixiDz-dashboard\fr dist\flixiDz\fr -Recurse -Force
-Copy-Item dist\flixiDz-dashboard\ar dist\flixiDz\ar -Recurse -Force
-Copy-Item dist\flixiDz-dashboard\wwwroot dist\flixiDz\wwwroot -Recurse -Force
+# Merge Dashboard into HiLink dist
+Copy-Item dist\focusgate-dashboard\FocusGate.Dashboard.exe dist\focusgate\ -Force
+Copy-Item dist\focusgate-dashboard\FocusGate.Dashboard.dll dist\focusgate\ -Force
+Copy-Item dist\focusgate-dashboard\FocusGate.Dashboard.pdb dist\focusgate\ -Force
+Copy-Item dist\focusgate-dashboard\FocusGate.Dashboard.deps.json dist\focusgate\ -Force
+Copy-Item dist\focusgate-dashboard\FocusGate.Dashboard.runtimeconfig.json dist\focusgate\ -Force
+Copy-Item dist\focusgate-dashboard\FocusGate.Dashboard.staticwebassets.endpoints.json dist\focusgate\ -Force
+Copy-Item dist\focusgate-dashboard\appsettings.json dist\focusgate\ -Force
+Copy-Item dist\focusgate-dashboard\web.config dist\focusgate\ -Force
+Copy-Item dist\focusgate-dashboard\en dist\focusgate\en -Recurse -Force
+Copy-Item dist\focusgate-dashboard\fr dist\focusgate\fr -Recurse -Force
+Copy-Item dist\focusgate-dashboard\ar dist\focusgate\ar -Recurse -Force
+Copy-Item dist\focusgate-dashboard\wwwroot dist\focusgate\wwwroot -Recurse -Force
 ```
 
 ### Next.js Web App
@@ -102,10 +85,15 @@ npm start        # Production server
 - **MongoDB pull uses in-memory matching** — Loads local records by ID list, matches in Dictionary. EF Core can't translate `Func<T, object>` in LINQ expressions (CS1963).
 - **MongoDB collection names are ALL lowercase** — .NET `FocusGateMongoClient.cs` uses `"modems"`, `"simcards"`, etc. Next.js Mongoose models must match.
 - **MongoDB `_id` is Number (long)** — NOT ObjectId. `BsonClassMap.MapIdMember(m => m.Id)` maps C# `long Id` to MongoDB `_id`.
-- **Balance architecture:** SMS from Mobilis is a TRIGGER only. Never parse amounts from SMS text. `*222#` USSD is the single source of truth for `SimCard.Balance`.
+- **Balance architecture:** Two sources for balance tracking:
+  - `*222#` USSD → primary source. Credits user on increase (full delta, not individual SMS amounts). Creates BalanceHistory (Source=USSD).
+  - "Solde" SMS → fallback when *222# returns "processing". Updates `sim.Balance` + BalanceHistory (Source=SMS). Credits user if balance increased (pending flag or direct).
+  - **Pending flag:** When *222# returns "processing", `MarkPendingBalanceCheck(modemId)` is called. When "Solde" SMS arrives, `TryClaimPendingBalanceCheck(modemId)` gates the user credit. This prevents double-crediting and avoids crediting old startup SMS.
+  - Never parse amounts from SMS text for crediting — only `*222#` or pending-flagged "Solde" SMS credit the user.
 - **MachineId:** Each machine has a unique ID from `MachineInfoService`. Dev machine: `d26b1c221259fb12`. Client (BERRAR): `419c0cfc97666753`.
 - **HTMX in Dashboard:** POST handlers must use `Response.Headers["HX-Redirect"]` + `return new EmptyResult()` — NOT `RedirectToPage()`. `_ViewStart.cshtml` sets `Layout = null` for `HX-Request` header.
 - **Dashboard DI:** Uses `AddFocusGateDashboard()` (lightweight — no MongoSync, no ConsoleCommandHandler, no RestartService).
+- **Dashboard timezone:** Use `.ToDisplayTime(Config)` extension (NOT `.ToLocalTime()`). Reads `display.timezone_offset_hours` from config; if empty, falls back to `TimeZoneInfo.FindSystemTimeZoneById("Africa/Algiers")`.
 - **Safe shutdown:** `writeChannel.CompleteAsync()` in `ApplicationStopped` (after host.RunAsync returns). Dashboard process tracked and killed in `ApplicationStopped`.
 
 ### Next.js
@@ -159,11 +147,11 @@ Scan Cycle (30s): probe for new modems → orphan check for missing modems
 ### Mobilis SMS Trigger
 
 ```
-When recharge/transfer SMS from "Mobilis" or "77111" detected:
-  → Parse "Solde" from SMS content
+When recharge/transfer SMS from "Mobilis" or "77111" detected (contains "montant de" + "reçu"):
   → *222# USSD to confirm real balance
-  → Update SimCard.Balance + BalanceHistory
-  → Credit user balance if increase detected
+  → If *222# returns balance: credit user + create BalanceHistory (Source=USSD)
+  → If *222# returns "processing": set pending flag, wait for "Solde" SMS
+  → When "Solde" SMS arrives with pending flag: credit user + create BalanceHistory (Source=SMS)
 ```
 
 ### Key: `*222#` Only Fires At
@@ -285,7 +273,15 @@ BackgroundService. Bidirectional sync every 30s:
 
 - **MachineId:** `419c0cfc97666753`
 - **Data path:** `C:\Users\BERRAR\AppData\Roaming\FocusGate\`
-- **Deploy:** Copy `dist\hilink\*` to client PC, run `FocusGate.HiLink.exe`
+- **Deploy:** Copy `dist\focusgate\*` to client PC, run `FocusGate.HiLink.exe`
+- **Database reset:** Delete `focusgate.db` + `-shm` + `-wal` files, restart to re-seed `admin:admin`
+
+### Client PC (Alaafi)
+
+- **MachineId:** `fb96ac5207011ae1`
+- **Data path:** `C:\Users\DELL\AppData\Roaming\FocusGate\`
+- **Content root:** `C:\Users\DELL\Documents\alaafi\`
+- **Deploy:** Copy `dist\focusgate\*` to content root, run `FocusGate.HiLink.exe`
 - **Database reset:** Delete `focusgate.db` + `-shm` + `-wal` files, restart to re-seed `admin:admin`
 
 ### Mutexes & Pipes
@@ -307,3 +303,15 @@ BackgroundService. Bidirectional sync every 30s:
 - **SendUssdAsync on HiLink** sends `POST /api/ussd/send` then polls `GET /api/ussd/get` every 2s
 - **125002 error** means SMS inbox full — DeleteAllSmsAsync falls back to index-based deletion (1-50)
 - **Session refresh failure** clears _sessionCookie, _csrfToken, sets _isOpen=false — forces clean re-handshake
+
+## Config Keys (config.json)
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `modem.timezone_offset_hours` | `1` | UTC offset for modem date parsing (Algeria = UTC+1) |
+| `display.timezone_offset_hours` | `""` (empty = use Algeria TZ) | Override display timezone. Empty = use `Africa/Algiers` |
+| `modem.max_count` | `15` | Maximum modems per orchestrator |
+| `modem.ussd.balance_code` | `*222#` | USSD code for balance check |
+| `modem.ussd.phone_code` | `*101#` | USSD code for phone number |
+| `mongodb.uri` | (cluster URI) | MongoDB Atlas connection string |
+| `mongodb.database` | `focusgate` | MongoDB database name |
