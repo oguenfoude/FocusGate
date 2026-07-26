@@ -95,7 +95,10 @@ public class AtModemOrchestrator : BackgroundService
 
         var probes = toProbe.Select(p => (Port: p, Task: ProbeAsync(p, ct))).ToList();
         var probeTimeout = Task.Delay(8000, ct);
-        await Task.WhenAny(Task.WhenAll(probes.Select(x => x.Task)), probeTimeout);
+        var whenAllProbes = Task.WhenAll(probes.Select(x => x.Task));
+        await Task.WhenAny(whenAllProbes, probeTimeout);
+        if (whenAllProbes.IsCompleted)
+            _ = whenAllProbes.ContinueWith(t => { _ = t.Exception; }, TaskContinuationOptions.OnlyOnFaulted);
 
         foreach (var (port, task) in probes)
         {

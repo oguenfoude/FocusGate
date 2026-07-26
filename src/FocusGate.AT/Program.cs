@@ -10,6 +10,19 @@ using Microsoft.Extensions.Logging;
 using Serilog;
 using Serilog.Events;
 
+AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+{
+    var ex = e.ExceptionObject as Exception;
+    Console.WriteLine($"[FATAL] Unhandled exception: {ex?.Message ?? e.ExceptionObject.ToString()}");
+    Console.WriteLine($"[FATAL] Terminating: {e.IsTerminating}");
+};
+
+TaskScheduler.UnobservedTaskException += (_, e) =>
+{
+    Console.WriteLine($"[ERROR] Unobserved task exception: {e.Exception}");
+    e.SetObserved();
+};
+
 System.Diagnostics.Process? dashboardProcess = null;
 
 using var appCts = new CancellationTokenSource();

@@ -251,7 +251,7 @@ public class HiLinkModemOrchestrator : BackgroundService
                 _log.LogInformation("{Ip}: Handler started (total active: {Count})", device.Ip, _handlers.Count);
 
                 var capturedModemId = modem.Id;
-                _ = Task.Run(async () =>
+                var handlerTask = Task.Run(async () =>
                 {
                     try
                     {
@@ -273,6 +273,7 @@ public class HiLinkModemOrchestrator : BackgroundService
                         try { await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.UpdateModemStatus, Data = new { ModemId = capturedModemId, Status = ModemStatus.Offline } }); } catch { }
                     }
                 }, ct);
+                _ = handlerTask.ContinueWith(t => { _ = t.Exception; }, TaskContinuationOptions.OnlyOnFaulted);
             }
             catch (Exception ex)
             {
