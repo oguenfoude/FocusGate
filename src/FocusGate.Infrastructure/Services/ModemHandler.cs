@@ -383,11 +383,19 @@ public class ModemHandler : IDisposable
                     {
                         try { await Task.WhenAll(tasks); }
                         catch (OperationCanceledException) { }
+                        catch (Exception ex) { _log.LogDebug(ex, "Modem {Id}: Loop fault during shutdown", _modemId); }
                     }
                 }
                 catch (Exception ex) { _log.LogDebug(ex, "Modem {Id}: Loop shutdown error", _modemId); }
             });
-            task.Wait(DisposeLoopTimeout);
+            if (!task.Wait(DisposeLoopTimeout))
+            {
+                _log.LogWarning("Modem {Id}: Loop shutdown timed out after {Timeout}ms — observing faulted task", _modemId, DisposeLoopTimeout);
+                task.ContinueWith(t =>
+                {
+                    if (t.IsFaulted) _ = t.Exception;
+                }, TaskContinuationOptions.OnlyOnFaulted);
+            }
         }
         catch { }
         try { _loopCts.Dispose(); } catch { }
