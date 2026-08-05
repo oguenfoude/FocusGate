@@ -19,6 +19,7 @@ public class HiLinkModemOrchestrator : BackgroundService
     private readonly ILogger<HiLinkModemOrchestrator> _log;
     private readonly IConfigProvider _config;
     private readonly ILoggerFactory _loggerFactory;
+    private readonly MeetMobService _meetMob;
     private readonly ConcurrentDictionary<string, (ModemHandler handler, string imei)> _handlers = new();
     private readonly ConcurrentDictionary<string, byte> _activeImeis = new();
     private readonly ConcurrentDictionary<string, int> _blacklistedIps = new();
@@ -35,6 +36,7 @@ public class HiLinkModemOrchestrator : BackgroundService
         _config = config;
         _loggerFactory = loggerFactory;
         _maxModems = _config.Get("modem.max_count", 30);
+        _meetMob = new MeetMobService(new MeetMobTokenStore(), loggerFactory.CreateLogger<MeetMobService>(), config);
     }
 
     protected override async Task ExecuteAsync(CancellationToken ct)
@@ -249,7 +251,7 @@ public class HiLinkModemOrchestrator : BackgroundService
 
                 if (modem == null) { _log.LogWarning("{Ip}: Modem not found after insert — freeing IMEI {IMEI}", device.Ip, imei); _activeImeis.TryRemove(imei, out _); try { hilink.Dispose(); } catch { } continue; }
 
-                var handler = new ModemHandler(hilink, _db, _loggerFactory.CreateLogger<ModemHandler>(), _config, modem.Id, device.Ip, isHiLink: true);
+                var handler = new ModemHandler(hilink, _db, _loggerFactory.CreateLogger<ModemHandler>(), _config, modem.Id, device.Ip, isHiLink: true, meetMob: _meetMob);
 
                 _handlers[device.Ip] = (handler, imei);
                 startedNewHandlers = true;

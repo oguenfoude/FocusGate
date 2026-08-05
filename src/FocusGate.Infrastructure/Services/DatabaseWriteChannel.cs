@@ -36,7 +36,8 @@ public class DatabaseWriteChannel
         ProcessWithdrawal,
         UpdateSimBalanceFromSms,
         TouchModemUpdatedAt,
-        CreditUserFromRechargeSms
+        CreditUserFromRechargeSms,
+        InsertMeetMobHistory
     }
 
     public DatabaseWriteChannel(IServiceProvider services, ILogger<DatabaseWriteChannel> logger)
@@ -99,6 +100,14 @@ public class DatabaseWriteChannel
         return sim != null ? (sim.IMSI, sim.PhoneNumber) : (string.Empty, 0L);
     }
 
+    public async Task<string?> GetPhoneNumberAsync(string imsi)
+    {
+        using var scope = _services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<FocusGateDbContext>();
+        var sim = await db.SimCards.FirstOrDefaultAsync(s => s.IMSI == imsi && s.IsActive && s.PhoneNumber > 0);
+        return sim?.PhoneNumber > 0 ? sim.PhoneNumber.ToString() : null;
+    }
+
     public class WriteOperation
     {
         public Op Type { get; set; }
@@ -144,6 +153,7 @@ public class DatabaseWriteChannel
                     case Op.UpdateSimBalanceFromSms: success = await HandleUpdateSimBalanceFromSmsAsync(db, op.Data!, ct); break;
                     case Op.TouchModemUpdatedAt:    await HandleTouchModemUpdatedAtAsync(db, op.Data!, ct); success = true; break;
                     case Op.CreditUserFromRechargeSms: success = await HandleCreditUserFromRechargeSmsAsync(db, op.Data!, ct); break;
+                    case Op.InsertMeetMobHistory: success = await HandleInsertMeetMobHistoryAsync(db, op.Data!, ct); break;
                 }
                 op.Completed?.TrySetResult(success);
             }
@@ -330,6 +340,14 @@ public class DatabaseWriteChannel
         var d = Deserialize(data);
         var modemId = d["ModemId"].GetInt32();
         var newBalance = d["Balance"].GetDecimal();
+        var source = BalanceSource.USSD;
+        if (d.TryGetValue("Source", out var srcElem))
+        {
+            if (srcElem.ValueKind == JsonValueKind.String)
+                Enum.TryParse<BalanceSource>(srcElem.GetString(), true, out source);
+            else if (srcElem.ValueKind == JsonValueKind.Number)
+                source = (BalanceSource)srcElem.GetInt32();
+        }
 
         var sim = await db.SimCards.FirstOrDefaultAsync(s => s.ModemId == modemId && s.IsActive, ct);
         if (sim != null)
@@ -348,40 +366,48 @@ public class DatabaseWriteChannel
             
             if (oldBalance != newBalance && newBalance > oldBalance)
             {
-                db.BalanceHistories.Add(new BalanceHistory
+                var now = DateTime.UtcNow;
+                if (!await IsDuplicateBalanceHistoryAsync(db, sim.Id, source, now, newBalance))
                 {
-                    SimCardId = sim.Id,
-                    ModemId = modemId,
-                    UserId = userId,
-                    Balance = newBalance,
-                    PreviousBalance = oldBalance,
-                    Source = BalanceSource.USSD,
-                    RecordedAt = DateTime.UtcNow
-                });
+                    db.BalanceHistories.Add(new BalanceHistory
+                    {
+                        SimCardId = sim.Id,
+                        ModemId = modemId,
+                        UserId = userId,
+                        Balance = newBalance,
+                        PreviousBalance = oldBalance,
+                        Source = source,
+                        RecordedAt = now
+                    });
 
-                _logger.LogInformation("Startup *222# balance: Modem={ModemId} Sim={SimId} Old={Old:F2} → New={New:F2} UserId={UserId}",
-                    modemId, sim.Id, oldBalance, newBalance, userId);
+                    _logger.LogInformation("{Source} balance: Modem={ModemId} Sim={SimId} Old={Old:F2} → New={New:F2} UserId={UserId}",
+                        source, modemId, sim.Id, oldBalance, newBalance, userId);
 
-                if (userId > 0)
+                    if (userId > 0)
+                    {
+                        var delta = newBalance - oldBalance;
+                        var (credited, userOld, userNew) = CreditUserBalance(db, userId, delta, sim.Id);
+                        if (credited)
+                            _logger.LogInformation("Startup credit: Modem={ModemId} Sim={SimId} User={UserId} +{Delta:F2} DZD, Wallet: {UserOld:F2} → {UserNew:F2}", modemId, sim.Id, userId, delta, userOld, userNew);
+                        else
+                            _logger.LogWarning("Startup credit FAILED: Modem={ModemId} Sim={SimId} +{Delta:F2} DZD — user {UserId} not found in DB", modemId, sim.Id, delta, userId);
+                    }
+                }
+                else
                 {
-                    var delta = newBalance - oldBalance;
-                    var (credited, userOld, userNew) = CreditUserBalance(db, userId, delta, sim.Id);
-                    if (credited)
-                        _logger.LogInformation("Startup credit: Modem={ModemId} Sim={SimId} User={UserId} +{Delta:F2} DZD, Wallet: {UserOld:F2} → {UserNew:F2}", modemId, sim.Id, userId, delta, userOld, userNew);
-                    else
-                        _logger.LogWarning("Startup credit FAILED: Modem={ModemId} Sim={SimId} +{Delta:F2} DZD — user {UserId} not found in DB", modemId, sim.Id, delta, userId);
+                    _logger.LogInformation("{Source} balance duplicate skipped: Modem={ModemId} Sim={SimId} Balance={Balance:F2}", source, modemId, sim.Id, newBalance);
                 }
             }
             else
             {
-                _logger.LogInformation("Startup *222# balance unchanged: Modem={ModemId} Sim={SimId} Balance={Balance:F2} UserId={UserId}",
-                    modemId, sim.Id, newBalance, userId);
+                _logger.LogInformation("{Source} balance unchanged: Modem={ModemId} Sim={SimId} Balance={Balance:F2} UserId={UserId}",
+                    source, modemId, sim.Id, newBalance, userId);
             }
 
             await db.SaveChangesAsync(ct);
             return true;
         }
-        _logger.LogWarning("Startup *222# balance: No active SIM on modem {ModemId}", modemId);
+        _logger.LogWarning("{Source} balance: No active SIM on modem {ModemId}", source, modemId);
         return false;
     }
 
@@ -391,6 +417,14 @@ public class DatabaseWriteChannel
         var modemId = d["ModemId"].GetInt32();
         var newBalance = d["Balance"].GetDecimal();
         var rechargeSmsContent = d.ContainsKey("RechargeSmsContent") ? d["RechargeSmsContent"].GetString() ?? "" : "";
+        var source = BalanceSource.SMS;
+        if (d.TryGetValue("Source", out var srcElem))
+        {
+            if (srcElem.ValueKind == JsonValueKind.String)
+                Enum.TryParse<BalanceSource>(srcElem.GetString(), true, out source);
+            else if (srcElem.ValueKind == JsonValueKind.Number)
+                source = (BalanceSource)srcElem.GetInt32();
+        }
 
         ClearPendingBalanceCheck(modemId);
 
@@ -410,22 +444,30 @@ public class DatabaseWriteChannel
 
             if (delta > 0 && userId > 0)
             {
-                db.BalanceHistories.Add(new BalanceHistory
+                var now = DateTime.UtcNow;
+                if (!await IsDuplicateBalanceHistoryAsync(db, sim.Id, source, now, newBalance))
                 {
-                    SimCardId = sim.Id,
-                    ModemId = modemId,
-                    UserId = userId,
-                    Balance = newBalance,
-                    PreviousBalance = oldSimBalance,
-                    Source = BalanceSource.SMS,
-                    RecordedAt = DateTime.UtcNow
-                });
+                    db.BalanceHistories.Add(new BalanceHistory
+                    {
+                        SimCardId = sim.Id,
+                        ModemId = modemId,
+                        UserId = userId,
+                        Balance = newBalance,
+                        PreviousBalance = oldSimBalance,
+                        Source = source,
+                        RecordedAt = now
+                    });
 
-                var (credited, userOld, userNew) = CreditUserBalance(db, userId, delta, sim.Id);
-            if (credited)
-                _logger.LogInformation("CREDIT via Solde SMS: Modem={ModemId} Sim={SimId} User={UserId} +{Delta:F2} DZD, SIM: {Old:F2} → {New:F2}, Wallet: {UserOld:F2} → {UserNew:F2}", modemId, sim.Id, userId, delta, oldSimBalance, newBalance, userOld, userNew);
-            else
-                _logger.LogWarning("CREDIT FAILED via Solde SMS: Modem={ModemId} Sim={SimId} +{Delta:F2} DZD — user {UserId} not found", modemId, sim.Id, delta, userId);
+                    var (credited, userOld, userNew) = CreditUserBalance(db, userId, delta, sim.Id);
+                if (credited)
+                    _logger.LogInformation("CREDIT via {Source}: Modem={ModemId} Sim={SimId} User={UserId} +{Delta:F2} DZD, SIM: {Old:F2} → {New:F2}, Wallet: {UserOld:F2} → {UserNew:F2}", source, modemId, sim.Id, userId, delta, oldSimBalance, newBalance, userOld, userNew);
+                else
+                    _logger.LogWarning("CREDIT FAILED via {Source}: Modem={ModemId} Sim={SimId} +{Delta:F2} DZD — user {UserId} not found", source, modemId, sim.Id, delta, userId);
+                }
+                else
+                {
+                    _logger.LogInformation("Balance history duplicate skipped: Modem={ModemId} Sim={SimId} Balance={Balance:F2}", modemId, sim.Id, newBalance);
+                }
             }
             else
             {
@@ -849,9 +891,88 @@ public class DatabaseWriteChannel
         return (true, oldBalance, user.Balance);
     }
 
+    private async Task<bool> HandleInsertMeetMobHistoryAsync(FocusGateDbContext db, object data, CancellationToken ct)
+    {
+        var d = Deserialize(data);
+        var modemId = d["ModemId"].GetInt32();
+        var imsi = d["Imsi"].GetString() ?? "";
+        var records = JsonSerializer.Deserialize<List<MeetMobRechargeRecordDto>>(d["Records"].GetRawText()) ?? new();
+
+        var sim = await db.SimCards.FirstOrDefaultAsync(s => s.ModemId == modemId && s.IsActive, ct);
+        if (sim == null)
+        {
+            _logger.LogWarning("MeetMob history: No active SIM on modem {ModemId}", modemId);
+            return false;
+        }
+
+        var userId = await ModemHelper.ResolveUserIdForModemAsync(db, modemId, ct);
+        var inserted = 0;
+
+        foreach (var record in records)
+        {
+            if (!DateTime.TryParse(record.TradeTime, System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AssumeLocal, out var recordedAt))
+            {
+                _logger.LogDebug("MeetMob history: Failed to parse timestamp '{Time}' for modem {ModemId}", record.TradeTime, modemId);
+                continue;
+            }
+
+            if (!decimal.TryParse(MeetMobService.NormalizeMeetMobAmount(record.Amount),
+                System.Globalization.NumberStyles.Number,
+                System.Globalization.CultureInfo.InvariantCulture, out var amount) || amount <= 0)
+            {
+                _logger.LogDebug("MeetMob history: Failed to parse amount '{Amount}' for modem {ModemId}", record.Amount, modemId);
+                continue;
+            }
+
+            var oldBalance = sim.Balance;
+            sim.Balance = amount;
+            sim.VerifiedAt = DateTime.UtcNow;
+            sim.LastSeen = DateTime.UtcNow;
+
+            db.BalanceHistories.Add(new BalanceHistory
+            {
+                SimCardId = sim.Id,
+                ModemId = modemId,
+                UserId = userId > 0 ? userId : null,
+                Balance = amount,
+                PreviousBalance = oldBalance,
+                Source = BalanceSource.MeetMob,
+                RecordedAt = recordedAt
+            });
+            inserted++;
+        }
+
+        if (inserted > 0)
+        {
+            await db.SaveChangesAsync(ct);
+            _logger.LogInformation("MeetMob history: Inserted {Count} records for modem {ModemId} SIM {SimId}", inserted, modemId, sim.Id);
+        }
+
+        return inserted > 0;
+    }
+
+    private static async Task<bool> IsDuplicateBalanceHistoryAsync(FocusGateDbContext db, long? simCardId, BalanceSource source, DateTime recordedAt, decimal amount)
+    {
+        if (simCardId == null) return false;
+        var window = TimeSpan.FromSeconds(5);
+        return await db.BalanceHistories.AnyAsync(h =>
+            h.SimCardId == simCardId &&
+            h.Source == source &&
+            h.Balance == amount &&
+            h.RecordedAt >= recordedAt - window &&
+            h.RecordedAt <= recordedAt + window);
+    }
+
     private static Dictionary<string, JsonElement> Deserialize(object data)
     {
         var json = JsonSerializer.Serialize(data);
         return JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json) ?? new();
     }
+}
+
+public class MeetMobRechargeRecordDto
+{
+    public string TradeTime { get; set; } = string.Empty;
+    public string Amount { get; set; } = "0";
 }

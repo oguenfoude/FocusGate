@@ -1,4 +1,5 @@
 using FocusGate.Core.DTOs;
+using FocusGate.Core.Enums;
 using FocusGate.Infrastructure.Services;
 using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
@@ -495,6 +496,33 @@ public class BalanceLogicTests
         var result = HiLinkCommandService.ExtractTimestampFromContent(content);
         Assert.NotNull(result);
         Assert.Equal(new DateTime(y, m, d, h, mn, s, DateTimeKind.Utc), result);
+    }
+
+    #endregion
+
+    #region BalanceSource Enum
+
+    [Theory]
+    [InlineData(BalanceSource.USSD, 0)]
+    [InlineData(BalanceSource.SMS, 1)]
+    [InlineData(BalanceSource.Settlement, 2)]
+    [InlineData(BalanceSource.Manual, 3)]
+    [InlineData(BalanceSource.Withdrawal, 4)]
+    [InlineData(BalanceSource.MeetMob, 5)]
+    public void BalanceSource_HasCorrectValues(BalanceSource source, int expected)
+    {
+        Assert.Equal(expected, (int)source);
+    }
+
+    #endregion
+
+    #region DatabaseWriteChannel Op Enum
+
+    [Fact]
+    public void Op_ContainsAllExpectedValues()
+    {
+        Assert.Equal(0, (int)DatabaseWriteChannel.Op.InsertModem);
+        Assert.Equal(14, (int)DatabaseWriteChannel.Op.InsertMeetMobHistory);
     }
 
     #endregion

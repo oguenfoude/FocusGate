@@ -17,7 +17,9 @@ public class ModemHandler : IDisposable
     private readonly int _modemId;
     private readonly string _comPort;
     private readonly bool _isHiLink;
+    private readonly MeetMobService? _meetMob;
     private long _simCardId;
+    private string _imsi = string.Empty;
     private volatile bool _disposed;
     private CancellationTokenSource _loopCts;
     private Task? _watchdogLoop;
@@ -33,11 +35,41 @@ public class ModemHandler : IDisposable
     private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan DisposeLoopTimeout = TimeSpan.FromSeconds(10);
     private DateTime? _smsCooldownUntil;
+    private MeetMobToken? _meetMobToken;
+    private DateTime _lastMeetMobRefreshUtc = DateTime.MinValue;
+    private DateTime _meetMobNextRetryUtc = DateTime.MinValue;
+    private int _meetMobConsecutiveFailures;
+
+    private TimeSpan GetMeetMobBackoffDelay()
+    {
+        var initialSeconds = _config.Get<int>("meetmob.backoff.initial", 120);
+        var maxSeconds = _config.Get<int>("meetmob.backoff.max", 1800);
+        if (_meetMobConsecutiveFailures <= 1)
+            return TimeSpan.FromSeconds(initialSeconds);
+        if (_meetMobConsecutiveFailures == 2)
+            return TimeSpan.FromSeconds(300);
+        return TimeSpan.FromSeconds(maxSeconds);
+    }
+
+    private void RecordMeetMobFailure()
+    {
+        _meetMobConsecutiveFailures++;
+        var delay = GetMeetMobBackoffDelay();
+        _meetMobNextRetryUtc = DateTime.UtcNow + delay;
+        _log.LogWarning("Modem {Id}: MeetMob failure #{Count} — next retry in {Minutes:F1}min", _modemId, _meetMobConsecutiveFailures, delay.TotalMinutes);
+    }
+
+    private void RecordMeetMobSuccess()
+    {
+        _meetMobConsecutiveFailures = 0;
+        _meetMobNextRetryUtc = DateTime.MinValue;
+    }
 
     public bool IsAlive => !_disposed && _at?.IsOpen == true;
 
     public ModemHandler(IAtCommandService at, DatabaseWriteChannel db,
-        ILogger<ModemHandler> log, IConfigProvider config, int modemId, string comPort, bool isHiLink = false)
+        ILogger<ModemHandler> log, IConfigProvider config, int modemId, string comPort,
+        bool isHiLink = false, MeetMobService? meetMob = null)
     {
         _at = at;
         _db = db;
@@ -46,6 +78,7 @@ public class ModemHandler : IDisposable
         _modemId = modemId;
         _comPort = comPort;
         _isHiLink = isHiLink;
+        _meetMob = meetMob;
         _loopCts = new CancellationTokenSource();
     }
 
@@ -86,6 +119,7 @@ public class ModemHandler : IDisposable
 
             var imsi = await _at.GetImsiAsync();
             if (string.IsNullOrEmpty(imsi)) { _log.LogWarning("Modem {Id}: No SIM", _modemId); return false; }
+            _imsi = imsi;
             _log.LogInformation("Modem {Id}: IMSI={IMSI}", _modemId, imsi);
 
             NetworkRegistration netReg = NetworkRegistration.Unknown;
@@ -203,10 +237,16 @@ public class ModemHandler : IDisposable
                 {
                     try
                     {
-                        if (startupRechargeContent != null)
-                            await RunBalanceCheckFromSmsAsync(startupRechargeContent, loopToken);
-                        else
-                            await TryGetPhoneAndBalanceAsync(loopToken);
+                        var meetMobOk = await TryMeetMobLoginAndBalanceAsync(loopToken);
+                        if (!meetMobOk)
+                        {
+                            RecordMeetMobFailure();
+                            _log.LogInformation("Modem {Id}: MeetMob failed at startup — will retry with backoff, using USSD for now", _modemId);
+                            if (startupRechargeContent != null)
+                                await RunBalanceCheckFromSmsAsync(startupRechargeContent, loopToken);
+                            else
+                                await TryGetPhoneAndBalanceAsync(loopToken);
+                        }
                     }
                     catch (OperationCanceledException) { }
                     catch (Exception ex) { _log.LogWarning(ex, "Modem {Id}: Post-startup balance check failed", _modemId); }
@@ -241,6 +281,33 @@ public class ModemHandler : IDisposable
             catch (OperationCanceledException) { break; }
             catch (ObjectDisposedException) { break; }
             catch (Exception ex) { _log.LogError(ex, "Modem {Id}: Watchdog loop error", _modemId); }
+
+            if (_meetMob != null && !_disposed)
+            {
+                if (_meetMobToken != null)
+                {
+                    var tokenAge = DateTime.UtcNow - _lastMeetMobRefreshUtc;
+                    if (tokenAge.TotalMinutes >= 40)
+                    {
+                        _log.LogInformation("Modem {Id}: MeetMob token age {Age:F0}min — proactively refreshing", _modemId, tokenAge.TotalMinutes);
+                        try { await TryMeetMobLoginAndBalanceAsync(ct); }
+                        catch (OperationCanceledException) { break; }
+                        catch (Exception ex) { _log.LogWarning(ex, "Modem {Id}: MeetMob token refresh failed", _modemId); }
+                    }
+                }
+                else if (_meetMobNextRetryUtc != DateTime.MinValue && DateTime.UtcNow >= _meetMobNextRetryUtc)
+                {
+                    _log.LogInformation("Modem {Id}: MeetMob retry after backoff ({Count} consecutive failures)", _modemId, _meetMobConsecutiveFailures);
+                    _meetMobNextRetryUtc = DateTime.MinValue;
+                    try
+                    {
+                        var ok = await TryMeetMobLoginAndBalanceAsync(ct);
+                        if (!ok) RecordMeetMobFailure();
+                    }
+                    catch (OperationCanceledException) { break; }
+                    catch (Exception ex) { _log.LogWarning(ex, "Modem {Id}: MeetMob retry failed", _modemId); RecordMeetMobFailure(); }
+                }
+            }
         }
     }
 
@@ -284,7 +351,20 @@ public class ModemHandler : IDisposable
     private async Task RunBalanceCheckFromSmsAsync(string rechargeSmsContent, CancellationToken ct)
     {
         var smsType = DatabaseWriteChannel.ClassifySmsType("Mobilis", rechargeSmsContent);
-        _log.LogInformation("Modem {Id}: Mobilis {SmsType} SMS detected — running *222# to confirm real balance... Content: {Content}", _modemId, smsType, rechargeSmsContent.Substring(0, Math.Min(80, rechargeSmsContent.Length)));
+        _log.LogInformation("Modem {Id}: Mobilis {SmsType} SMS detected — trying MeetMob balance first... Content: {Content}", _modemId, smsType, rechargeSmsContent.Substring(0, Math.Min(80, rechargeSmsContent.Length)));
+
+        if (_meetMob != null && _meetMobToken != null)
+        {
+            var meetMobOk = await TryMeetMobBalanceAsync(ct);
+            if (meetMobOk)
+            {
+                _log.LogInformation("Modem {Id}: MeetMob balance confirmed from recharge SMS — balance already saved", _modemId);
+                _db.ClearPendingBalanceCheck(_modemId);
+                return;
+            }
+        }
+
+        _log.LogInformation("Modem {Id}: MeetMob unavailable — falling back to *222# USSD", _modemId);
         var balance = await _at.GetBalanceAsync();
         if (balance.HasValue)
         {
@@ -612,6 +692,208 @@ public class ModemHandler : IDisposable
         if (msg.Content.Contains("rechargé", StringComparison.OrdinalIgnoreCase))
             return true;
         return false;
+    }
+
+    private async Task<bool> TryMeetMobLoginAndBalanceAsync(CancellationToken ct)
+    {
+        if (_meetMob == null) return false;
+        if (string.IsNullOrEmpty(_imsi) || _imsi.Length < 5) return false;
+
+        var existingPhone = (await _db.GetActiveSimInfoAsync(_modemId)).PhoneNumber;
+        if (existingPhone == 0)
+        {
+            _log.LogInformation("Modem {Id}: No phone number yet — fetching via *101# for MeetMob login", _modemId);
+            try
+            {
+                await _atLock.WaitAsync(ct);
+                try
+                {
+                    var phoneStr = await _at.GetPhoneNumberViaUssdAsync();
+                    if (!string.IsNullOrEmpty(phoneStr) && long.TryParse(phoneStr, out var phoneNum) && phoneNum > 0)
+                    {
+                        existingPhone = phoneNum;
+                        await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.UpdateSimCardPhone, Data = new { ModemId = _modemId, PhoneNumber = phoneNum } });
+                        _log.LogInformation("Modem {Id}: Got phone number {Phone} via *101#", _modemId, phoneNum);
+                    }
+                }
+                finally { SafeReleaseAtLock(); }
+            }
+            catch (OperationCanceledException) { return false; }
+            catch (ObjectDisposedException) { return false; }
+            catch (Exception ex) { _log.LogWarning(ex, "Modem {Id}: Failed to fetch phone via *101#", _modemId); }
+
+            if (existingPhone == 0)
+            {
+                _log.LogDebug("Modem {Id}: MeetMob skipped — could not fetch phone number", _modemId);
+                return false;
+            }
+        }
+
+        var phone = MeetMobService.FormatPhone(existingPhone);
+        if (string.IsNullOrEmpty(phone))
+        {
+            _log.LogDebug("Modem {Id}: MeetMob skipped — invalid phone format", _modemId);
+            return false;
+        }
+
+        if (!await _meetMob.CanRetryAsync(_imsi))
+        {
+            _log.LogDebug("Modem {Id}: MeetMob in cooldown, skipping", _modemId);
+            return false;
+        }
+
+        var cachedToken = await _meetMob.GetValidTokenAsync(_imsi);
+        if (cachedToken != null)
+        {
+            _log.LogInformation("Modem {Id}: MeetMob using cached token", _modemId);
+            _meetMobToken = cachedToken;
+            _lastMeetMobRefreshUtc = DateTime.UtcNow;
+            var cachedBalanceOk = await TryMeetMobBalanceAsync(ct);
+            if (cachedBalanceOk) return true;
+
+            _log.LogWarning("Modem {Id}: MeetMob cached token balance failed — invalidating and retrying fresh login", _modemId);
+            await _meetMob.InvalidateTokenAsync(_imsi);
+            _meetMobToken = null;
+        }
+
+        _log.LogInformation("Modem {Id}: MeetMob logging in via OTP...", _modemId);
+        MeetMobLoginResult result;
+        try
+        {
+            await _atLock.WaitAsync(ct);
+            try { result = await _meetMob.LoginAsync(_imsi, phone, _at, ct); }
+            finally { SafeReleaseAtLock(); }
+        }
+        catch (OperationCanceledException) { return false; }
+        catch (ObjectDisposedException) { return false; }
+
+        if (!result.Success)
+        {
+            _log.LogWarning("Modem {Id}: MeetMob login failed — {Error}, falling back to USSD", _modemId, result.Error);
+            await _meetMob.SetCooldownAsync(_imsi, _config.Get<int>("meetmob.fallback_cooldown", 150));
+            return false;
+        }
+
+        _meetMobToken = result.Token;
+        _lastMeetMobRefreshUtc = DateTime.UtcNow;
+        _log.LogInformation("Modem {Id}: MeetMob login success", _modemId);
+        await Task.Delay(2000, ct);
+        return await TryMeetMobBalanceAsync(ct);
+    }
+
+    private async Task<bool> TryMeetMobBalanceAsync(CancellationToken ct)
+    {
+        if (_meetMob == null || _meetMobToken == null) return false;
+        try
+        {
+            var balance = await _meetMob.GetBalanceAsync(_imsi, _meetMobToken, ct);
+            if (balance.HasValue)
+            {
+                _log.LogInformation("Modem {Id}: MeetMob balance: {Balance:F2} DZD", _modemId, balance.Value);
+                RecordMeetMobSuccess();
+                await _db.EnqueueAsync(new()
+                {
+                    Type = DatabaseWriteChannel.Op.UpdateSimBalance,
+                    Data = new { ModemId = _modemId, Balance = balance.Value, Source = BalanceSource.MeetMob }
+                });
+                return true;
+            }
+
+            _log.LogWarning("Modem {Id}: MeetMob balance returned null — session may be expired, attempting re-login", _modemId);
+            await _meetMob.InvalidateTokenAsync(_imsi);
+            _meetMobToken = null;
+
+            var phoneRaw = await _db.GetPhoneNumberAsync(_imsi);
+            if (string.IsNullOrEmpty(phoneRaw))
+            {
+                _log.LogWarning("Modem {Id}: No phone number for re-login", _modemId);
+                return false;
+            }
+
+            var phone = long.TryParse(phoneRaw, out var phoneLong)
+                ? MeetMobService.FormatPhone(phoneLong) ?? phoneRaw
+                : phoneRaw;
+
+            MeetMobLoginResult loginResult;
+            try
+            {
+                await _atLock.WaitAsync(ct);
+                try { loginResult = await _meetMob.LoginAsync(_imsi, phone, _at, ct); }
+                finally { SafeReleaseAtLock(); }
+            }
+            catch (OperationCanceledException) { return false; }
+            catch (ObjectDisposedException) { return false; }
+
+            if (!loginResult.Success)
+            {
+                _log.LogWarning("Modem {Id}: MeetMob re-login failed — {Error}", _modemId, loginResult.Error);
+                await _meetMob.SetCooldownAsync(_imsi, _config.Get<int>("meetmob.fallback_cooldown", 150));
+                RecordMeetMobFailure();
+                return false;
+            }
+
+            _meetMobToken = loginResult.Token;
+            _lastMeetMobRefreshUtc = DateTime.UtcNow;
+            _log.LogInformation("Modem {Id}: MeetMob re-login success — retrying balance", _modemId);
+            await Task.Delay(2000, ct);
+
+            if (_meetMobToken == null)
+            {
+                _log.LogWarning("Modem {Id}: MeetMob re-login returned null token", _modemId);
+                return false;
+            }
+
+            var retryBalance = await _meetMob.GetBalanceAsync(_imsi, _meetMobToken, ct);
+            if (retryBalance.HasValue)
+            {
+                _log.LogInformation("Modem {Id}: MeetMob balance after re-login: {Balance:F2} DZD", _modemId, retryBalance.Value);
+                RecordMeetMobSuccess();
+                await _db.EnqueueAsync(new()
+                {
+                    Type = DatabaseWriteChannel.Op.UpdateSimBalance,
+                    Data = new { ModemId = _modemId, Balance = retryBalance.Value, Source = BalanceSource.MeetMob }
+                });
+                return true;
+            }
+
+            _log.LogWarning("Modem {Id}: MeetMob balance still null after re-login", _modemId);
+            RecordMeetMobFailure();
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Modem {Id}: MeetMob balance fetch failed", _modemId);
+        }
+        return false;
+    }
+
+    private async Task TryMeetMobHistoryAsync(CancellationToken ct)
+    {
+        if (_meetMob == null || _meetMobToken == null) return;
+        try
+        {
+            var records = await _meetMob.GetRechargeHistoryAsync(_meetMobToken, ct);
+            if (records.Count == 0)
+            {
+                _log.LogDebug("Modem {Id}: MeetMob history returned 0 records", _modemId);
+                return;
+            }
+
+            _log.LogInformation("Modem {Id}: MeetMob history has {Count} records — saving to DB", _modemId, records.Count);
+            await _db.EnqueueAsync(new()
+            {
+                Type = DatabaseWriteChannel.Op.InsertMeetMobHistory,
+                Data = new
+                {
+                    ModemId = _modemId,
+                    Imsi = _imsi,
+                    Records = records.Select(r => new { TradeTime = r.TradeTime, Amount = r.Amount }).ToList()
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Modem {Id}: MeetMob history fetch failed", _modemId);
+        }
     }
 
     private async Task TryGetPhoneAndBalanceAsync(CancellationToken ct)

@@ -6,5 +6,6 @@ public enum BalanceSource
     SMS        = 1,
     Settlement = 2,
     Manual     = 3,
-    Withdrawal = 4
+    Withdrawal = 4,
+    MeetMob    = 5
 }

@@ -20,6 +20,7 @@ public class AtModemOrchestrator : BackgroundService
     private readonly ILogger<AtModemOrchestrator> _log;
     private readonly IConfigProvider _config;
     private readonly ILoggerFactory _loggerFactory;
+    private readonly MeetMobService _meetMob;
     private readonly ConcurrentDictionary<string, (ModemHandler handler, string imei)> _handlers = new();
     private readonly ConcurrentDictionary<string, byte> _activeImeis = new();
     private readonly ConcurrentDictionary<string, byte> _failedPorts = new();
@@ -33,6 +34,7 @@ public class AtModemOrchestrator : BackgroundService
         _config = config;
         _loggerFactory = loggerFactory;
         _maxModems = _config.Get("modem.max_count", 30);
+        _meetMob = new MeetMobService(new MeetMobTokenStore(), loggerFactory.CreateLogger<MeetMobService>(), config);
     }
 
     protected override async Task ExecuteAsync(CancellationToken ct)
@@ -203,7 +205,7 @@ public class AtModemOrchestrator : BackgroundService
             var handlerLog = scope.ServiceProvider.GetRequiredService<ILogger<ModemHandler>>();
             var writeChannel = scope.ServiceProvider.GetRequiredService<DatabaseWriteChannel>();
 
-            return (new ModemHandler(at, writeChannel, handlerLog, config, modem.Id, port), imei, modem.Id);
+            return (new ModemHandler(at, writeChannel, handlerLog, config, modem.Id, port, meetMob: _meetMob), imei, modem.Id);
         }
         catch (Exception ex) { _log.LogDebug("{Port}: {Error}", port, ex.Message); try { at.Dispose(); } catch { } return (null, "", 0); }
     }
