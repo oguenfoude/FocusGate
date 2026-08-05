@@ -31,7 +31,7 @@ public class ModemHandler : IDisposable
     private ModemStatus _lastWrittenStatus = ModemStatus.Unknown;
     private DateTime _lastHeartbeatWriteUtc = DateTime.MinValue;
     private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromMinutes(5);
-    private static readonly TimeSpan DisposeLoopTimeout = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan DisposeLoopTimeout = TimeSpan.FromSeconds(10);
     private DateTime? _smsCooldownUntil;
 
     public bool IsAlive => !_disposed && _at?.IsOpen == true;
@@ -126,6 +126,12 @@ public class ModemHandler : IDisposable
             await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.UpsertSimCard, Data = new { ModemId = _modemId, IMSI = imsi, PhoneNumber = existingPhone } });
 
             _simCardId = await ResolveSimCardIdAsync();
+
+            if (_simCardId <= 0)
+            {
+                _log.LogWarning("Modem {Id}: Cannot start — SimCardId unresolved after startup", _modemId);
+                return false;
+            }
 
             if (!_isHiLink)
             {
@@ -366,7 +372,15 @@ public class ModemHandler : IDisposable
     public void Dispose()
     {
         if (_disposed) return;
-        _disposed = true;
+
+        try
+        {
+            DisconnectAsync().GetAwaiter().GetResult();
+        }
+        catch (Exception ex) { _log.LogDebug(ex, "Modem {Id}: DisconnectAsync failed during dispose", _modemId); }
+
+        if (!_disposed) _disposed = true;
+
         try { _loopCts.Cancel(); } catch { }
         try
         {

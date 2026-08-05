@@ -417,15 +417,15 @@ public class DatabaseWriteChannel
                     UserId = userId,
                     Balance = newBalance,
                     PreviousBalance = oldSimBalance,
-                    Source = BalanceSource.USSD,
+                    Source = BalanceSource.SMS,
                     RecordedAt = DateTime.UtcNow
                 });
 
                 var (credited, userOld, userNew) = CreditUserBalance(db, userId, delta, sim.Id);
-                if (credited)
-                    _logger.LogInformation("CREDIT via *222#: Modem={ModemId} Sim={SimId} User={UserId} +{Delta:F2} DZD, SIM: {Old:F2} → {New:F2}, Wallet: {UserOld:F2} → {UserNew:F2}", modemId, sim.Id, userId, delta, oldSimBalance, newBalance, userOld, userNew);
-                else
-                    _logger.LogWarning("CREDIT FAILED via *222#: Modem={ModemId} Sim={SimId} +{Delta:F2} DZD — user {UserId} not found", modemId, sim.Id, delta, userId);
+            if (credited)
+                _logger.LogInformation("CREDIT via Solde SMS: Modem={ModemId} Sim={SimId} User={UserId} +{Delta:F2} DZD, SIM: {Old:F2} → {New:F2}, Wallet: {UserOld:F2} → {UserNew:F2}", modemId, sim.Id, userId, delta, oldSimBalance, newBalance, userOld, userNew);
+            else
+                _logger.LogWarning("CREDIT FAILED via Solde SMS: Modem={ModemId} Sim={SimId} +{Delta:F2} DZD — user {UserId} not found", modemId, sim.Id, delta, userId);
             }
             else
             {
@@ -437,8 +437,7 @@ public class DatabaseWriteChannel
         }
         else
         {
-            _logger.LogWarning("Balance unchanged after *222# (carrier may not have processed recharge yet): Modem={ModemId} Balance={Balance:F2} — setting pending flag for Solde SMS fallback", modemId, newBalance);
-            MarkPendingBalanceCheck(modemId);
+            _logger.LogInformation("Balance unchanged after *222# (no recharge detected): Modem={ModemId} Balance={Balance:F2} — not setting pending flag", modemId, newBalance);
         }
 
         await db.SaveChangesAsync(ct);
@@ -501,13 +500,14 @@ public class DatabaseWriteChannel
             return false;
         }
 
-        // Skip re-reads of the same SMS from the SIM (same sender + content + time)
+        // Skip re-reads of the same SMS from the SIM (same sender + content + time within 2 minutes)
         // Same text at a different time is a new message — always store it
         var exists = await db.SmsRecords
             .AnyAsync(s => s.SimCardId == sms.SimCardId
                 && s.SenderNumber == sms.SenderNumber
                 && s.Content == sms.Content
-                && s.ReceivedAt == sms.ReceivedAt, ct);
+                && s.ReceivedAt >= sms.ReceivedAt.AddMinutes(-2)
+                && s.ReceivedAt <= sms.ReceivedAt.AddMinutes(2), ct);
 
         if (exists)
         {
@@ -578,13 +578,7 @@ public class DatabaseWriteChannel
                         else
                         {
                             var delta = balance.Value - oldSimBalance;
-                            MarkPendingBalanceCheck(sim.ModemId);
-                            _logger.LogInformation("Solde SMS balance increased with no pending flag — crediting user directly +{Delta:F2} DZD: Sim={SimId} Modem={ModemId} SIM: {Old:F2} → {New:F2}", delta, sim.Id, sim.ModemId, oldSimBalance, balance.Value);
-                            var (credited, userOld, userNew) = CreditUserBalance(db, userId, delta, sim.Id);
-                            if (credited)
-                                _logger.LogInformation("CREDIT via Solde SMS (direct): Sim={SimId} Modem={ModemId} User={UserId} +{Delta:F2} DZD, SIM: {Old:F2} → {New:F2}, Wallet: {UserOld:F2} → {UserNew:F2}", sim.Id, sim.ModemId, userId, delta, oldSimBalance, balance.Value, userOld, userNew);
-                            else
-                                _logger.LogWarning("CREDIT FAILED via Solde SMS (direct): Sim={SimId} Modem={ModemId} +{Delta:F2} DZD — user {UserId} not found", sim.Id, sim.ModemId, delta, userId);
+                            _logger.LogInformation("Solde SMS balance increased (no pending flag) — recording balance change only, no user credit: Sim={SimId} Modem={ModemId} +{Delta:F2} DZD, SIM: {Old:F2} → {New:F2}", sim.Id, sim.ModemId, delta, oldSimBalance, balance.Value);
                         }
                     }
                     else if (balance.Value < oldSimBalance)

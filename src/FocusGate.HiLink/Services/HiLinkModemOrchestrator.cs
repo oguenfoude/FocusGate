@@ -96,6 +96,9 @@ public class HiLinkModemOrchestrator : BackgroundService
             try { handler.Dispose(); } catch { }
         }
 
+        var staleNoSim = _noSimIps.Where(ip => !_handlers.ContainsKey(ip)).ToList();
+        foreach (var ip in staleNoSim) _noSimIps.Remove(ip);
+
         bool startedNewHandlers = false;
 
         if (_handlers.Count >= _maxModems) return;
@@ -235,6 +238,7 @@ public class HiLinkModemOrchestrator : BackgroundService
                 });
 
                 var db = scope.ServiceProvider.GetRequiredService<FocusGateDbContext>();
+                db.ChangeTracker.Clear();
                 Modem? modem = null;
                 for (int i = 0; i < 10; i++)
                 {

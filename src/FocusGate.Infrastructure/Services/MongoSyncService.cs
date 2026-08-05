@@ -587,10 +587,26 @@ public class MongoSyncService : BackgroundService
         catch (DbUpdateException ex)
         {
             _logger.LogWarning(ex, "Sync pull: batch save failed for {Collection} — retrying individually", collection);
+            var pendingEntries = db.ChangeTracker.Entries()
+                .Where(e => e.State == EntityState.Added || e.State == EntityState.Modified)
+                .Select(e => e.Entity)
+                .ToList();
             db.ChangeTracker.Clear();
 
-            // Individual retry approach: re-add and save each entity separately
-            // For now, log and skip — next cycle will retry
+            foreach (var entity in pendingEntries)
+            {
+                try
+                {
+                    db.Add(entity);
+                    await db.SaveChangesAsync(ct);
+                    db.ChangeTracker.Clear();
+                }
+                catch (Exception ex2)
+                {
+                    _logger.LogWarning(ex2, "Individual save failed for {Collection} entity {EntityType}", collection, entity.GetType().Name);
+                    db.ChangeTracker.Clear();
+                }
+            }
         }
     }
 }

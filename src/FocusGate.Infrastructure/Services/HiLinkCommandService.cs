@@ -402,7 +402,9 @@ public partial class HiLinkCommandService : IAtCommandService
                         System.Globalization.DateTimeStyles.None, out var parsed))
                     {
                         var unspecified = DateTime.SpecifyKind(parsed, DateTimeKind.Unspecified);
-                        dt = TimeZoneInfo.ConvertTimeToUtc(unspecified, TimeZoneInfo.Local);
+                        var offsetHours = _config?.Get<int>("modem.timezone_offset_hours", 1) ?? 1;
+                        dt = unspecified.AddHours(-offsetHours);
+                        dt = DateTime.SpecifyKind(dt, DateTimeKind.Utc);
                     }
                     else
                     {
@@ -630,7 +632,7 @@ public partial class HiLinkCommandService : IAtCommandService
     {
         if (string.IsNullOrEmpty(_baseUrl)) return null;
 
-        var request = new HttpRequestMessage(HttpMethod.Get, $"{_baseUrl}{path}");
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{_baseUrl}{path}");
         if (!string.IsNullOrEmpty(_sessionCookie))
         {
             var cv = _sessionCookie.StartsWith("SessionID=", StringComparison.OrdinalIgnoreCase)
@@ -641,7 +643,7 @@ public partial class HiLinkCommandService : IAtCommandService
         request.Headers.Add("Referer", $"{_baseUrl}/html/ussd.html");
         request.Headers.Add("X-Requested-With", "XMLHttpRequest");
 
-        var response = await _http.SendAsync(request);
+        using var response = await _http.SendAsync(request);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadAsStringAsync();
     }
@@ -669,7 +671,7 @@ public partial class HiLinkCommandService : IAtCommandService
         using var request = new HttpRequestMessage(HttpMethod.Get, $"{_baseUrl}{path}");
         ApplyHeaders(request);
 
-        var response = await _http.SendAsync(request);
+        using var response = await _http.SendAsync(request);
         UpdateCsrfFromResponse(response);
         if (!response.IsSuccessStatusCode)
         {
@@ -691,7 +693,7 @@ public partial class HiLinkCommandService : IAtCommandService
         };
         ApplyHeaders(request);
 
-        var response = await _http.SendAsync(request);
+        using var response = await _http.SendAsync(request);
         UpdateCsrfFromResponse(response);
         if (!response.IsSuccessStatusCode)
         {
