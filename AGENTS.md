@@ -85,11 +85,13 @@ npm start        # Production server
 - **MongoDB pull uses in-memory matching** — Loads local records by ID list, matches in Dictionary. EF Core can't translate `Func<T, object>` in LINQ expressions (CS1963).
 - **MongoDB collection names are ALL lowercase** — .NET `FocusGateMongoClient.cs` uses `"modems"`, `"simcards"`, etc. Next.js Mongoose models must match.
 - **MongoDB `_id` is Number (long)** — NOT ObjectId. `BsonClassMap.MapIdMember(m => m.Id)` maps C# `long Id` to MongoDB `_id`.
-- **Balance architecture:** Two sources for balance tracking:
-  - `*222#` USSD → primary source. Credits user on increase (full delta, not individual SMS amounts). Creates BalanceHistory (Source=USSD).
+- **Balance architecture:** Three sources for balance tracking (priority order):
+  - **MeetMob API** → primary source. OTP login via SIM, fetches balance from web API. Credits user on increase (full delta). Creates BalanceHistory (Source=MeetMob). Token cached for 45min, proactive refresh at 40min.
+  - `*222#` USSD → fallback when MeetMob fails. Credits user on increase (full delta). Creates BalanceHistory (Source=USSD).
   - "Solde" SMS → fallback when *222# returns "processing". Updates `sim.Balance` + BalanceHistory (Source=SMS). Credits user if balance increased (pending flag or direct).
   - **Pending flag:** When *222# returns "processing", `MarkPendingBalanceCheck(modemId)` is called. When "Solde" SMS arrives, `TryClaimPendingBalanceCheck(modemId)` gates the user credit. This prevents double-crediting and avoids crediting old startup SMS.
-  - Never parse amounts from SMS text for crediting — only `*222#` or pending-flagged "Solde" SMS credit the user.
+  - **MeetMob backoff:** Exponential backoff on failures (2min → 5min → 30min max). Stays under MeetMob's 1-hour lockout. Success resets counter.
+  - **Credit rules:** User wallet ONLY credited when balance increases AND user is assigned. Balance decreases = no user credit, no BalanceHistory. New SIM starts at Balance=0.
 - **MachineId:** Each machine has a unique ID from `MachineInfoService`. Dev machine: `d26b1c221259fb12`. Client (BERRAR): `419c0cfc97666753`.
 - **HTMX in Dashboard:** POST handlers must use `Response.Headers["HX-Redirect"]` + `return new EmptyResult()` — NOT `RedirectToPage()`. `_ViewStart.cshtml` sets `Layout = null` for `HX-Request` header.
 - **Dashboard DI:** Uses `AddFocusGateDashboard()` (lightweight — no MongoSync, no ConsoleCommandHandler, no RestartService).
@@ -127,10 +129,10 @@ USB Modems → .NET Gateway → SQLite (local) → MongoDB Atlas (cloud) ← Nex
    b. ModemHandler created → StartAsync():
       - GetImeiAsync, GetImsiAsync, GetNetworkRegistrationAsync
       - Insert modem + SIM to SQLite
-      - *222# balance check → update SimCard.Balance
       - *101# phone detection (if missing)
       - Read startup SMS → save to SQLite → delete from SIM
       - Start 3 async loops (watchdog, SMS poll, network retry)
+      - MeetMob login + balance (primary) → fallback to *222# if fails
 8. Orphan check — marks missing modems as Offline
 ```
 
@@ -148,7 +150,8 @@ Scan Cycle (30s): probe for new modems → orphan check for missing modems
 
 ```
 When recharge/transfer SMS from "Mobilis" or "77111" detected (contains "montant de" + "reçu"):
-  → *222# USSD to confirm real balance
+  → MeetMob balance check (primary) → credit user if increased
+  → If MeetMob fails: *222# USSD to confirm real balance
   → If *222# returns balance: credit user + create BalanceHistory (Source=USSD)
   → If *222# returns "processing": set pending flag, wait for "Solde" SMS
   → When "Solde" SMS arrives with pending flag: credit user + create BalanceHistory (Source=SMS)
@@ -156,8 +159,8 @@ When recharge/transfer SMS from "Mobilis" or "77111" detected (contains "montant
 
 ### Key: `*222#` Only Fires At
 
-1. **Startup** — once per modem when connected
-2. **Mobilis SMS** — when recharge/transfer SMS detected
+1. **Startup** — once per modem when connected (if MeetMob fails)
+2. **Mobilis SMS** — when recharge/transfer SMS detected (if MeetMob fails)
 3. **Never periodically** — no auto-refresh, no timer, no retry loop
 
 ## Data Ownership (who writes each SQLite table)
@@ -165,9 +168,9 @@ When recharge/transfer SMS from "Mobilis" or "77111" detected (contains "montant
 | Table | Writer | Notes |
 |-------|--------|-------|
 | `Modems` | .NET only | Status, IMEI, ComPort, Brand, Model, UpdatedAt |
-| `SimCards` | .NET only | Balance (from USSD), IMSI, PhoneNumber, IsActive |
+| `SimCards` | .NET only | Balance (from MeetMob/USSD), IMSI, PhoneNumber, IsActive |
 | `SmsRecords` | .NET only | SMS received by modems |
-| `BalanceHistories` | .NET only | SIM balance change records (from USSD) |
+| `BalanceHistories` | .NET only | SIM balance change records (from MeetMob/USSD/SMS) |
 | `Users` | Dashboard only | Created/edited by admin in ASP.NET Dashboard |
 | `UserModems` | Dashboard only | Assign/remove modem-to-user |
 | `WithdrawalRequests` | Dashboard only | User requests, admin approve/reject |
@@ -189,11 +192,11 @@ Single handler per connected modem. Manages modem lifecycle with 3 async loops:
 
 | Loop | Interval | What it does |
 |------|----------|-------------|
-| **Watchdog** | 30s | HiLink: TryRefreshSessionAsync → IsAliveAsync → Online/Offline/Disconnect. AT: send "AT" → Online/Disconnect |
-| **SMS Poll** | 30s | ReadAllSmsAsync → save to SQLite → DeleteAllSmsAsync → check for Mobilis balance SMS → trigger *222# if recharge |
+| **Watchdog** | 30s | HiLink: TryRefreshSessionAsync → IsAliveAsync → Online/Offline/Disconnect. AT: send "AT" → Online/Disconnect. Also: MeetMob token refresh at 40min, retry after backoff |
+| **SMS Poll** | 30s | ReadAllSmsAsync → save to SQLite → DeleteAllSmsAsync → check for Mobilis balance SMS → trigger MeetMob/*222# if recharge |
 | **Network Retry** | 2min | GetNetworkRegistrationAsync → mark Online + write status |
 
-**Startup:** GetImei → GetImsi → GetNetworkReg → *222# balance → *101# phone (if missing) → startup SMS read → start loops
+**Startup:** GetImei → GetImsi → GetNetworkReg → *101# phone (if missing) → startup SMS read → start loops → MeetMob login + balance
 
 **Shutdown:** Cancel CTS → loops exit → Dispose AT service → orchestrator removes handler
 
@@ -217,6 +220,18 @@ Serial port AT commands:
 - AT+CUSD USSD with hex/UTF-16/plain text response decoding
 - 10s lock timeout on SendCommand/SendUssd
 
+### MeetMobService
+
+HTTP API for MeetMob balance/data (primary source):
+- `LoginAsync(imsi, phone, at)` — sends OTP via API, polls SIM for code, logs in
+- `GetBalanceAsync(imsi, token)` — fetches balance from web API
+- `GetRechargeHistoryAsync(token)` — fetches recharge history (on-demand only)
+- `InvalidateTokenAsync(imsi)` — removes cached token
+- `CanRetryAsync(imsi)` / `SetCooldownAsync(imsi, seconds)` — per-IMSI cooldown
+- Shared across all modem handlers via orchestrator
+- Token persisted to `meetmob-tokens.json` (atomic write)
+- Exponential backoff: 2min → 5min → 30min on failures
+
 ### HiLinkModemOrchestrator (in FocusGate.HiLink)
 
 BackgroundService scanning 14 IPs every 30s (max 15 modems):
@@ -234,7 +249,7 @@ Single serialized write queue using `Channel<Op>`. ALL DB writes go through here
 - `TouchModemUpdatedAt` — heartbeat (no status change)
 - `UpsertSimCard` — detect SIM changes
 - `UpdateSimCardPhone` — phone number from USSD
-- `UpdateSimBalance` — balance from *222# + BalanceHistory
+- `UpdateSimBalance` — balance from MeetMob/USSD + BalanceHistory
 - `UpdateSimBalanceFromSms` — balance from Mobilis SMS + user credit
 - `InsertSms` — with dedup (SimCardId+Sender+Content+ReceivedAt) + Mobilis trigger
 - `UpdateOrphanedModems` — marks missing modems Offline
@@ -303,6 +318,10 @@ BackgroundService. Bidirectional sync every 30s:
 - **SendUssdAsync on HiLink** sends `POST /api/ussd/send` then polls `GET /api/ussd/get` every 2s
 - **125002 error** means SMS inbox full — DeleteAllSmsAsync falls back to index-based deletion (1-50)
 - **Session refresh failure** clears _sessionCookie, _csrfToken, sets _isOpen=false — forces clean re-handshake
+- **MeetMob login uses OTP** — requires SIM to receive SMS. Phone format: local (0XXXXXXXXX), not country code
+- **MeetMob token TTL** — 45 minutes, proactive refresh at 40 minutes in watchdog loop
+- **MeetMob backoff** — 2min → 5min → 30min on consecutive failures. Success resets counter.
+- **MeetMob is primary** — USSD *222# is fallback only. System always tries MeetMob first.
 
 ## Config Keys (config.json)
 
@@ -315,3 +334,11 @@ BackgroundService. Bidirectional sync every 30s:
 | `modem.ussd.phone_code` | `*101#` | USSD code for phone number |
 | `mongodb.uri` | (cluster URI) | MongoDB Atlas connection string |
 | `mongodb.database` | `focusgate` | MongoDB database name |
+| `meetmob.base_url` | `https://meetmob.mobilis.dz` | MeetMob API base URL |
+| `meetmob.password` | `00000` | MeetMob password |
+| `meetmob.token_ttl` | `2700` | Token TTL in seconds (45min) |
+| `meetmob.http_timeout` | `30` | HTTP timeout in seconds |
+| `meetmob.login_cooldown` | `120` | Login cooldown in seconds |
+| `meetmob.fallback_cooldown` | `150` | Fallback cooldown in seconds |
+| `meetmob.backoff.initial` | `120` | Initial backoff delay (2min) |
+| `meetmob.backoff.max` | `1800` | Max backoff delay (30min) |
