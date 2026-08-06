@@ -28,6 +28,9 @@ public partial class MeetMobService
     private int LoginCooldown => _config.Get<int>("meetmob.login_cooldown", 120);
     private int FallbackCooldown => _config.Get<int>("meetmob.fallback_cooldown", 150);
     private DateTime _wafCooldownUntil = DateTime.MinValue;
+    private bool _lastRequestNetworkError;
+
+    public bool WasLastRequestNetworkError() => _lastRequestNetworkError;
 
     public MeetMobService(MeetMobTokenStore tokenStore, ILogger<MeetMobService> log, IConfigProvider config)
     {
@@ -560,6 +563,7 @@ public partial class MeetMobService
                 ApplyBrowserHeaders(request, busiType, csrfToken, cookie, phone);
 
                 var response = await _http.SendAsync(request, ct);
+                _lastRequestNetworkError = false;
                 if (!response.IsSuccessStatusCode)
                 {
                     _log.LogWarning("MeetMob: HTTP {Status} from {Url}", response.StatusCode, url);
@@ -578,6 +582,7 @@ public partial class MeetMobService
             }
             catch (HttpRequestException ex) when (attempt < 2 && !ct.IsCancellationRequested)
             {
+                _lastRequestNetworkError = true;
                 _log.LogWarning("MeetMob: Authenticated HTTP request failed (attempt {Attempt}/3): {Error}", attempt + 1, ex.Message);
                 await Task.Delay(2000, ct);
             }

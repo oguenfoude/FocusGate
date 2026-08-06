@@ -818,6 +818,11 @@ public class ModemHandler : IDisposable
                 _log.LogWarning("Modem {Id}: MeetMob balance null but WAF is blocking — skipping re-login (token preserved)", _modemId);
                 return false;
             }
+            if (_meetMob.WasLastRequestNetworkError())
+            {
+                _log.LogWarning("Modem {Id}: MeetMob balance null due to network error (server down/timeout) — skipping re-login (token preserved), falling back to USSD", _modemId);
+                return false;
+            }
             if (string.IsNullOrEmpty(_meetMobToken.AccountId))
             {
                 _log.LogWarning("Modem {Id}: MeetMob balance null (accountId empty) — skipping re-login (token preserved)", _modemId);
