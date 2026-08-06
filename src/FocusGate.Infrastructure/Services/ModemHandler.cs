@@ -39,7 +39,6 @@ public class ModemHandler : IDisposable
     private DateTime _lastMeetMobRefreshUtc = DateTime.MinValue;
     private DateTime _meetMobNextRetryUtc = DateTime.MinValue;
     private int _meetMobConsecutiveFailures;
-    private double _meetMobRefreshThresholdMinutes = 38 + Random.Shared.Next(0, 13);
 
     private TimeSpan GetMeetMobBackoffDelay()
     {
@@ -64,7 +63,6 @@ public class ModemHandler : IDisposable
     {
         _meetMobConsecutiveFailures = 0;
         _meetMobNextRetryUtc = DateTime.MinValue;
-        _meetMobRefreshThresholdMinutes = 38 + Random.Shared.Next(0, 13);
     }
 
     public bool IsAlive => !_disposed && _at?.IsOpen == true;
@@ -293,29 +291,9 @@ public class ModemHandler : IDisposable
             catch (ObjectDisposedException) { break; }
             catch (Exception ex) { _log.LogError(ex, "Modem {Id}: Watchdog loop error", _modemId); }
 
-            if (_meetMob != null && !_disposed)
+            if (_meetMob != null && !_disposed && _meetMobToken == null)
             {
-                if (_meetMobToken != null)
-                {
-                    var tokenAge = DateTime.UtcNow - _lastMeetMobRefreshUtc;
-                    if (tokenAge.TotalMinutes >= _meetMobRefreshThresholdMinutes)
-                    {
-                        _log.LogInformation("Modem {Id}: MeetMob token age {Age:F0}min (threshold {Threshold:F0}min) — proactively refreshing", _modemId, tokenAge.TotalMinutes, _meetMobRefreshThresholdMinutes);
-                        try
-                        {
-                            await _meetMob.RefreshLock.WaitAsync(ct);
-                            try
-                            {
-                                var ok = await TryMeetMobLoginAndBalanceAsync(ct);
-                                if (!ok) RecordMeetMobFailure();
-                            }
-                            finally { _meetMob.RefreshLock.Release(); }
-                        }
-                        catch (OperationCanceledException) { break; }
-                        catch (Exception ex) { _log.LogWarning(ex, "Modem {Id}: MeetMob token refresh failed", _modemId); }
-                    }
-                }
-                else if (_meetMobNextRetryUtc != DateTime.MinValue && DateTime.UtcNow >= _meetMobNextRetryUtc)
+                if (_meetMobNextRetryUtc != DateTime.MinValue && DateTime.UtcNow >= _meetMobNextRetryUtc)
                 {
                     _log.LogInformation("Modem {Id}: MeetMob retry after backoff ({Count} consecutive failures)", _modemId, _meetMobConsecutiveFailures);
                     _meetMobNextRetryUtc = DateTime.MinValue;
@@ -835,9 +813,14 @@ public class ModemHandler : IDisposable
                 return true;
             }
 
-            if (string.IsNullOrEmpty(_meetMobToken.AccountId) || _meetMob.IsWafBlocked())
+            if (_meetMob.IsWafBlocked())
             {
-                _log.LogWarning("Modem {Id}: MeetMob balance null (accountId empty/WAF blocked) — skipping re-login", _modemId);
+                _log.LogWarning("Modem {Id}: MeetMob balance null but WAF is blocking — skipping re-login (token preserved)", _modemId);
+                return false;
+            }
+            if (string.IsNullOrEmpty(_meetMobToken.AccountId))
+            {
+                _log.LogWarning("Modem {Id}: MeetMob balance null (accountId empty) — skipping re-login (token preserved)", _modemId);
                 return false;
             }
 

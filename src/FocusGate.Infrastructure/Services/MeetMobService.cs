@@ -96,9 +96,15 @@ public partial class MeetMobService
     public async Task<MeetMobToken?> GetValidTokenAsync(string key)
     {
         var token = await _tokenStore.GetAsync(key);
-        if (token != null && !string.IsNullOrEmpty(token.CsrfToken) && !string.IsNullOrEmpty(token.AccountId))
-            return token;
-        return null;
+        if (token == null) return null;
+        if (string.IsNullOrEmpty(token.CsrfToken) || string.IsNullOrEmpty(token.AccountId))
+            return null;
+        if (token.ExpiresAt < DateTime.UtcNow.AddMinutes(2))
+        {
+            _log.LogDebug("MeetMob: Token expired for {Key} (expired {Expired:F0}min ago)", key[..Math.Min(12, key.Length)], (DateTime.UtcNow - token.ExpiresAt).TotalMinutes);
+            return null;
+        }
+        return token;
     }
 
     public async Task<MeetMobLoginResult> LoginAsync(string imsi, string phone, IAtCommandService at, CancellationToken ct)
@@ -115,7 +121,8 @@ public partial class MeetMobService
             if (!sendResult)
                 return new MeetMobLoginResult { Success = false, Error = "sendSms failed" };
 
-            _log.LogInformation("MeetMob: OTP sent, polling SIM inbox... phone={Phone}", phone);
+            _log.LogInformation("MeetMob: OTP sent, waiting before polling SIM inbox... phone={Phone}", phone);
+            await Task.Delay(1500, ct);
 
             var otpCode = await WaitForOtpAsync(at, ct);
             if (string.IsNullOrEmpty(otpCode))
@@ -126,6 +133,9 @@ public partial class MeetMobService
             var token = await LoginWithOtpAsync(phone, otpCode, ct);
             if (token == null)
                 return new MeetMobLoginResult { Success = false, Error = "Login failed" };
+
+            _log.LogInformation("MeetMob: Login success, waiting before subscriber data...");
+            await Task.Delay(2000, ct);
 
             MeetMobSubscriberData? subData = null;
             for (int attempt = 0; attempt < 3; attempt++)
@@ -592,6 +602,9 @@ public partial class MeetMobService
         request.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36");
         request.Headers.Add("Accept-Language", "en-US,en;q=0.9");
         request.Headers.Add("Origin", "https://meetmob.mobilis.dz");
+        request.Headers.Add("Sec-Fetch-Dest", "empty");
+        request.Headers.Add("Sec-Fetch-Mode", "cors");
+        request.Headers.Add("Sec-Fetch-Site", "same-origin");
     }
 
     private string _sessionCookie = "";
