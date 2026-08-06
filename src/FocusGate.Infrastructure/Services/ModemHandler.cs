@@ -675,6 +675,7 @@ public class ModemHandler : IDisposable
                 catch (Exception ex)
                 {
                     _log.LogError(ex, "Modem {Id}: Failed to process SMS from {Sender}", _modemId, msg.Sender);
+                    skippedCount++;
                 }
             }
 
