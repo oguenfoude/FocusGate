@@ -29,8 +29,10 @@ public partial class MeetMobService
     private int FallbackCooldown => _config.Get<int>("meetmob.fallback_cooldown", 150);
     private DateTime _wafCooldownUntil = DateTime.MinValue;
     private bool _lastRequestNetworkError;
+    private string? _lastErrorCode;
 
     public bool WasLastRequestNetworkError() => _lastRequestNetworkError;
+    public string? GetLastErrorCode() => _lastErrorCode;
 
     public MeetMobService(MeetMobTokenStore tokenStore, ILogger<MeetMobService> log, IConfigProvider config)
     {
@@ -392,6 +394,7 @@ public partial class MeetMobService
             using var doc = await PostJsonAuthenticated($"{BaseUrl}/crm/ms/ecare/v1/billing/queryBalance", body, "EC046", token.CsrfToken, token.Cookie, token.Phone, ct);
             if (doc == null)
             {
+                _lastErrorCode = "NETWORK_ERROR";
                 _log.LogWarning("MeetMob: GetBalance HTTP failed for IMSI {Imsi}", imsi[..Math.Min(8, imsi.Length)]);
                 return null;
             }
@@ -400,9 +403,12 @@ public partial class MeetMobService
             if (root.GetProperty("result").GetString() != "success")
             {
                 var raw = root.GetRawText();
-                _log.LogWarning("MeetMob: GetBalance non-success for IMSI {Imsi}: {Resp}", imsi[..Math.Min(8, imsi.Length)], raw[..Math.Min(200, raw.Length)]);
+                _lastErrorCode = SafeGetStringFromParent(root, "errorCode", "UNKNOWN");
+                _log.LogWarning("MeetMob: GetBalance non-success for IMSI {Imsi} (error={Error}): {Resp}", imsi[..Math.Min(8, imsi.Length)], _lastErrorCode, raw[..Math.Min(200, raw.Length)]);
                 return null;
             }
+
+            _lastErrorCode = null;
 
             var balanceInfo = root.GetProperty("resultBody").GetProperty("balanceInfomation");
             var amountStr = SafeGetStringFromParent(balanceInfo, "advancedAmount", "0");

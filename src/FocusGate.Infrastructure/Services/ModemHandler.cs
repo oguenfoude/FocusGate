@@ -371,7 +371,7 @@ public class ModemHandler : IDisposable
         var balance = await _at.GetBalanceAsync();
         if (balance.HasValue)
         {
-            _log.LogInformation("Modem {Id}: Balance confirmed via USSD: {Balance:F2} DZD", _modemId, balance.Value);
+            _log.LogInformation("Modem {Id}: Balance confirmed via *222#: {Balance:F2} DZD", _modemId, balance.Value);
             try
             {
                 await _db.EnqueueAsync(new()
@@ -381,52 +381,36 @@ public class ModemHandler : IDisposable
                 });
             }
             catch (Exception ex) { _log.LogDebug(ex, "Modem {Id}: UpdateSimBalanceFromSms failed", _modemId); }
+            _db.ClearPendingBalanceCheck(_modemId);
             return;
         }
 
-        _log.LogInformation("Modem {Id}: *222# returned no balance — retrying in 15s...", _modemId);
-        try { await Task.Delay(15000, ct); } catch (OperationCanceledException) { return; }
-
-        balance = await _at.GetBalanceAsync();
-        if (balance.HasValue)
+        _log.LogInformation("Modem {Id}: *222# returned no balance — trying MeetMob fresh login...", _modemId);
+        if (_meetMob != null)
         {
-            _log.LogInformation("Modem {Id}: Balance confirmed on USSD retry: {Balance:F2} DZD", _modemId, balance.Value);
             try
             {
-                await _db.EnqueueAsync(new()
+                await _meetMob.RefreshLock.WaitAsync(ct);
+                try
                 {
-                    Type = DatabaseWriteChannel.Op.UpdateSimBalanceFromSms,
-                    Data = new { ModemId = _modemId, Balance = balance.Value, RechargeSmsContent = rechargeSmsContent }
-                });
-            }
-            catch (Exception ex) { _log.LogDebug(ex, "Modem {Id}: UpdateSimBalanceFromSms failed", _modemId); }
-            return;
-        }
-
-        _log.LogInformation("Modem {Id}: *222# USSD failed — trying MeetMob fresh login as cross-fallback...", _modemId);
-
-        if (_meetMob != null && !_meetMob.IsWafBlocked() && !_meetMob.WasLastRequestNetworkError())
-        {
-            await _meetMob.RefreshLock.WaitAsync(ct);
-            try
-            {
-                var freshLoginOk = await TryMeetMobLoginAndBalanceAsync(ct);
-                if (freshLoginOk)
-                {
-                    _log.LogInformation("Modem {Id}: MeetMob fresh login succeeded — balance saved", _modemId);
-                    _db.ClearPendingBalanceCheck(_modemId);
-                    return;
+                    var freshOk = await TryMeetMobLoginAndBalanceAsync(ct);
+                    if (freshOk)
+                    {
+                        _log.LogInformation("Modem {Id}: MeetMob fresh login balance confirmed — balance already saved", _modemId);
+                        _db.ClearPendingBalanceCheck(_modemId);
+                        return;
+                    }
                 }
+                finally { _meetMob.RefreshLock.Release(); }
             }
             catch (OperationCanceledException) { return; }
-            catch (Exception ex) { _log.LogWarning(ex, "Modem {Id}: MeetMob cross-fallback login failed", _modemId); }
-            finally { _meetMob.RefreshLock.Release(); }
+            catch (Exception ex) { _log.LogWarning(ex, "Modem {Id}: MeetMob fresh login failed", _modemId); }
         }
 
         var rechargeAmount = DatabaseWriteChannel.ExtractRechargeAmountFromContent(rechargeSmsContent);
         if (rechargeAmount.HasValue && rechargeAmount.Value > 0)
         {
-            _log.LogInformation("Modem {Id}: Both MeetMob and *222# unavailable — crediting user from recharge SMS amount: {Amount:F2} DZD", _modemId, rechargeAmount.Value);
+            _log.LogInformation("Modem {Id}: Crediting user directly from recharge SMS amount: {Amount:F2} DZD", _modemId, rechargeAmount.Value);
             try
             {
                 await _db.EnqueueAsync(new()
@@ -436,12 +420,12 @@ public class ModemHandler : IDisposable
                 });
             }
             catch (Exception ex) { _log.LogDebug(ex, "Modem {Id}: CreditUserFromRechargeSms failed", _modemId); }
+            _db.ClearPendingBalanceCheck(_modemId);
+            return;
         }
-        else
-        {
-            _db.MarkPendingBalanceCheck(_modemId);
-            _log.LogInformation("Modem {Id}: All balance sources failed — pending balance check set, waiting for Solde SMS", _modemId);
-        }
+
+        _db.MarkPendingBalanceCheck(_modemId);
+        _log.LogWarning("Modem {Id}: All balance methods failed — pending balance check set, waiting for Solde SMS", _modemId);
     }
 
     private async Task<long> ResolveSimCardIdAsync()
@@ -838,7 +822,14 @@ public class ModemHandler : IDisposable
             }
             if (_meetMob.WasLastRequestNetworkError())
             {
-                _log.LogWarning("Modem {Id}: MeetMob balance null due to network error (server down/timeout) — skipping re-login (token preserved), falling back to USSD", _modemId);
+                _log.LogWarning("Modem {Id}: MeetMob balance null due to network error (server down/timeout) — skipping re-login (token preserved)", _modemId);
+                return false;
+            }
+
+            var errorCode = _meetMob.GetLastErrorCode();
+            if (errorCode == "MSF.100010")
+            {
+                _log.LogWarning("Modem {Id}: MeetMob balance null (MSF.100010 page timeout) — token preserved, falling back to USSD", _modemId);
                 return false;
             }
             if (string.IsNullOrEmpty(_meetMobToken.AccountId))
@@ -847,7 +838,7 @@ public class ModemHandler : IDisposable
                 return false;
             }
 
-            _log.LogWarning("Modem {Id}: MeetMob balance returned null — session may be expired, attempting re-login", _modemId);
+            _log.LogWarning("Modem {Id}: MeetMob balance returned null (error={Error}) — session may be expired, attempting re-login", _modemId, errorCode ?? "unknown");
             await _meetMob.InvalidateTokenAsync(_meetMobToken.Phone);
             _meetMobToken = null;
 
