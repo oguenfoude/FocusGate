@@ -448,51 +448,75 @@ public partial class MeetMobService
 
     private async Task<JsonDocument?> PostJsonAsync(string url, object body, string busiType, CancellationToken ct)
     {
-        var request = new HttpRequestMessage(HttpMethod.Post, url)
+        for (int attempt = 0; attempt < 3; attempt++)
         {
-            Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
-        };
-        ApplyBrowserHeaders(request, busiType, null, null, null);
+            try
+            {
+                var request = new HttpRequestMessage(HttpMethod.Post, url)
+                {
+                    Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
+                };
+                ApplyBrowserHeaders(request, busiType, null, null, null);
 
-        var response = await _http.SendAsync(request, ct);
-        if (!response.IsSuccessStatusCode)
-        {
-            _log.LogWarning("MeetMob: HTTP {Status} from {Url}", response.StatusCode, url);
-            return null;
-        }
+                var response = await _http.SendAsync(request, ct);
+                if (!response.IsSuccessStatusCode)
+                {
+                    _log.LogWarning("MeetMob: HTTP {Status} from {Url}", response.StatusCode, url);
+                    return null;
+                }
 
-        var json = await response.Content.ReadAsStringAsync(ct);
-        if (json.Length > 0 && json[0] == '<')
-        {
-            _log.LogWarning("MeetMob: Got HTML response from {Url} (first 200 chars): {Snippet}", url, json[..Math.Min(200, json.Length)]);
-            return null;
+                var json = await response.Content.ReadAsStringAsync(ct);
+                if (json.Length > 0 && json[0] == '<')
+                {
+                    _log.LogWarning("MeetMob: Got HTML response from {Url} (first 200 chars): {Snippet}", url, json[..Math.Min(200, json.Length)]);
+                    return null;
+                }
+                return JsonDocument.Parse(json);
+            }
+            catch (HttpRequestException ex) when (attempt < 2 && !ct.IsCancellationRequested)
+            {
+                _log.LogWarning("MeetMob: HTTP request failed (attempt {Attempt}/3): {Error}", attempt + 1, ex.Message);
+                await Task.Delay(2000, ct);
+            }
         }
-        return JsonDocument.Parse(json);
+        return null;
     }
 
     private async Task<JsonDocument?> PostJsonAuthenticated(string url, object body, string busiType, string csrfToken, string cookie, string phone, CancellationToken ct)
     {
-        var request = new HttpRequestMessage(HttpMethod.Post, url)
+        for (int attempt = 0; attempt < 3; attempt++)
         {
-            Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
-        };
-        ApplyBrowserHeaders(request, busiType, csrfToken, cookie, phone);
+            try
+            {
+                var request = new HttpRequestMessage(HttpMethod.Post, url)
+                {
+                    Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
+                };
+                ApplyBrowserHeaders(request, busiType, csrfToken, cookie, phone);
 
-        var response = await _http.SendAsync(request, ct);
-        if (!response.IsSuccessStatusCode)
-        {
-            _log.LogWarning("MeetMob: HTTP {Status} from {Url}", response.StatusCode, url);
-            return null;
-        }
+                var response = await _http.SendAsync(request, ct);
+                if (!response.IsSuccessStatusCode)
+                {
+                    _log.LogWarning("MeetMob: HTTP {Status} from {Url}", response.StatusCode, url);
+                    return null;
+                }
 
-        UpdateCookieFromResponse(response);
-        var json = await response.Content.ReadAsStringAsync(ct);
-        if (json.Length > 0 && json[0] == '<')
-        {
-            _log.LogWarning("MeetMob: Got HTML response from {Url} (first 200 chars): {Snippet}", url, json[..Math.Min(200, json.Length)]);
-            return null;
+                UpdateCookieFromResponse(response);
+                var json = await response.Content.ReadAsStringAsync(ct);
+                if (json.Length > 0 && json[0] == '<')
+                {
+                    _log.LogWarning("MeetMob: Got HTML response from {Url} (first 200 chars): {Snippet}", url, json[..Math.Min(200, json.Length)]);
+                    return null;
+                }
+                return JsonDocument.Parse(json);
+            }
+            catch (HttpRequestException ex) when (attempt < 2 && !ct.IsCancellationRequested)
+            {
+                _log.LogWarning("MeetMob: Authenticated HTTP request failed (attempt {Attempt}/3): {Error}", attempt + 1, ex.Message);
+                await Task.Delay(2000, ct);
+            }
         }
-        return JsonDocument.Parse(json);
+        return null;
     }
 
     private void ApplyBrowserHeaders(HttpRequestMessage request, string busiType, string? csrfToken, string? cookie, string? phone)

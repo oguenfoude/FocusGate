@@ -237,6 +237,10 @@ public class ModemHandler : IDisposable
                 {
                     try
                     {
+                        var staggerMs = Random.Shared.Next(0, 10000);
+                        _log.LogInformation("Modem {Id}: Staggering MeetMob login by {Ms}ms", _modemId, staggerMs);
+                        await Task.Delay(staggerMs, loopToken);
+
                         var meetMobOk = await TryMeetMobLoginAndBalanceAsync(loopToken);
                         if (!meetMobOk)
                         {
