@@ -241,6 +241,9 @@ public class ModemHandler : IDisposable
                         _log.LogInformation("Modem {Id}: Staggering MeetMob login by {Ms}ms", _modemId, staggerMs);
                         await Task.Delay(staggerMs, loopToken);
 
+                        if (_meetMob != null)
+                            await _meetMob.WarmupAsync(loopToken);
+
                         var meetMobOk = await TryMeetMobLoginAndBalanceAsync(loopToken);
                         if (!meetMobOk)
                         {

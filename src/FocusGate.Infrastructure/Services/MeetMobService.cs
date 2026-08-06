@@ -22,7 +22,7 @@ public partial class MeetMobService
     private int OtpPollTimeout => _config.Get<int>("meetmob.otp_poll_timeout", 60);
     private int OtpPollInterval => _config.Get<int>("meetmob.otp_poll_interval", 3);
     private int TokenTtl => _config.Get<int>("meetmob.token_ttl", 2700);
-    private int HttpTimeout => _config.Get<int>("meetmob.http_timeout", 30);
+    private int HttpTimeout => _config.Get<int>("meetmob.http_timeout", 10);
     private int LoginCooldown => _config.Get<int>("meetmob.login_cooldown", 120);
     private int FallbackCooldown => _config.Get<int>("meetmob.fallback_cooldown", 150);
 
@@ -38,6 +38,24 @@ public partial class MeetMobService
         {
             Timeout = TimeSpan.FromSeconds(HttpTimeout)
         };
+    }
+
+    private bool _warmedUp;
+
+    public async Task WarmupAsync(CancellationToken ct)
+    {
+        if (_warmedUp) return;
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, BaseUrl);
+            using var resp = await _http.SendAsync(req, ct);
+            _warmedUp = true;
+            _log.LogInformation("MeetMob: TLS warmup OK ({Status})", resp.StatusCode);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning("MeetMob: TLS warmup failed: {Error}", ex.Message);
+        }
     }
 
     public async Task InvalidateTokenAsync(string key)
