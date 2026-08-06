@@ -686,6 +686,11 @@ public class ModemHandler : IDisposable
                     }
                 }
                 catch (TimeoutException) when (_disposed) { }
+                catch (TimeoutException)
+                {
+                    _log.LogDebug("Modem {Id}: SMS DB write timed out (5s) — treating as skipped for {Sender}", _modemId, msg.Sender);
+                    skippedCount++;
+                }
                 catch (OperationCanceledException) when (_disposed) { }
                 catch (Exception ex)
                 {
