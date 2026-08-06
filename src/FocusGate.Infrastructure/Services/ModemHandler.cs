@@ -761,7 +761,13 @@ public class ModemHandler : IDisposable
             var cachedBalanceOk = await TryMeetMobBalanceAsync(ct);
             if (cachedBalanceOk) return true;
 
-            _log.LogWarning("Modem {Id}: MeetMob cached token balance failed — invalidating and retrying fresh login", _modemId);
+            if (_meetMob.WasLastRequestNetworkError() || _meetMob.GetLastErrorCode() == "MSF.100010")
+            {
+                _log.LogWarning("Modem {Id}: MeetMob cached token balance failed (transient error) — token preserved, falling back to USSD", _modemId);
+                return false;
+            }
+
+            _log.LogWarning("Modem {Id}: MeetMob cached token balance failed (auth error) — invalidating and retrying fresh login", _modemId);
             await _meetMob.InvalidateTokenAsync(phone);
             _meetMobToken = null;
         }
