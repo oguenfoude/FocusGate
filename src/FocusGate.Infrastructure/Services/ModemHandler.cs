@@ -371,7 +371,7 @@ public class ModemHandler : IDisposable
         var balance = await _at.GetBalanceAsync();
         if (balance.HasValue)
         {
-            _log.LogInformation("Modem {Id}: Balance confirmed: {Balance:F2} DZD", _modemId, balance.Value);
+            _log.LogInformation("Modem {Id}: Balance confirmed via USSD: {Balance:F2} DZD", _modemId, balance.Value);
             try
             {
                 await _db.EnqueueAsync(new()
@@ -381,48 +381,66 @@ public class ModemHandler : IDisposable
                 });
             }
             catch (Exception ex) { _log.LogDebug(ex, "Modem {Id}: UpdateSimBalanceFromSms failed", _modemId); }
+            return;
+        }
+
+        _log.LogInformation("Modem {Id}: *222# returned no balance — retrying in 15s...", _modemId);
+        try { await Task.Delay(15000, ct); } catch (OperationCanceledException) { return; }
+
+        balance = await _at.GetBalanceAsync();
+        if (balance.HasValue)
+        {
+            _log.LogInformation("Modem {Id}: Balance confirmed on USSD retry: {Balance:F2} DZD", _modemId, balance.Value);
+            try
+            {
+                await _db.EnqueueAsync(new()
+                {
+                    Type = DatabaseWriteChannel.Op.UpdateSimBalanceFromSms,
+                    Data = new { ModemId = _modemId, Balance = balance.Value, RechargeSmsContent = rechargeSmsContent }
+                });
+            }
+            catch (Exception ex) { _log.LogDebug(ex, "Modem {Id}: UpdateSimBalanceFromSms failed", _modemId); }
+            return;
+        }
+
+        _log.LogInformation("Modem {Id}: *222# USSD failed — trying MeetMob fresh login as cross-fallback...", _modemId);
+
+        if (_meetMob != null && !_meetMob.IsWafBlocked() && !_meetMob.WasLastRequestNetworkError())
+        {
+            await _meetMob.RefreshLock.WaitAsync(ct);
+            try
+            {
+                var freshLoginOk = await TryMeetMobLoginAndBalanceAsync(ct);
+                if (freshLoginOk)
+                {
+                    _log.LogInformation("Modem {Id}: MeetMob fresh login succeeded — balance saved", _modemId);
+                    _db.ClearPendingBalanceCheck(_modemId);
+                    return;
+                }
+            }
+            catch (OperationCanceledException) { return; }
+            catch (Exception ex) { _log.LogWarning(ex, "Modem {Id}: MeetMob cross-fallback login failed", _modemId); }
+            finally { _meetMob.RefreshLock.Release(); }
+        }
+
+        var rechargeAmount = DatabaseWriteChannel.ExtractRechargeAmountFromContent(rechargeSmsContent);
+        if (rechargeAmount.HasValue && rechargeAmount.Value > 0)
+        {
+            _log.LogInformation("Modem {Id}: Both MeetMob and *222# unavailable — crediting user from recharge SMS amount: {Amount:F2} DZD", _modemId, rechargeAmount.Value);
+            try
+            {
+                await _db.EnqueueAsync(new()
+                {
+                    Type = DatabaseWriteChannel.Op.CreditUserFromRechargeSms,
+                    Data = new { ModemId = _modemId, RechargeAmount = rechargeAmount.Value }
+                });
+            }
+            catch (Exception ex) { _log.LogDebug(ex, "Modem {Id}: CreditUserFromRechargeSms failed", _modemId); }
         }
         else
         {
-            _log.LogInformation("Modem {Id}: *222# returned no balance — retrying in 15s...", _modemId);
-            try { await Task.Delay(15000, ct); } catch (OperationCanceledException) { return; }
-
-            balance = await _at.GetBalanceAsync();
-            if (balance.HasValue)
-            {
-                _log.LogInformation("Modem {Id}: Balance confirmed on retry: {Balance:F2} DZD", _modemId, balance.Value);
-                try
-                {
-                    await _db.EnqueueAsync(new()
-                    {
-                        Type = DatabaseWriteChannel.Op.UpdateSimBalanceFromSms,
-                        Data = new { ModemId = _modemId, Balance = balance.Value, RechargeSmsContent = rechargeSmsContent }
-                    });
-                }
-                catch (Exception ex) { _log.LogDebug(ex, "Modem {Id}: UpdateSimBalanceFromSms failed", _modemId); }
-            }
-            else
-            {
-                var rechargeAmount = DatabaseWriteChannel.ExtractRechargeAmountFromContent(rechargeSmsContent);
-                if (rechargeAmount.HasValue && rechargeAmount.Value > 0)
-                {
-                    _log.LogInformation("Modem {Id}: *222# unavailable — crediting user directly from recharge SMS amount: {Amount:F2} DZD", _modemId, rechargeAmount.Value);
-                    try
-                    {
-                        await _db.EnqueueAsync(new()
-                        {
-                            Type = DatabaseWriteChannel.Op.CreditUserFromRechargeSms,
-                            Data = new { ModemId = _modemId, RechargeAmount = rechargeAmount.Value }
-                        });
-                    }
-                    catch (Exception ex) { _log.LogDebug(ex, "Modem {Id}: CreditUserFromRechargeSms failed", _modemId); }
-                }
-                else
-                {
-                    _db.MarkPendingBalanceCheck(_modemId);
-                    _log.LogInformation("Modem {Id}: *222# failed and could not extract recharge amount — pending balance check set, waiting for Solde SMS", _modemId);
-                }
-            }
+            _db.MarkPendingBalanceCheck(_modemId);
+            _log.LogInformation("Modem {Id}: All balance sources failed — pending balance check set, waiting for Solde SMS", _modemId);
         }
     }
 
