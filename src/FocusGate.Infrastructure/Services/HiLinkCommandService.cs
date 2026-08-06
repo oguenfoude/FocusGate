@@ -470,8 +470,9 @@ public partial class HiLinkCommandService : IAtCommandService
 
             if (IsSmsInboxFull)
             {
-                _log.LogWarning("[HiLink] ReadAllSms returned empty on 125002 — deleting by index fallback (1–100)");
-                for (int i = 1; i <= 100; i++)
+                _log.LogWarning("[HiLink] ReadAllSms returned empty on 125002 — deleting by index fallback (1–500)");
+                var deleteFailed = 0;
+                for (int i = 1; i <= 500; i++)
                 {
                     try
                     {
@@ -480,14 +481,16 @@ public partial class HiLinkCommandService : IAtCommandService
                     }
                     catch (HttpRequestException)
                     {
-                        break;
+                        deleteFailed++;
                     }
                     catch (Exception ex)
                     {
-                        _log.LogWarning(ex, "[HiLink] Index delete failed at {Index} — aborting fallback", i);
-                        break;
+                        _log.LogWarning(ex, "[HiLink] Index delete failed at {Index}", i);
+                        deleteFailed++;
                     }
                 }
+                if (deleteFailed > 0)
+                    _log.LogWarning("[HiLink] Fallback delete: {Failed}/500 indices failed (expected for empty slots)", deleteFailed);
                 IsSmsInboxFull = false;
             }
         }

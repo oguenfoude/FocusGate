@@ -620,10 +620,10 @@ public class ModemHandler : IDisposable
 
             if (_at.IsSmsInboxFull)
             {
-                _log.LogWarning("Modem {Id}: SMS inbox full (125002) — clearing inbox, backing off 3 min", _modemId);
-                try { await _at.DeleteAllSmsAsync(); }
-                catch (Exception ex) { _log.LogWarning(ex, "Modem {Id}: DeleteAllSms failed during 125002 clear", _modemId); }
-                _smsCooldownUntil = DateTime.UtcNow.AddMinutes(3);
+        _log.LogWarning("Modem {Id}: SMS inbox full (125002) — clearing inbox, backing off 30s", _modemId);
+        try { await _at.DeleteAllSmsAsync(); }
+        catch (Exception ex) { _log.LogWarning(ex, "Modem {Id}: DeleteAllSms after 125002 failed", _modemId); }
+        _smsCooldownUntil = DateTime.UtcNow.AddSeconds(30);
                 return null;
             }
 

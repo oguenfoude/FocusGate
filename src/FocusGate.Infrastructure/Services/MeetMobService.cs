@@ -138,7 +138,8 @@ public partial class MeetMobService
             if (string.IsNullOrEmpty(otpCode))
                 return new MeetMobLoginResult { Success = false, Error = "OTP not received" };
 
-            _log.LogInformation("MeetMob: OTP extracted: {Code}, logging in...", otpCode);
+            _log.LogInformation("MeetMob: OTP extracted: {Code}, clearing SMS from SIM...", otpCode);
+            try { await at.DeleteAllSmsAsync(); } catch { }
 
             var token = await LoginWithOtpAsync(phone, otpCode, ct);
             if (token == null)
@@ -229,7 +230,6 @@ public partial class MeetMobService
                     if (code != null)
                     {
                         _log.LogDebug("MeetMob: OTP found in SMS from {Sender}", msg.Sender);
-                        try { await at.DeleteAllSmsAsync(); } catch { }
                         return code;
                     }
                 }
