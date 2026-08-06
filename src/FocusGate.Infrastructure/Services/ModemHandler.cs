@@ -39,6 +39,7 @@ public class ModemHandler : IDisposable
     private DateTime _lastMeetMobRefreshUtc = DateTime.MinValue;
     private DateTime _meetMobNextRetryUtc = DateTime.MinValue;
     private int _meetMobConsecutiveFailures;
+    private double _meetMobRefreshThresholdMinutes = 38 + Random.Shared.Next(0, 7);
 
     private TimeSpan GetMeetMobBackoffDelay()
     {
@@ -63,6 +64,7 @@ public class ModemHandler : IDisposable
     {
         _meetMobConsecutiveFailures = 0;
         _meetMobNextRetryUtc = DateTime.MinValue;
+        _meetMobRefreshThresholdMinutes = 38 + Random.Shared.Next(0, 7);
     }
 
     public bool IsAlive => !_disposed && _at?.IsOpen == true;
@@ -294,9 +296,11 @@ public class ModemHandler : IDisposable
                 if (_meetMobToken != null)
                 {
                     var tokenAge = DateTime.UtcNow - _lastMeetMobRefreshUtc;
-                    if (tokenAge.TotalMinutes >= 40)
+                    if (tokenAge.TotalMinutes >= _meetMobRefreshThresholdMinutes)
                     {
-                        _log.LogInformation("Modem {Id}: MeetMob token age {Age:F0}min — proactively refreshing", _modemId, tokenAge.TotalMinutes);
+                        _log.LogInformation("Modem {Id}: MeetMob token age {Age:F0}min (threshold {Threshold:F0}min) — proactively refreshing", _modemId, tokenAge.TotalMinutes, _meetMobRefreshThresholdMinutes);
+                        var staggerMs = Random.Shared.Next(0, 5000);
+                        await Task.Delay(staggerMs, ct);
                         try { await TryMeetMobLoginAndBalanceAsync(ct); }
                         catch (OperationCanceledException) { break; }
                         catch (Exception ex) { _log.LogWarning(ex, "Modem {Id}: MeetMob token refresh failed", _modemId); }
