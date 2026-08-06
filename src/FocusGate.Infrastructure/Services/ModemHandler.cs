@@ -736,13 +736,13 @@ public class ModemHandler : IDisposable
             return false;
         }
 
-        if (!await _meetMob.CanRetryAsync(_imsi))
+        if (!await _meetMob.CanRetryAsync(phone))
         {
             _log.LogDebug("Modem {Id}: MeetMob in cooldown, skipping", _modemId);
             return false;
         }
 
-        var cachedToken = await _meetMob.GetValidTokenAsync(_imsi);
+        var cachedToken = await _meetMob.GetValidTokenAsync(phone);
         if (cachedToken != null)
         {
             _log.LogInformation("Modem {Id}: MeetMob using cached token", _modemId);
@@ -752,7 +752,7 @@ public class ModemHandler : IDisposable
             if (cachedBalanceOk) return true;
 
             _log.LogWarning("Modem {Id}: MeetMob cached token balance failed — invalidating and retrying fresh login", _modemId);
-            await _meetMob.InvalidateTokenAsync(_imsi);
+            await _meetMob.InvalidateTokenAsync(phone);
             _meetMobToken = null;
         }
 
@@ -770,7 +770,7 @@ public class ModemHandler : IDisposable
         if (!result.Success)
         {
             _log.LogWarning("Modem {Id}: MeetMob login failed — {Error}, falling back to USSD", _modemId, result.Error);
-            await _meetMob.SetCooldownAsync(_imsi, _config.Get<int>("meetmob.fallback_cooldown", 150));
+            await _meetMob.SetCooldownAsync(phone, _config.Get<int>("meetmob.fallback_cooldown", 150));
             return false;
         }
 
@@ -800,7 +800,7 @@ public class ModemHandler : IDisposable
             }
 
             _log.LogWarning("Modem {Id}: MeetMob balance returned null — session may be expired, attempting re-login", _modemId);
-            await _meetMob.InvalidateTokenAsync(_imsi);
+            await _meetMob.InvalidateTokenAsync(_meetMobToken.Phone);
             _meetMobToken = null;
 
             var phoneRaw = await _db.GetPhoneNumberAsync(_imsi);
@@ -827,8 +827,7 @@ public class ModemHandler : IDisposable
             if (!loginResult.Success)
             {
                 _log.LogWarning("Modem {Id}: MeetMob re-login failed — {Error}", _modemId, loginResult.Error);
-                await _meetMob.SetCooldownAsync(_imsi, _config.Get<int>("meetmob.fallback_cooldown", 150));
-                RecordMeetMobFailure();
+                await _meetMob.SetCooldownAsync(phone, _config.Get<int>("meetmob.fallback_cooldown", 150));
                 return false;
             }
 
@@ -857,7 +856,6 @@ public class ModemHandler : IDisposable
             }
 
             _log.LogWarning("Modem {Id}: MeetMob balance still null after re-login", _modemId);
-            RecordMeetMobFailure();
         }
         catch (Exception ex)
         {

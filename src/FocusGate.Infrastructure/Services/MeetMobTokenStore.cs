@@ -15,25 +15,25 @@ public class MeetMobTokenStore
         _filePath = Path.Combine(PathService.DataDirectory, "meetmob-tokens.json");
     }
 
-    public async Task<MeetMobToken?> GetAsync(string imsi)
+    public async Task<MeetMobToken?> GetAsync(string key)
     {
         await LoadAsync();
-        if (_tokens.TryGetValue(imsi, out var token) && token.ExpiresAt > DateTime.UtcNow)
+        if (_tokens.TryGetValue(key, out var token) && token.ExpiresAt > DateTime.UtcNow)
             return token;
         return null;
     }
 
-    public async Task SaveAsync(string imsi, MeetMobToken token)
+    public async Task SaveAsync(string key, MeetMobToken token)
     {
         await LoadAsync();
-        _tokens[imsi] = token;
+        _tokens[key] = token;
         await PersistAsync();
     }
 
-    public async Task RemoveAsync(string imsi)
+    public async Task RemoveAsync(string key)
     {
         await LoadAsync();
-        if (_tokens.Remove(imsi))
+        if (_tokens.Remove(key))
             await PersistAsync();
     }
 

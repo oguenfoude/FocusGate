@@ -40,33 +40,33 @@ public partial class MeetMobService
         };
     }
 
-    public async Task InvalidateTokenAsync(string imsi)
+    public async Task InvalidateTokenAsync(string key)
     {
-        await _tokenStore.RemoveAsync(imsi);
-        _log.LogInformation("MeetMob: Token invalidated for IMSI {Imsi}", imsi[..Math.Min(8, imsi.Length)]);
+        await _tokenStore.RemoveAsync(key);
+        _log.LogInformation("MeetMob: Token invalidated for {Key}", key[..Math.Min(12, key.Length)]);
     }
 
-    public async Task<bool> CanRetryAsync(string imsi)
+    public async Task<bool> CanRetryAsync(string key)
     {
-        if (!_cooldowns.TryGetValue(imsi, out var until))
+        if (!_cooldowns.TryGetValue(key, out var until))
             return true;
         if (DateTime.UtcNow >= until)
         {
-            _cooldowns.Remove(imsi);
+            _cooldowns.Remove(key);
             return true;
         }
         return false;
     }
 
-    public async Task SetCooldownAsync(string imsi, int seconds)
+    public async Task SetCooldownAsync(string key, int seconds)
     {
-        _cooldowns[imsi] = DateTime.UtcNow.AddSeconds(seconds);
-        _log.LogInformation("MeetMob: Cooldown set for IMSI {Imsi} — {Seconds}s", imsi[..Math.Min(8, imsi.Length)], seconds);
+        _cooldowns[key] = DateTime.UtcNow.AddSeconds(seconds);
+        _log.LogInformation("MeetMob: Cooldown set for {Key} — {Seconds}s", key[..Math.Min(12, key.Length)], seconds);
     }
 
-    public async Task<MeetMobToken?> GetValidTokenAsync(string imsi)
+    public async Task<MeetMobToken?> GetValidTokenAsync(string key)
     {
-        var token = await _tokenStore.GetAsync(imsi);
+        var token = await _tokenStore.GetAsync(key);
         if (token != null && !string.IsNullOrEmpty(token.CsrfToken) && !string.IsNullOrEmpty(token.AccountId))
             return token;
         return null;
@@ -80,13 +80,13 @@ public partial class MeetMobService
         await _loginLock.WaitAsync(ct);
         try
         {
-            _log.LogInformation("MeetMob: Login starting for IMSI {Imsi} phone {Phone}", imsi[..Math.Min(8, imsi.Length)], phone);
+            _log.LogInformation("MeetMob: Login starting for phone {Phone}", phone);
 
             var sendResult = await SendOtpAsync(phone, ct);
             if (!sendResult)
                 return new MeetMobLoginResult { Success = false, Error = "sendSms failed" };
 
-            _log.LogInformation("MeetMob: OTP sent, polling SIM inbox... IMSI={Imsi}", imsi[..Math.Min(8, imsi.Length)]);
+            _log.LogInformation("MeetMob: OTP sent, polling SIM inbox... phone={Phone}", phone);
 
             var otpCode = await WaitForOtpAsync(at, ct);
             if (string.IsNullOrEmpty(otpCode))
@@ -115,9 +115,9 @@ public partial class MeetMobService
 
             token.Phone = phone;
             token.ExpiresAt = DateTime.UtcNow.AddSeconds(TokenTtl);
-            await _tokenStore.SaveAsync(imsi, token);
+            await _tokenStore.SaveAsync(phone, token);
 
-            _log.LogInformation("MeetMob: Login success for IMSI {Imsi}, accountId={AccountId}", imsi[..Math.Min(8, imsi.Length)], token.AccountId);
+            _log.LogInformation("MeetMob: Login success for phone {Phone}, accountId={AccountId}", phone, token.AccountId);
             return new MeetMobLoginResult { Success = true, Token = token };
         }
         finally
@@ -299,7 +299,7 @@ public partial class MeetMobService
     {
         if (string.IsNullOrEmpty(token.AccountId))
         {
-            _log.LogWarning("MeetMob: No accountId for IMSI {Imsi}, re-fetching subscriber data", imsi[..Math.Min(8, imsi.Length)]);
+            _log.LogWarning("MeetMob: No accountId for phone {Phone}, re-fetching subscriber data", token.Phone);
             for (int attempt = 0; attempt < 3; attempt++)
             {
                 var subData = await GetSubscriberDataAsync(token, ct);
@@ -307,7 +307,7 @@ public partial class MeetMobService
                 {
                     token.AccountId = subData.AccountId;
                     token.SubscriberKey = subData.SubscriberKey;
-                    await _tokenStore.SaveAsync(imsi, token);
+                    await _tokenStore.SaveAsync(token.Phone, token);
                     break;
                 }
                 if (attempt < 2)
@@ -462,6 +462,11 @@ public partial class MeetMobService
         }
 
         var json = await response.Content.ReadAsStringAsync(ct);
+        if (json.Length > 0 && json[0] == '<')
+        {
+            _log.LogWarning("MeetMob: Got HTML response from {Url} (first 200 chars): {Snippet}", url, json[..Math.Min(200, json.Length)]);
+            return null;
+        }
         return JsonDocument.Parse(json);
     }
 
@@ -482,6 +487,11 @@ public partial class MeetMobService
 
         UpdateCookieFromResponse(response);
         var json = await response.Content.ReadAsStringAsync(ct);
+        if (json.Length > 0 && json[0] == '<')
+        {
+            _log.LogWarning("MeetMob: Got HTML response from {Url} (first 200 chars): {Snippet}", url, json[..Math.Min(200, json.Length)]);
+            return null;
+        }
         return JsonDocument.Parse(json);
     }
 
