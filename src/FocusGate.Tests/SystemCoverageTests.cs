@@ -10,17 +10,17 @@ public class ModemHandlerPropertyTests
     public void DetectBrand_AllEnumValues_Covered()
     {
         var brands = Enum.GetValues(typeof(ModemBrand)).Cast<ModemBrand>();
-        Assert.True(brands.Contains(ModemBrand.Unknown));
-        Assert.True(brands.Contains(ModemBrand.ZTE));
-        Assert.True(brands.Contains(ModemBrand.Huawei));
-        Assert.True(brands.Contains(ModemBrand.Quectel));
-        Assert.True(brands.Contains(ModemBrand.SIMCom));
-        Assert.True(brands.Contains(ModemBrand.SierraWireless));
-        Assert.True(brands.Contains(ModemBrand.Ericsson));
-        Assert.True(brands.Contains(ModemBrand.MediaTek));
-        Assert.True(brands.Contains(ModemBrand.Alaafi));
-        Assert.True(brands.Contains(ModemBrand.FlexiDZ));
-        Assert.True(brands.Contains(ModemBrand.Other));
+        Assert.Contains(ModemBrand.Unknown, brands);
+        Assert.Contains(ModemBrand.ZTE, brands);
+        Assert.Contains(ModemBrand.Huawei, brands);
+        Assert.Contains(ModemBrand.Quectel, brands);
+        Assert.Contains(ModemBrand.SIMCom, brands);
+        Assert.Contains(ModemBrand.SierraWireless, brands);
+        Assert.Contains(ModemBrand.Ericsson, brands);
+        Assert.Contains(ModemBrand.MediaTek, brands);
+        Assert.Contains(ModemBrand.Alaafi, brands);
+        Assert.Contains(ModemBrand.FlexiDZ, brands);
+        Assert.Contains(ModemBrand.Other, brands);
     }
 
     [Fact]

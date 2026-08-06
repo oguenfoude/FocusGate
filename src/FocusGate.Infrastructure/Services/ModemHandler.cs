@@ -39,7 +39,7 @@ public class ModemHandler : IDisposable
     private DateTime _lastMeetMobRefreshUtc = DateTime.MinValue;
     private DateTime _meetMobNextRetryUtc = DateTime.MinValue;
     private int _meetMobConsecutiveFailures;
-    private double _meetMobRefreshThresholdMinutes = 38 + Random.Shared.Next(0, 7);
+    private double _meetMobRefreshThresholdMinutes = 38 + Random.Shared.Next(0, 13);
 
     private TimeSpan GetMeetMobBackoffDelay()
     {
@@ -64,7 +64,7 @@ public class ModemHandler : IDisposable
     {
         _meetMobConsecutiveFailures = 0;
         _meetMobNextRetryUtc = DateTime.MinValue;
-        _meetMobRefreshThresholdMinutes = 38 + Random.Shared.Next(0, 7);
+        _meetMobRefreshThresholdMinutes = 38 + Random.Shared.Next(0, 13);
     }
 
     public bool IsAlive => !_disposed && _at?.IsOpen == true;
@@ -304,7 +304,11 @@ public class ModemHandler : IDisposable
                         try
                         {
                             await _meetMob.RefreshLock.WaitAsync(ct);
-                            try { await TryMeetMobLoginAndBalanceAsync(ct); }
+                            try
+                            {
+                                var ok = await TryMeetMobLoginAndBalanceAsync(ct);
+                                if (!ok) RecordMeetMobFailure();
+                            }
                             finally { _meetMob.RefreshLock.Release(); }
                         }
                         catch (OperationCanceledException) { break; }
@@ -777,6 +781,12 @@ public class ModemHandler : IDisposable
             _meetMobToken = null;
         }
 
+        if (_meetMob.IsWafBlocked())
+        {
+            _log.LogWarning("Modem {Id}: MeetMob WAF is blocking — skipping fresh login", _modemId);
+            return false;
+        }
+
         _log.LogInformation("Modem {Id}: MeetMob logging in via OTP...", _modemId);
         MeetMobLoginResult result;
         try
@@ -820,6 +830,12 @@ public class ModemHandler : IDisposable
                 return true;
             }
 
+            if (string.IsNullOrEmpty(_meetMobToken.AccountId) || _meetMob.IsWafBlocked())
+            {
+                _log.LogWarning("Modem {Id}: MeetMob balance null (accountId empty/WAF blocked) — skipping re-login", _modemId);
+                return false;
+            }
+
             _log.LogWarning("Modem {Id}: MeetMob balance returned null — session may be expired, attempting re-login", _modemId);
             await _meetMob.InvalidateTokenAsync(_meetMobToken.Phone);
             _meetMobToken = null;
@@ -860,6 +876,12 @@ public class ModemHandler : IDisposable
             if (_meetMobToken == null)
             {
                 _log.LogWarning("Modem {Id}: MeetMob re-login returned null token", _modemId);
+                return false;
+            }
+
+            if (_meetMob.IsWafBlocked())
+            {
+                _log.LogWarning("Modem {Id}: MeetMob WAF blocked after re-login — giving up this cycle", _modemId);
                 return false;
             }
 

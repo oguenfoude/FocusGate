@@ -27,6 +27,7 @@ public partial class MeetMobService
     private int HttpTimeout => _config.Get<int>("meetmob.http_timeout", 10);
     private int LoginCooldown => _config.Get<int>("meetmob.login_cooldown", 120);
     private int FallbackCooldown => _config.Get<int>("meetmob.fallback_cooldown", 150);
+    private DateTime _wafCooldownUntil = DateTime.MinValue;
 
     public MeetMobService(MeetMobTokenStore tokenStore, ILogger<MeetMobService> log, IConfigProvider config)
     {
@@ -84,6 +85,14 @@ public partial class MeetMobService
         _log.LogInformation("MeetMob: Cooldown set for {Key} — {Seconds}s", key[..Math.Min(12, key.Length)], seconds);
     }
 
+    public bool IsWafBlocked() => DateTime.UtcNow < _wafCooldownUntil;
+
+    public void SetWafCooldown(int seconds = 300)
+    {
+        _wafCooldownUntil = DateTime.UtcNow.AddSeconds(seconds);
+        _log.LogWarning("MeetMob: WAF cooldown set for {Seconds}s — Request Rejected / connection timeout", seconds);
+    }
+
     public async Task<MeetMobToken?> GetValidTokenAsync(string key)
     {
         var token = await _tokenStore.GetAsync(key);
@@ -121,6 +130,11 @@ public partial class MeetMobService
             MeetMobSubscriberData? subData = null;
             for (int attempt = 0; attempt < 3; attempt++)
             {
+                if (IsWafBlocked())
+                {
+                    _log.LogWarning("MeetMob: Subscriber data skipped — WAF cooldown active");
+                    break;
+                }
                 subData = await GetSubscriberDataAsync(token, ct);
                 if (subData != null) break;
                 _log.LogWarning("MeetMob: Subscriber data attempt {Attempt}/3 failed, retrying in 3s...", attempt + 1);
@@ -182,6 +196,8 @@ public partial class MeetMobService
     private async Task<string?> WaitForOtpAsync(IAtCommandService at, CancellationToken ct)
     {
         var deadline = DateTime.UtcNow.AddSeconds(OtpPollTimeout);
+        int consecutiveEmpty = 0;
+        bool inboxCleared = false;
         while (DateTime.UtcNow < deadline && !ct.IsCancellationRequested)
         {
             try
@@ -196,10 +212,22 @@ public partial class MeetMobService
                         return code;
                     }
                 }
+                consecutiveEmpty++;
+                if (consecutiveEmpty >= 5 && !inboxCleared)
+                {
+                    _log.LogWarning("MeetMob: OTP poll — {Count} consecutive empty reads, clearing SMS inbox", consecutiveEmpty);
+                    try { await at.DeleteAllSmsAsync(); } catch { }
+                    inboxCleared = true;
+                }
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 _log.LogDebug(ex, "MeetMob: OTP poll read failed");
+                if (IsWafBlocked())
+                {
+                    _log.LogWarning("MeetMob: OTP poll aborting — WAF cooldown active");
+                    return null;
+                }
             }
 
             try { await Task.Delay(TimeSpan.FromSeconds(OtpPollInterval), ct); }
@@ -319,6 +347,11 @@ public partial class MeetMobService
     {
         if (string.IsNullOrEmpty(token.AccountId))
         {
+            if (IsWafBlocked())
+            {
+                _log.LogWarning("MeetMob: No accountId for phone {Phone} and WAF is blocking — skipping", token.Phone);
+                return null;
+            }
             _log.LogWarning("MeetMob: No accountId for phone {Phone}, re-fetching subscriber data", token.Phone);
             for (int attempt = 0; attempt < 3; attempt++)
             {
@@ -332,6 +365,7 @@ public partial class MeetMobService
                 }
                 if (attempt < 2)
                 {
+                    if (IsWafBlocked()) break;
                     _log.LogWarning("MeetMob: Subscriber data attempt {Attempt}/3 failed for balance, retrying in 3s...", attempt + 1);
                     await Task.Delay(3000, ct);
                 }
@@ -489,6 +523,7 @@ public partial class MeetMobService
                 if (json.Length > 0 && json[0] == '<')
                 {
                     _log.LogWarning("MeetMob: Got HTML response from {Url} (first 200 chars): {Snippet}", url, json[..Math.Min(200, json.Length)]);
+                    SetWafCooldown(300);
                     return null;
                 }
                 return JsonDocument.Parse(json);
@@ -526,6 +561,7 @@ public partial class MeetMobService
                 if (json.Length > 0 && json[0] == '<')
                 {
                     _log.LogWarning("MeetMob: Got HTML response from {Url} (first 200 chars): {Snippet}", url, json[..Math.Min(200, json.Length)]);
+                    SetWafCooldown(300);
                     return null;
                 }
                 return JsonDocument.Parse(json);
