@@ -229,6 +229,7 @@ public partial class MeetMobService
                     if (code != null)
                     {
                         _log.LogDebug("MeetMob: OTP found in SMS from {Sender}", msg.Sender);
+                        try { await at.DeleteAllSmsAsync(); } catch { }
                         return code;
                     }
                 }
