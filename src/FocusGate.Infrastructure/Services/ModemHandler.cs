@@ -239,22 +239,24 @@ public class ModemHandler : IDisposable
                 {
                     try
                     {
-                        var staggerMs = Random.Shared.Next(0, 10000);
-                        _log.LogInformation("Modem {Id}: Staggering MeetMob login by {Ms}ms", _modemId, staggerMs);
-                        await Task.Delay(staggerMs, loopToken);
-
                         if (_meetMob != null)
-                            await _meetMob.WarmupAsync(loopToken);
-
-                        var meetMobOk = await TryMeetMobLoginAndBalanceAsync(loopToken);
-                        if (!meetMobOk)
                         {
-                            RecordMeetMobFailure();
-                            _log.LogInformation("Modem {Id}: MeetMob failed at startup — will retry with backoff, using USSD for now", _modemId);
-                            if (startupRechargeContent != null)
-                                await RunBalanceCheckFromSmsAsync(startupRechargeContent, loopToken);
-                            else
-                                await TryGetPhoneAndBalanceAsync(loopToken);
+                            await _meetMob.WarmupAsync(loopToken);
+                            await _meetMob.RefreshLock.WaitAsync(loopToken);
+                            try
+                            {
+                                var meetMobOk = await TryMeetMobLoginAndBalanceAsync(loopToken);
+                                if (!meetMobOk)
+                                {
+                                    RecordMeetMobFailure();
+                                    _log.LogInformation("Modem {Id}: MeetMob failed at startup — will retry with backoff, using USSD for now", _modemId);
+                                    if (startupRechargeContent != null)
+                                        await RunBalanceCheckFromSmsAsync(startupRechargeContent, loopToken);
+                                    else
+                                        await TryGetPhoneAndBalanceAsync(loopToken);
+                                }
+                            }
+                            finally { _meetMob.RefreshLock.Release(); }
                         }
                     }
                     catch (OperationCanceledException) { }
@@ -299,9 +301,12 @@ public class ModemHandler : IDisposable
                     if (tokenAge.TotalMinutes >= _meetMobRefreshThresholdMinutes)
                     {
                         _log.LogInformation("Modem {Id}: MeetMob token age {Age:F0}min (threshold {Threshold:F0}min) — proactively refreshing", _modemId, tokenAge.TotalMinutes, _meetMobRefreshThresholdMinutes);
-                        var staggerMs = Random.Shared.Next(0, 5000);
-                        await Task.Delay(staggerMs, ct);
-                        try { await TryMeetMobLoginAndBalanceAsync(ct); }
+                        try
+                        {
+                            await _meetMob.RefreshLock.WaitAsync(ct);
+                            try { await TryMeetMobLoginAndBalanceAsync(ct); }
+                            finally { _meetMob.RefreshLock.Release(); }
+                        }
                         catch (OperationCanceledException) { break; }
                         catch (Exception ex) { _log.LogWarning(ex, "Modem {Id}: MeetMob token refresh failed", _modemId); }
                     }
@@ -312,8 +317,13 @@ public class ModemHandler : IDisposable
                     _meetMobNextRetryUtc = DateTime.MinValue;
                     try
                     {
-                        var ok = await TryMeetMobLoginAndBalanceAsync(ct);
-                        if (!ok) RecordMeetMobFailure();
+                        await _meetMob.RefreshLock.WaitAsync(ct);
+                        try
+                        {
+                            var ok = await TryMeetMobLoginAndBalanceAsync(ct);
+                            if (!ok) RecordMeetMobFailure();
+                        }
+                        finally { _meetMob.RefreshLock.Release(); }
                     }
                     catch (OperationCanceledException) { break; }
                     catch (Exception ex) { _log.LogWarning(ex, "Modem {Id}: MeetMob retry failed", _modemId); RecordMeetMobFailure(); }

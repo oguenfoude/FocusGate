@@ -17,6 +17,8 @@ public partial class MeetMobService
     private readonly Dictionary<string, DateTime> _cooldowns = new();
     private readonly SemaphoreSlim _loginLock = new(1, 1);
 
+    public SemaphoreSlim RefreshLock { get; } = new(1, 1);
+
     private string BaseUrl => _config.Get("meetmob.base_url", "https://meetmob.mobilis.dz");
     private string Password => _config.Get("meetmob.password", "00000");
     private int OtpPollTimeout => _config.Get<int>("meetmob.otp_poll_timeout", 60);
