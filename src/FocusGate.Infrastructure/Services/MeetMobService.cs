@@ -1,7 +1,9 @@
+using System.Collections.Concurrent;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Threading;
 using FocusGate.Core.DTOs;
 using FocusGate.Core.Interfaces;
 using Microsoft.Extensions.Logging;
@@ -14,7 +16,7 @@ public partial class MeetMobService
     private readonly MeetMobTokenStore _tokenStore;
     private readonly ILogger<MeetMobService> _log;
     private readonly IConfigProvider _config;
-    private readonly Dictionary<string, DateTime> _cooldowns = new();
+    private readonly ConcurrentDictionary<string, DateTime> _cooldowns = new();
     private readonly SemaphoreSlim _loginLock = new(1, 1);
 
     public SemaphoreSlim RefreshLock { get; } = new(1, 1);
@@ -27,9 +29,9 @@ public partial class MeetMobService
     private int HttpTimeout => _config.Get<int>("meetmob.http_timeout", 10);
     private int LoginCooldown => _config.Get<int>("meetmob.login_cooldown", 120);
     private int FallbackCooldown => _config.Get<int>("meetmob.fallback_cooldown", 150);
-    private DateTime _wafCooldownUntil = DateTime.MinValue;
-    private bool _lastRequestNetworkError;
-    private string? _lastErrorCode;
+    private long _wafCooldownUntilUtcTicks;
+    private volatile bool _lastRequestNetworkError;
+    private volatile string? _lastErrorCode;
 
     public bool WasLastRequestNetworkError() => _lastRequestNetworkError;
     public string? GetLastErrorCode() => _lastErrorCode;
@@ -72,29 +74,29 @@ public partial class MeetMobService
         _log.LogInformation("MeetMob: Token invalidated for {Key}", key[..Math.Min(12, key.Length)]);
     }
 
-    public async Task<bool> CanRetryAsync(string key)
+    public bool CanRetry(string key)
     {
         if (!_cooldowns.TryGetValue(key, out var until))
             return true;
         if (DateTime.UtcNow >= until)
         {
-            _cooldowns.Remove(key);
+            _cooldowns.TryRemove(key, out _);
             return true;
         }
         return false;
     }
 
-    public async Task SetCooldownAsync(string key, int seconds)
+    public void SetCooldown(string key, int seconds)
     {
         _cooldowns[key] = DateTime.UtcNow.AddSeconds(seconds);
         _log.LogInformation("MeetMob: Cooldown set for {Key} — {Seconds}s", key[..Math.Min(12, key.Length)], seconds);
     }
 
-    public bool IsWafBlocked() => DateTime.UtcNow < _wafCooldownUntil;
+    public bool IsWafBlocked() => DateTime.UtcNow.Ticks < Interlocked.Read(ref _wafCooldownUntilUtcTicks);
 
     public void SetWafCooldown(int seconds = 300)
     {
-        _wafCooldownUntil = DateTime.UtcNow.AddSeconds(seconds);
+        Interlocked.Exchange(ref _wafCooldownUntilUtcTicks, DateTime.UtcNow.AddSeconds(seconds).Ticks);
         _log.LogWarning("MeetMob: WAF cooldown set for {Seconds}s — Request Rejected / connection timeout", seconds);
     }
 
@@ -120,6 +122,9 @@ public partial class MeetMobService
         await _loginLock.WaitAsync(ct);
         try
         {
+            _sessionCookie = "";
+            _lastRequestNetworkError = false;
+            _lastErrorCode = null;
             _log.LogInformation("MeetMob: Login starting for phone {Phone}", phone);
 
             var sendResult = await SendOtpAsync(phone, ct);

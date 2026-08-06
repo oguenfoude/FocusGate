@@ -390,10 +390,11 @@ public class ModemHandler : IDisposable
         {
             try
             {
-                await _meetMob.RefreshLock.WaitAsync(ct);
-                try
+                var simInfo = await _db.GetActiveSimInfoAsync(_modemId);
+                var freshPhone = MeetMobService.FormatPhone(simInfo.PhoneNumber);
+                if (!string.IsNullOrEmpty(freshPhone))
                 {
-                    var freshOk = await TryMeetMobLoginAndBalanceAsync(ct);
+                    var freshOk = await TryMeetMobLoginAndBalanceInnerAsync(freshPhone, acquireAtLock: false, ct);
                     if (freshOk)
                     {
                         _log.LogInformation("Modem {Id}: MeetMob fresh login balance confirmed — balance already saved", _modemId);
@@ -401,7 +402,6 @@ public class ModemHandler : IDisposable
                         return;
                     }
                 }
-                finally { _meetMob.RefreshLock.Release(); }
             }
             catch (OperationCanceledException) { return; }
             catch (Exception ex) { _log.LogWarning(ex, "Modem {Id}: MeetMob fresh login failed", _modemId); }
@@ -746,12 +746,18 @@ public class ModemHandler : IDisposable
             return false;
         }
 
-        if (!await _meetMob.CanRetryAsync(phone))
+        if (!_meetMob.CanRetry(phone))
         {
             _log.LogDebug("Modem {Id}: MeetMob in cooldown, skipping", _modemId);
             return false;
         }
 
+        return await TryMeetMobLoginAndBalanceInnerAsync(phone, acquireAtLock: true, ct);
+    }
+
+    private async Task<bool> TryMeetMobLoginAndBalanceInnerAsync(string phone, bool acquireAtLock, CancellationToken ct)
+    {
+        if (_meetMob == null) return false;
         var cachedToken = await _meetMob.GetValidTokenAsync(phone);
         if (cachedToken != null)
         {
@@ -782,9 +788,16 @@ public class ModemHandler : IDisposable
         MeetMobLoginResult result;
         try
         {
-            await _atLock.WaitAsync(ct);
-            try { result = await _meetMob.LoginAsync(_imsi, phone, _at, ct); }
-            finally { SafeReleaseAtLock(); }
+            if (acquireAtLock)
+            {
+                await _atLock.WaitAsync(ct);
+                try { result = await _meetMob.LoginAsync(_imsi, phone, _at, ct); }
+                finally { SafeReleaseAtLock(); }
+            }
+            else
+            {
+                result = await _meetMob.LoginAsync(_imsi, phone, _at, ct);
+            }
         }
         catch (OperationCanceledException) { return false; }
         catch (ObjectDisposedException) { return false; }
@@ -792,7 +805,7 @@ public class ModemHandler : IDisposable
         if (!result.Success)
         {
             _log.LogWarning("Modem {Id}: MeetMob login failed — {Error}, falling back to USSD", _modemId, result.Error);
-            await _meetMob.SetCooldownAsync(phone, _config.Get<int>("meetmob.fallback_cooldown", 150));
+            _meetMob.SetCooldown(phone, _config.Get<int>("meetmob.fallback_cooldown", 150));
             return false;
         }
 
@@ -872,7 +885,7 @@ public class ModemHandler : IDisposable
             if (!loginResult.Success)
             {
                 _log.LogWarning("Modem {Id}: MeetMob re-login failed — {Error}", _modemId, loginResult.Error);
-                await _meetMob.SetCooldownAsync(phone, _config.Get<int>("meetmob.fallback_cooldown", 150));
+                _meetMob.SetCooldown(phone, _config.Get<int>("meetmob.fallback_cooldown", 150));
                 return false;
             }
 
