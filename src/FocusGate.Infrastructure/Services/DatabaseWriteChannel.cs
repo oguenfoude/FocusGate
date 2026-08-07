@@ -357,10 +357,9 @@ public class DatabaseWriteChannel
             sim.VerifiedAt = DateTime.UtcNow;
             sim.LastSeen = DateTime.UtcNow;
 
-            await db.Modems
-                .Where(m => m.Id == modemId)
-                .ExecuteUpdateAsync(s => s
-                    .SetProperty(m => m.UpdatedAt, DateTime.UtcNow), ct);
+            var modem = await db.Modems.FirstOrDefaultAsync(m => m.Id == modemId, ct);
+            if (modem != null)
+                modem.UpdatedAt = DateTime.UtcNow;
 
             var userId = await ModemHelper.ResolveUserIdForModemAsync(db, modemId, ct);
             
@@ -823,7 +822,7 @@ public class DatabaseWriteChannel
         if (approved)
         {
             request.Status = WithdrawalStatus.Approved;
-            request.ProcessedByAdminId = adminId;
+            request.ProcessedByAdminId = adminId > 0 ? adminId : null;
             request.ProcessedAt = DateTime.UtcNow;
             request.AdminNote = adminNote;
 
@@ -857,7 +856,7 @@ public class DatabaseWriteChannel
         else
         {
             request.Status = WithdrawalStatus.Rejected;
-            request.ProcessedByAdminId = adminId;
+            request.ProcessedByAdminId = adminId > 0 ? adminId : null;
             request.ProcessedAt = DateTime.UtcNow;
             request.AdminNote = adminNote;
 
