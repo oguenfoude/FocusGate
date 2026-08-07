@@ -97,11 +97,12 @@
                 var page = ViewContext.RouteData.Values["page"]?.ToString() ?? "";
                 var isHome = page == "/Index";
                 var isModem = page.StartsWith("/Modem");
+                var isSms = page == "/Sms";
                 var isUser = page.StartsWith("/User");
                 var isWithdrawal = page == "/Withdrawals";
-    var isWarning = page == "/Warnings";
-            var isSettings = page == "/AdminSettings";
-        }
+                var isWarning = page == "/Warnings";
+                var isSettings = page == "/AdminSettings";
+            }
             <a href="/" class="sidebar-link relative flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium @(isHome ? "active" : "text-slate-300")">
                 <i class="fas fa-chart-pie w-5 text-center text-[13px]"></i>
                 @L["Nav.Dashboard"]
@@ -109,6 +110,10 @@
             <a href="/Modems" class="sidebar-link relative flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium @(isModem ? "active" : "text-slate-300")">
                 <i class="fas fa-signal w-5 text-center text-[13px]"></i>
                 @L["Nav.Modems"]
+            </a>
+            <a href="/Sms" class="sidebar-link relative flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium @(isSms ? "active" : "text-slate-300")">
+                <i class="fas fa-envelope-open-text w-5 text-center text-[13px]"></i>
+                <span>SMS Messages</span>
             </a>
             <a href="/Users" class="sidebar-link relative flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium @(isUser ? "active" : "text-slate-300")">
                 <i class="fas fa-users w-5 text-center text-[13px]"></i>

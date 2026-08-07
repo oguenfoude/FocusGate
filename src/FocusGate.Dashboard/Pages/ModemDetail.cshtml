@@ -218,19 +218,11 @@ else
                             @foreach (var sms in Model.SmsRecords)
                             {
                                 <div class="px-5 py-4 table-row">
-                                    <div class="flex gap-3">
-                                        <div class="w-8 h-8 bg-brand-50 text-brand-600 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 mt-0.5">
-                                            @(sms.SenderNumber.Length >= 2 ? sms.SenderNumber[^2..] : sms.SenderNumber)
-                                        </div>
-                                        <div class="flex-1 min-w-0">
-                                            <div class="flex items-center gap-2 mb-1">
-                                                <span class="text-sm font-semibold text-gray-900">@sms.SenderNumber</span>
-                                                <span class="text-[10px] text-gray-300">&middot;</span>
-                                                <span class="text-[11px] text-gray-400">@sms.ReceivedAt.ToDisplayTime(Config).ToString("dd/MM/yyyy HH:mm")</span>
-                                            </div>
-                                            <p class="text-sm text-gray-600 leading-relaxed">@sms.Content</p>
-                                        </div>
+                                    <div class="flex items-center justify-between mb-1">
+                                        <span class="text-sm font-semibold text-gray-900">@sms.SenderNumber</span>
+                                        <span class="text-[11px] text-gray-400">@sms.ReceivedAt.ToDisplayTime(Config).ToString("dd/MM/yyyy HH:mm")</span>
                                     </div>
+                                    <p class="text-sm text-gray-600 leading-relaxed">@sms.Content</p>
                                 </div>
                             }
                         </div>

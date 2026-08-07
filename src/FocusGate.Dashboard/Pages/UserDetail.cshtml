@@ -234,12 +234,7 @@ else
                                     <tr class="table-row">
                                         <td class="px-5 py-3 text-gray-400 text-xs whitespace-nowrap">@sms.ReceivedAt.ToDisplayTime(Config).ToString("dd/MM/yyyy HH:mm")</td>
                                         <td class="px-5 py-3">
-                                            <div class="flex items-center gap-2">
-                                                <div class="w-7 h-7 bg-gray-100 rounded-full flex items-center justify-center text-[10px] font-bold text-gray-500 flex-shrink-0">
-                                                    @(sms.SenderNumber.Length >= 2 ? sms.SenderNumber[^2..] : sms.SenderNumber)
-                                                </div>
-                                                <span class="font-medium text-xs">@sms.SenderNumber</span>
-                                            </div>
+                                            <span class="font-medium text-xs text-gray-900">@sms.SenderNumber</span>
                                         </td>
                                         <td class="px-5 py-3 text-gray-500 max-w-xs truncate text-xs">@sms.Content</td>
                                         <td class="px-5 py-3 text-gray-400 text-[11px]">@sms.PhoneNumber</td>

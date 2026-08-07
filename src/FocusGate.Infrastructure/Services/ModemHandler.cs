@@ -65,11 +65,23 @@ public class ModemHandler : IDisposable
         _meetMobNextRetryUtc = DateTime.MinValue;
     }
 
+    private readonly IUssdExecutionEngine _ussdEngine;
+    private readonly ISmsProcessingEngine _smsEngine;
+
+    public VirtualModemContext Context { get; }
     public bool IsAlive => !_disposed && _at?.IsOpen == true;
 
-    public ModemHandler(IAtCommandService at, DatabaseWriteChannel db,
-        ILogger<ModemHandler> log, IConfigProvider config, int modemId, string comPort,
-        bool isHiLink = false, MeetMobService? meetMob = null)
+    public ModemHandler(
+        IAtCommandService at,
+        DatabaseWriteChannel db,
+        ILogger<ModemHandler> log,
+        IConfigProvider config,
+        int modemId,
+        string comPort,
+        bool isHiLink = false,
+        MeetMobService? meetMob = null,
+        IUssdExecutionEngine? ussdEngine = null,
+        ISmsProcessingEngine? smsEngine = null)
     {
         _at = at;
         _db = db;
@@ -80,6 +92,14 @@ public class ModemHandler : IDisposable
         _isHiLink = isHiLink;
         _meetMob = meetMob;
         _loopCts = new CancellationTokenSource();
+        _ussdEngine = ussdEngine ?? new UssdExecutionEngine(config, db, Microsoft.Extensions.Logging.Abstractions.NullLogger<UssdExecutionEngine>.Instance);
+        _smsEngine = smsEngine ?? new SmsProcessingEngine(db, Microsoft.Extensions.Logging.Abstractions.NullLogger<SmsProcessingEngine>.Instance);
+        Context = new VirtualModemContext
+        {
+            ModemId = modemId,
+            ComPort = comPort,
+            IsHiLink = isHiLink
+        };
     }
 
     public async Task<bool> StartAsync(CancellationToken ct)
@@ -629,7 +649,7 @@ public class ModemHandler : IDisposable
 
             if (messages.Count <= 0)
             {
-                _log.LogInformation("Modem {Id}: Poll - 0 SMS on SIM", _modemId);
+                _log.LogDebug("Modem {Id}: Poll - 0 SMS on SIM", _modemId);
                 return null;
             }
 

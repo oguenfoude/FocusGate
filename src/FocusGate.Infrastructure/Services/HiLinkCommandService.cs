@@ -177,8 +177,7 @@ public partial class HiLinkCommandService : IAtCommandService
                 _csrfToken = tokInfo;
 
             _isOpen = true;
-
-            _log.LogInformation("[HiLink] Session refreshed successfully");
+            _log.LogDebug("[HiLink] Session refreshed successfully");
             return true;
         }
         catch (Exception ex)
@@ -750,15 +749,16 @@ public partial class HiLinkCommandService : IAtCommandService
         if (yyyy < 2000 || yyyy > 2099 || mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
         if (hh > 23 || mnn > 59 || ss > 59) return null;
         
-        // Content time IS the correct local time — convert to UTC using Windows timezone.
+        // Content time is Algeria local time (UTC+1) — convert cleanly to UTC.
         var dtLocal = new DateTime(yyyy, mm, dd, hh, mnn, ss, DateTimeKind.Unspecified);
         try
         {
-            return TimeZoneInfo.ConvertTimeToUtc(dtLocal, TimeZoneInfo.Local);
+            var algeriaTz = TimeZoneInfo.FindSystemTimeZoneById("Africa/Algiers");
+            return TimeZoneInfo.ConvertTimeToUtc(dtLocal, algeriaTz);
         }
         catch
         {
-            return DateTime.SpecifyKind(dtLocal, DateTimeKind.Utc);
+            return DateTime.SpecifyKind(dtLocal.AddHours(-1), DateTimeKind.Utc);
         }
     }
 

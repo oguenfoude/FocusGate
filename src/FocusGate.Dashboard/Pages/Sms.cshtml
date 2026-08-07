@@ -1,0 +1,212 @@
+@page "/Sms"
+@model FocusGate.Dashboard.Pages.SmsModel
+@{
+    ViewData["Title"] = "SMS Messages";
+}
+
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+            <h1 class="text-2xl font-bold tracking-tight text-gray-900">SMS Log & Inbound Pipeline</h1>
+            <p class="text-sm text-gray-500 mt-1">Real-time incoming carrier SMS records, recharge confirmations, and audit logs.</p>
+        </div>
+        <div class="flex items-center gap-3">
+            <form method="post" asp-page-handler="DeleteOlder" class="inline" onsubmit="return confirm('Are you sure you want to delete all SMS older than 30 days?');">
+                <input type="hidden" name="olderThanDays" value="30" />
+                <button type="submit" class="btn btn-outline text-xs text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200">
+                    <i class="fas fa-trash-can text-xs"></i> Purge &gt; 30 Days
+                </button>
+            </form>
+            <a href="/Sms" class="btn btn-primary text-xs">
+                <i class="fas fa-arrows-rotate text-xs"></i> Refresh
+            </a>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(Model.StatusMessage))
+    {
+        <div class="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg text-sm flex items-center justify-between">
+            <span><i class="fas fa-circle-check text-emerald-600 mr-2"></i>@Model.StatusMessage</span>
+            <button onclick="this.parentElement.remove()" class="text-emerald-600 hover:text-emerald-800">&times;</button>
+        </div>
+    }
+
+    <!-- Stat Cards -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="card p-5 stat-card">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Total Ingested</p>
+                    <p class="text-2xl font-bold text-gray-900 mt-1">@Model.TotalCount.ToString("N0")</p>
+                </div>
+                <div class="w-11 h-11 bg-brand-50 text-brand-600 rounded-xl flex items-center justify-center text-lg">
+                    <i class="fas fa-inbox"></i>
+                </div>
+            </div>
+        </div>
+        <div class="card p-5 stat-card">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Today's Received</p>
+                    <p class="text-2xl font-bold text-emerald-600 mt-1">@Model.TodayCount.ToString("N0")</p>
+                </div>
+                <div class="w-11 h-11 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center text-lg">
+                    <i class="fas fa-clock"></i>
+                </div>
+            </div>
+        </div>
+        <div class="card p-5 stat-card">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Recharge Top-ups</p>
+                    <p class="text-2xl font-bold text-blue-600 mt-1">@Model.RechargeCount.ToString("N0")</p>
+                </div>
+                <div class="w-11 h-11 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center text-lg">
+                    <i class="fas fa-money-bill-transfer"></i>
+                </div>
+            </div>
+        </div>
+        <div class="card p-5 stat-card">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Carrier Balances</p>
+                    <p class="text-2xl font-bold text-purple-600 mt-1">@Model.BalanceCount.ToString("N0")</p>
+                </div>
+                <div class="w-11 h-11 bg-purple-50 text-purple-600 rounded-xl flex items-center justify-center text-lg">
+                    <i class="fas fa-receipt"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filters & Table Card -->
+    <div class="card">
+        <div class="p-4 border-b border-gray-100 flex flex-col md:flex-row gap-3 items-center justify-between">
+            <form method="get" class="flex flex-wrap gap-2.5 items-center w-full md:w-auto">
+                <input type="text" name="q" value="@Model.Q" placeholder="Search sender or text..." 
+                       class="input text-xs w-full sm:w-60 py-2" />
+                
+                <select name="type" class="input text-xs w-auto py-2">
+                    <option value="">All Types</option>
+                    <option value="recharge" selected="@(Model.Type == "recharge")">Recharge / Transfer</option>
+                    <option value="balance" selected="@(Model.Type == "balance")">Balance (Solde)</option>
+                    <option value="other" selected="@(Model.Type == "other")">Other / OTP</option>
+                </select>
+
+                <select name="modemId" class="input text-xs w-auto py-2">
+                    <option value="">All Modems</option>
+                    @foreach (var opt in Model.ModemOptions)
+                    {
+                        <option value="@opt.Id" selected="@(Model.ModemId == opt.Id)">
+                            Modem @opt.Id (@(opt.Phone ?? opt.Imei?[^4..] ?? "N/A"))
+                        </option>
+                    }
+                </select>
+
+                <select name="days" class="input text-xs w-auto py-2">
+                    <option value="">All Time</option>
+                    <option value="1" selected="@(Model.Days == 1)">Today</option>
+                    <option value="7" selected="@(Model.Days == 7)">Last 7 Days</option>
+                    <option value="30" selected="@(Model.Days == 30)">Last 30 Days</option>
+                </select>
+
+                <button type="submit" class="btn btn-outline btn-sm py-2">
+                    <i class="fas fa-filter text-xs"></i> Filter
+                </button>
+                @if (!string.IsNullOrEmpty(Model.Q) || !string.IsNullOrEmpty(Model.Type) || Model.ModemId.HasValue || Model.Days.HasValue)
+                {
+                    <a href="/Sms" class="text-xs text-gray-500 hover:text-gray-800 px-2">Clear</a>
+                }
+            </form>
+
+            <div class="text-xs text-gray-500 whitespace-nowrap">
+                Showing @Model.Messages.Count of @Model.TotalCount.ToString("N0") records
+            </div>
+        </div>
+
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm">
+                <thead class="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider font-semibold border-b border-gray-100">
+                    <tr>
+                        <th class="px-5 py-3 w-40">Date & Time</th>
+                        <th class="px-5 py-3 w-36">Sender</th>
+                        <th class="px-5 py-3">Message Content</th>
+                        <th class="px-5 py-3 w-36">Destination SIM</th>
+                        <th class="px-5 py-3 w-20 text-center">Action</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-50">
+                    @if (Model.Messages.Any())
+                    {
+                        @foreach (var msg in Model.Messages)
+                        {
+                            <tr class="table-row">
+                                <td class="px-5 py-3.5 text-gray-500 text-xs whitespace-nowrap">
+                                    <i class="far fa-clock text-gray-400 mr-1"></i>
+                                    @msg.ReceivedAt.ToDisplayTime(Model.Config).ToString("dd/MM/yyyy HH:mm:ss")
+                                </td>
+                                <td class="px-5 py-3.5 font-medium text-xs text-gray-900 whitespace-nowrap">
+                                    @msg.SenderNumber
+                                </td>
+                                <td class="px-5 py-3.5 text-gray-700 text-xs leading-relaxed font-mono select-all">
+                                    @msg.Content
+                                </td>
+                                <td class="px-5 py-3.5 text-gray-500 text-xs whitespace-nowrap">
+                                    @if (!string.IsNullOrEmpty(msg.PhoneNumber))
+                                    {
+                                        <span class="font-medium text-gray-800">@msg.PhoneNumber</span>
+                                    }
+                                    else if (msg.ModemId.HasValue)
+                                    {
+                                        <span class="text-gray-400">Modem @msg.ModemId</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-gray-300">SIM @msg.SimCardId</span>
+                                    }
+                                </td>
+                                <td class="px-5 py-3.5 text-center">
+                                    <form method="post" asp-page-handler="Delete" asp-route-id="@msg.Id" 
+                                          onsubmit="return confirm('Delete this SMS record?');" class="inline">
+                                        <button type="submit" class="text-gray-400 hover:text-red-600 transition-colors p-1.5 rounded" title="Delete SMS">
+                                            <i class="fas fa-trash-can text-xs"></i>
+                                        </button>
+                                    </form>
+                                </td>
+                            </tr>
+                        }
+                    }
+                    else
+                    {
+                        <tr>
+                            <td colspan="5" class="px-5 py-12 text-center text-gray-400">
+                                <i class="fas fa-inbox text-3xl mb-2 text-gray-300"></i>
+                                <p class="text-sm">No SMS records found matching your filters.</p>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        @if (Model.TotalPages > 1)
+        {
+            <div class="p-4 border-t border-gray-100 flex items-center justify-between text-xs text-gray-500">
+                <span>Page @Model.CurrentPage of @Model.TotalPages</span>
+                <div class="flex gap-1.5">
+                    @if (Model.CurrentPage > 1)
+                    {
+                        <a href="/Sms?pageNumber=@(Model.CurrentPage - 1)&q=@Uri.EscapeDataString(Model.Q ?? "")&type=@Model.Type&modemId=@Model.ModemId&days=@Model.Days" 
+                           class="btn btn-outline btn-sm">Previous</a>
+                    }
+                    @if (Model.CurrentPage < Model.TotalPages)
+                    {
+                        <a href="/Sms?pageNumber=@(Model.CurrentPage + 1)&q=@Uri.EscapeDataString(Model.Q ?? "")&type=@Model.Type&modemId=@Model.ModemId&days=@Model.Days" 
+                           class="btn btn-outline btn-sm">Next</a>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+</div>

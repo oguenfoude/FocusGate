@@ -9,7 +9,7 @@ public class ModemHandlerPropertyTests
     [Fact]
     public void DetectBrand_AllEnumValues_Covered()
     {
-        var brands = Enum.GetValues(typeof(ModemBrand)).Cast<ModemBrand>();
+        var brands = Enum.GetValues(typeof(ModemBrand)).Cast<ModemBrand>().ToList();
         Assert.Contains(ModemBrand.Unknown, brands);
         Assert.Contains(ModemBrand.ZTE, brands);
         Assert.Contains(ModemBrand.Huawei, brands);

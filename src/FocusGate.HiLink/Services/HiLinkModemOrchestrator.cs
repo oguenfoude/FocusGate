@@ -50,13 +50,22 @@ public class HiLinkModemOrchestrator : BackgroundService
 
         _log.LogInformation("HiLink Orchestrator ready (max {Max} modems)", _maxModems);
 
+        var countBefore = _handlers.Count;
         while (!ct.IsCancellationRequested)
         {
             try
             {
-                _log.LogInformation("Scan cycle starting ({Count} handlers active, {Blacklisted} blacklisted IPs)", _handlers.Count, _blacklistedIps.Count);
+                _log.LogDebug("Scan cycle starting ({Count} handlers active, {Blacklisted} blacklisted IPs)", _handlers.Count, _blacklistedIps.Count);
                 await ScanAsync(ct);
-                _log.LogInformation("Scan cycle complete ({Count} modems online, {Blacklisted} blacklisted IPs)", _handlers.Count, _blacklistedIps.Count);
+                if (_handlers.Count != countBefore)
+                {
+                    _log.LogInformation("Active modems: {Count} online ({Blacklisted} blacklisted IPs)", _handlers.Count, _blacklistedIps.Count);
+                    countBefore = _handlers.Count;
+                }
+                else
+                {
+                    _log.LogDebug("Scan cycle complete ({Count} modems online, {Blacklisted} blacklisted IPs)", _handlers.Count, _blacklistedIps.Count);
+                }
             }
             catch (OperationCanceledException) { break; }
             catch (Exception ex) { _log.LogError(ex, "Scan cycle error"); }
@@ -123,7 +132,6 @@ public class HiLinkModemOrchestrator : BackgroundService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        var now = DateTime.UtcNow;
         var toScan = allIps.Where(ip =>
         {
             if (_handlers.ContainsKey(ip)) return false;
@@ -185,13 +193,13 @@ public class HiLinkModemOrchestrator : BackgroundService
             }
         }
 
-        foreach (var device in devices)
+        var processTasks = devices.Select(async device =>
         {
-            if (_handlers.Count >= _maxModems) break;
+            if (_handlers.Count >= _maxModems) return;
 
             if (!string.IsNullOrEmpty(device.Imei) && _activeImeis.ContainsKey(device.Imei))
             {
-                continue;
+                return;
             }
 
             try
@@ -204,7 +212,7 @@ public class HiLinkModemOrchestrator : BackgroundService
                 {
                     _log.LogWarning("{Ip}: Alive check failed", device.Ip);
                     try { hilink.Dispose(); } catch { }
-                    continue;
+                    return;
                 }
 
                 var imei = await hilink.GetImeiAsync();
@@ -216,13 +224,13 @@ public class HiLinkModemOrchestrator : BackgroundService
                 {
                     _log.LogWarning("{Ip}: No real IMEI available (got '{IMEI}'), skipping modem", device.Ip, imei);
                     try { hilink.Dispose(); } catch { }
-                    continue;
+                    return;
                 }
 
                 if (!_activeImeis.TryAdd(imei, 0))
                 {
                     try { hilink.Dispose(); } catch { }
-                    continue;
+                    return;
                 }
 
                 var imsi = await hilink.GetImsiAsync();
@@ -239,7 +247,8 @@ public class HiLinkModemOrchestrator : BackgroundService
                     Data = new { IMEI = imei, IMSI = imsi, ComPort = (string?)null, Manufacturer = manufacturer, Model = model, Brand = (int)brand }
                 });
 
-                var db = scope.ServiceProvider.GetRequiredService<FocusGateDbContext>();
+                using var devScope = _services.CreateScope();
+                var db = devScope.ServiceProvider.GetRequiredService<FocusGateDbContext>();
                 db.ChangeTracker.Clear();
                 Modem? modem = null;
                 for (int i = 0; i < 10; i++)
@@ -249,7 +258,13 @@ public class HiLinkModemOrchestrator : BackgroundService
                     if (modem != null) break;
                 }
 
-                if (modem == null) { _log.LogWarning("{Ip}: Modem not found after insert — freeing IMEI {IMEI}", device.Ip, imei); _activeImeis.TryRemove(imei, out _); try { hilink.Dispose(); } catch { } continue; }
+                if (modem == null)
+                {
+                    _log.LogWarning("{Ip}: Modem not found after insert — freeing IMEI {IMEI}", device.Ip, imei);
+                    _activeImeis.TryRemove(imei, out _);
+                    try { hilink.Dispose(); } catch { }
+                    return;
+                }
 
                 var handler = new ModemHandler(hilink, _db, _loggerFactory.CreateLogger<ModemHandler>(), _config, modem.Id, device.Ip, isHiLink: true, meetMob: _meetMob);
 
@@ -286,7 +301,9 @@ public class HiLinkModemOrchestrator : BackgroundService
             {
                 _log.LogWarning(ex, "{Ip}: HiLink probe failed", device.Ip);
             }
-        }
+        });
+
+        await Task.WhenAll(processTasks);
 
         if (ct.IsCancellationRequested) return;
 

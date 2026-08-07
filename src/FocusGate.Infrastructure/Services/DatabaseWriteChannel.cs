@@ -361,46 +361,22 @@ public class DatabaseWriteChannel
             if (modem != null)
                 modem.UpdatedAt = DateTime.UtcNow;
 
-            var userId = await ModemHelper.ResolveUserIdForModemAsync(db, modemId, ct);
-            
-            if (oldBalance != newBalance && newBalance > oldBalance)
+            if (oldBalance != newBalance)
             {
-                var now = DateTime.UtcNow;
-                if (!await IsDuplicateBalanceHistoryAsync(db, sim.Id, source, now, newBalance))
-                {
-                    db.BalanceHistories.Add(new BalanceHistory
-                    {
-                        SimCardId = sim.Id,
-                        ModemId = modemId,
-                        UserId = userId,
-                        Balance = newBalance,
-                        PreviousBalance = oldBalance,
-                        Source = source,
-                        RecordedAt = now
-                    });
+                var userId = await ModemHelper.ResolveUserIdForModemAsync(db, modemId, ct);
 
-                    _logger.LogInformation("{Source} balance: Modem={ModemId} Sim={SimId} Old={Old:F2} → New={New:F2} UserId={UserId}",
-                        source, modemId, sim.Id, oldBalance, newBalance, userId);
-
-                    if (userId > 0)
-                    {
-                        var delta = newBalance - oldBalance;
-                        var (credited, userOld, userNew) = CreditUserBalance(db, userId, delta, sim.Id);
-                        if (credited)
-                            _logger.LogInformation("Startup credit: Modem={ModemId} Sim={SimId} User={UserId} +{Delta:F2} DZD, Wallet: {UserOld:F2} → {UserNew:F2}", modemId, sim.Id, userId, delta, userOld, userNew);
-                        else
-                            _logger.LogWarning("Startup credit FAILED: Modem={ModemId} Sim={SimId} +{Delta:F2} DZD — user {UserId} not found in DB", modemId, sim.Id, delta, userId);
-                    }
-                }
-                else
+                db.BalanceHistories.Add(new BalanceHistory
                 {
-                    _logger.LogInformation("{Source} balance duplicate skipped: Modem={ModemId} Sim={SimId} Balance={Balance:F2}", source, modemId, sim.Id, newBalance);
-                }
-            }
-            else
-            {
-                _logger.LogInformation("{Source} balance unchanged: Modem={ModemId} Sim={SimId} Balance={Balance:F2} UserId={UserId}",
-                    source, modemId, sim.Id, newBalance, userId);
+                    SimCardId = sim.Id,
+                    ModemId = modemId,
+                    UserId = userId,
+                    Balance = newBalance,
+                    PreviousBalance = oldBalance,
+                    Source = source,
+                    RecordedAt = DateTime.UtcNow
+                });
+
+                _logger.LogInformation("Startup *222# balance: Modem={ModemId} Sim={SimId} Old={Old:F2} → New={New:F2}", modemId, sim.Id, oldBalance, newBalance);
             }
 
             await db.SaveChangesAsync(ct);
@@ -415,17 +391,6 @@ public class DatabaseWriteChannel
         var d = Deserialize(data);
         var modemId = d["ModemId"].GetInt32();
         var newBalance = d["Balance"].GetDecimal();
-        var rechargeSmsContent = d.ContainsKey("RechargeSmsContent") ? d["RechargeSmsContent"].GetString() ?? "" : "";
-        var source = BalanceSource.SMS;
-        if (d.TryGetValue("Source", out var srcElem))
-        {
-            if (srcElem.ValueKind == JsonValueKind.String)
-                Enum.TryParse<BalanceSource>(srcElem.GetString(), true, out source);
-            else if (srcElem.ValueKind == JsonValueKind.Number)
-                source = (BalanceSource)srcElem.GetInt32();
-        }
-
-        ClearPendingBalanceCheck(modemId);
 
         var sim = await db.SimCards.FirstOrDefaultAsync(s => s.ModemId == modemId && s.IsActive, ct);
         if (sim == null) return false;
@@ -435,51 +400,30 @@ public class DatabaseWriteChannel
         sim.VerifiedAt = DateTime.UtcNow;
         sim.LastSeen = DateTime.UtcNow;
 
-        var userId = await ModemHelper.ResolveUserIdForModemAsync(db, modemId, ct);
-
         if (oldSimBalance != newBalance)
         {
-            var delta = newBalance - oldSimBalance;
+            var userId = await ModemHelper.ResolveUserIdForModemAsync(db, modemId, ct);
 
-            if (delta > 0 && userId > 0)
+            db.BalanceHistories.Add(new BalanceHistory
             {
-                var now = DateTime.UtcNow;
-                if (!await IsDuplicateBalanceHistoryAsync(db, sim.Id, source, now, newBalance))
-                {
-                    db.BalanceHistories.Add(new BalanceHistory
-                    {
-                        SimCardId = sim.Id,
-                        ModemId = modemId,
-                        UserId = userId,
-                        Balance = newBalance,
-                        PreviousBalance = oldSimBalance,
-                        Source = source,
-                        RecordedAt = now
-                    });
+                SimCardId = sim.Id,
+                ModemId = modemId,
+                UserId = userId,
+                Balance = newBalance,
+                PreviousBalance = oldSimBalance,
+                Source = BalanceSource.USSD,
+                RecordedAt = DateTime.UtcNow
+            });
 
-                    var (credited, userOld, userNew) = CreditUserBalance(db, userId, delta, sim.Id);
-                if (credited)
-                    _logger.LogInformation("CREDIT via {Source}: Modem={ModemId} Sim={SimId} User={UserId} +{Delta:F2} DZD, SIM: {Old:F2} → {New:F2}, Wallet: {UserOld:F2} → {UserNew:F2}", source, modemId, sim.Id, userId, delta, oldSimBalance, newBalance, userOld, userNew);
-                else
-                    _logger.LogWarning("CREDIT FAILED via {Source}: Modem={ModemId} Sim={SimId} +{Delta:F2} DZD — user {UserId} not found", source, modemId, sim.Id, delta, userId);
-                }
-                else
-                {
-                    _logger.LogInformation("Balance history duplicate skipped: Modem={ModemId} Sim={SimId} Balance={Balance:F2}", modemId, sim.Id, newBalance);
-                }
-            }
+            if (newBalance < oldSimBalance)
+                _logger.LogInformation("Balance decreased via *222#: Modem={ModemId} Sim={SimId} Old={Old:F2} → New={New:F2}", modemId, sim.Id, oldSimBalance, newBalance);
             else
-            {
-                if (newBalance < oldSimBalance)
-                    _logger.LogInformation("Balance decreased via *222# (offer/deduction): Modem={ModemId} Sim={SimId} Old={Old:F2} → New={New:F2}", modemId, sim.Id, oldSimBalance, newBalance);
-                else if (userId <= 0 && newBalance > oldSimBalance)
-                    _logger.LogWarning("CREDIT ORPHANED: Modem={ModemId} Sim={SimId} +{Delta:F2} DZD — no user assigned", modemId, sim.Id, delta);
-            }
+                _logger.LogInformation("Balance updated via *222#: Modem={ModemId} Sim={SimId} Old={Old:F2} → New={New:F2}", modemId, sim.Id, oldSimBalance, newBalance);
         }
-        else
-        {
-            _logger.LogInformation("Balance unchanged after *222# (no recharge detected): Modem={ModemId} Balance={Balance:F2} — not setting pending flag", modemId, newBalance);
-        }
+
+        await db.SaveChangesAsync(ct);
+        return true;
+    }
 
         await db.SaveChangesAsync(ct);
         return true;
@@ -493,17 +437,34 @@ public class DatabaseWriteChannel
 
         if (rechargeAmount <= 0) return false;
 
-        ClearPendingBalanceCheck(modemId);
-
         var sim = await db.SimCards.FirstOrDefaultAsync(s => s.ModemId == modemId && s.IsActive, ct);
         if (sim == null) return false;
+
+        var userId = await ModemHelper.ResolveUserIdForModemAsync(db, modemId, ct);
+        if (userId <= 0)
+        {
+            _logger.LogWarning("CREDIT ORPHANED via recharge SMS: Modem={ModemId} Sim={SimId} +{Amount:F2} DZD — no user assigned", modemId, sim.Id, rechargeAmount);
+            return false;
+        }
+
+        var cutoff = DateTime.UtcNow.AddMinutes(-30);
+        var alreadyCredited = await db.UserBalanceHistories.AnyAsync(h =>
+            h.UserId == userId
+            && h.SimCardId == sim.Id
+            && h.Amount == rechargeAmount
+            && h.Type == 0
+            && h.RecordedAt >= cutoff, ct);
+
+        if (alreadyCredited)
+        {
+            _logger.LogInformation("CREDIT SKIPPED (duplicate): Modem={ModemId} Sim={SimId} User={UserId} +{Amount:F2} DZD — already credited within 30min", modemId, sim.Id, userId, rechargeAmount);
+            return false;
+        }
 
         var oldSimBalance = sim.Balance;
         sim.Balance += rechargeAmount;
         sim.VerifiedAt = DateTime.UtcNow;
         sim.LastSeen = DateTime.UtcNow;
-
-        var userId = await ModemHelper.ResolveUserIdForModemAsync(db, modemId, ct);
 
         db.BalanceHistories.Add(new BalanceHistory
         {
@@ -516,18 +477,11 @@ public class DatabaseWriteChannel
             RecordedAt = DateTime.UtcNow
         });
 
-        if (userId > 0)
-        {
-            var (credited, userOld, userNew) = CreditUserBalance(db, userId, rechargeAmount, sim.Id);
-            if (credited)
-                _logger.LogInformation("CREDIT via recharge SMS: Modem={ModemId} Sim={SimId} User={UserId} +{Amount:F2} DZD, SIM: {Old:F2} → {New:F2}, Wallet: {UserOld:F2} → {UserNew:F2}", modemId, sim.Id, userId, rechargeAmount, oldSimBalance, sim.Balance, userOld, userNew);
-            else
-                _logger.LogWarning("CREDIT FAILED via recharge SMS: Modem={ModemId} Sim={SimId} +{Amount:F2} DZD — user {UserId} not found", modemId, sim.Id, rechargeAmount, userId);
-        }
+        var (credited, userOld, userNew) = CreditUserBalance(db, userId, rechargeAmount, sim.Id);
+        if (credited)
+            _logger.LogInformation("CREDIT via recharge SMS: Modem={ModemId} Sim={SimId} User={UserId} +{Amount:F2} DZD, SIM: {Old:F2} → {New:F2}, Wallet: {UserOld:F2} → {UserNew:F2}", modemId, sim.Id, userId, rechargeAmount, oldSimBalance, sim.Balance, userOld, userNew);
         else
-        {
-            _logger.LogWarning("CREDIT ORPHANED via recharge SMS: Modem={ModemId} Sim={SimId} +{Amount:F2} DZD — no user assigned", modemId, sim.Id, rechargeAmount);
-        }
+            _logger.LogWarning("CREDIT FAILED via recharge SMS: Modem={ModemId} Sim={SimId} +{Amount:F2} DZD — user {UserId} not found", modemId, sim.Id, rechargeAmount, userId);
 
         await db.SaveChangesAsync(ct);
         return true;
@@ -541,14 +495,14 @@ public class DatabaseWriteChannel
             return false;
         }
 
-        // Skip re-reads of the same SMS from the SIM (same sender + content + time within 2 minutes)
-        // Same text at a different time is a new message — always store it
+        // Skip re-reads of the same SMS from the SIM (same sender + content + same day)
+        // Same text from same SIM on the same day is a duplicate re-read from SIM memory
         var exists = await db.SmsRecords
             .AnyAsync(s => s.SimCardId == sms.SimCardId
                 && s.SenderNumber == sms.SenderNumber
                 && s.Content == sms.Content
-                && s.ReceivedAt >= sms.ReceivedAt.AddMinutes(-2)
-                && s.ReceivedAt <= sms.ReceivedAt.AddMinutes(2), ct);
+                && s.ReceivedAt >= sms.ReceivedAt.AddHours(-24)
+                && s.ReceivedAt <= sms.ReceivedAt.AddHours(24), ct);
 
         if (exists)
         {
@@ -590,7 +544,7 @@ public class DatabaseWriteChannel
                 sim.VerifiedAt = now;
                 sim.LastSeen = now;
 
-                if (oldSimBalance != balance.Value && balance.Value > oldSimBalance)
+                if (oldSimBalance != balance.Value)
                 {
                     var userId = await ModemHelper.ResolveUserIdForModemAsync(db, sim.ModemId, ct);
 
@@ -605,33 +559,43 @@ public class DatabaseWriteChannel
                         RecordedAt = now
                     });
 
-                    if (userId > 0 && balance.Value > oldSimBalance)
-                    {
-                        if (TryClaimPendingBalanceCheck(sim.ModemId))
-                        {
-                            var delta = balance.Value - oldSimBalance;
-                            var (credited, userOld, userNew) = CreditUserBalance(db, userId, delta, sim.Id);
-                            if (credited)
-                                _logger.LogInformation("CREDIT via Solde SMS (pending claim): Sim={SimId} Modem={ModemId} User={UserId} +{Delta:F2} DZD, SIM: {Old:F2} → {New:F2}, Wallet: {UserOld:F2} → {UserNew:F2}", sim.Id, sim.ModemId, userId, delta, oldSimBalance, balance.Value, userOld, userNew);
-                            else
-                                _logger.LogWarning("CREDIT FAILED via Solde SMS: Sim={SimId} Modem={ModemId} +{Delta:F2} DZD — user {UserId} not found", sim.Id, sim.ModemId, delta, userId);
-                        }
-                        else
-                        {
-                            var delta = balance.Value - oldSimBalance;
-                            _logger.LogInformation("Solde SMS balance increased (no pending flag) — recording balance change only, no user credit: Sim={SimId} Modem={ModemId} +{Delta:F2} DZD, SIM: {Old:F2} → {New:F2}", sim.Id, sim.ModemId, delta, oldSimBalance, balance.Value);
-                        }
-                    }
-                    else if (balance.Value < oldSimBalance)
-                    {
-                        _logger.LogDebug("Balance decreased via Solde SMS: Sim={SimId} Old={Old:F2} → New={New:F2}", sim.Id, oldSimBalance, balance.Value);
-                    }
+                    _logger.LogInformation("SIM Balance updated from Solde SMS: Sim={SimId} Modem={ModemId} Old={Old:F2} → New={New:F2} DZD",
+                        sim.Id, sim.ModemId, oldSimBalance, balance.Value);
                 }
             }
         }
-        else if (IsRechargeSms(sms.Content))
+        else
         {
-            _logger.LogInformation("Recharge SMS detected (trigger handled by *222#): Sim={SimId}", sim.Id);
+            var rechargeAmount = ExtractRechargeAmountFromContent(sms.Content);
+            if (rechargeAmount.HasValue && rechargeAmount.Value > 0)
+            {
+                var userId = await ModemHelper.ResolveUserIdForModemAsync(db, sim.ModemId, ct);
+                if (userId.HasValue)
+                {
+                    var user = await db.Users.FirstOrDefaultAsync(u => u.Id == userId.Value, ct);
+                    if (user != null)
+                    {
+                        var oldUserBalance = user.Balance;
+                        user.Balance += rechargeAmount.Value;
+                        user.UpdatedAt = now;
+
+                        db.UserBalanceHistories.Add(new UserBalanceHistory
+                        {
+                            UserId = user.Id,
+                            Amount = rechargeAmount.Value,
+                            BalanceAfter = user.Balance,
+                            Type = 0, // Credit
+                            SimCardId = sim.Id,
+                            Note = $"Recharge SMS: {rechargeAmount.Value:F2} DZD from {sms.SenderNumber}",
+                            RecordedAt = now,
+                            UpdatedAt = now
+                        });
+
+                        _logger.LogInformation("User wallet credited from SMS: User={UserId} Amount={Amount:F2} DZD (Old: {Old:F2} → New: {New:F2} DZD)",
+                            user.Id, rechargeAmount.Value, oldUserBalance, user.Balance);
+                    }
+                }
+            }
         }
     }
 
