@@ -361,7 +361,7 @@ public class DatabaseWriteChannel
             if (modem != null)
                 modem.UpdatedAt = DateTime.UtcNow;
 
-            if (oldBalance != newBalance)
+            if (newBalance > oldBalance)
             {
                 var userId = await ModemHelper.ResolveUserIdForModemAsync(db, modemId, ct);
 
@@ -376,7 +376,19 @@ public class DatabaseWriteChannel
                     RecordedAt = DateTime.UtcNow
                 });
 
-                _logger.LogInformation("Startup *222# balance: Modem={ModemId} Sim={SimId} Old={Old:F2} → New={New:F2}", modemId, sim.Id, oldBalance, newBalance);
+                if (userId.HasValue && userId.Value > 0)
+                {
+                    var delta = newBalance - oldBalance;
+                    var (credited, userOld, userNew) = CreditUserBalance(db, userId.Value, delta, sim.Id);
+                    if (credited)
+                        _logger.LogInformation("{Source} credit: Modem={ModemId} Sim={SimId} User={UserId} +{Delta:F2} DZD, Wallet: {UserOld:F2} → {UserNew:F2}",
+                            source, modemId, sim.Id, userId.Value, delta, userOld, userNew);
+                }
+            }
+            else if (newBalance < oldBalance)
+            {
+                _logger.LogInformation("Balance decreased via {Source}: Modem={ModemId} Sim={SimId} Old={Old:F2} → New={New:F2}",
+                    source, modemId, sim.Id, oldBalance, newBalance);
             }
 
             await db.SaveChangesAsync(ct);
@@ -400,7 +412,7 @@ public class DatabaseWriteChannel
         sim.VerifiedAt = DateTime.UtcNow;
         sim.LastSeen = DateTime.UtcNow;
 
-        if (oldSimBalance != newBalance)
+        if (newBalance > oldSimBalance)
         {
             var userId = await ModemHelper.ResolveUserIdForModemAsync(db, modemId, ct);
 
@@ -411,19 +423,24 @@ public class DatabaseWriteChannel
                 UserId = userId,
                 Balance = newBalance,
                 PreviousBalance = oldSimBalance,
-                Source = BalanceSource.USSD,
+                Source = BalanceSource.SMS,
                 RecordedAt = DateTime.UtcNow
             });
 
-            if (newBalance < oldSimBalance)
-                _logger.LogInformation("Balance decreased via *222#: Modem={ModemId} Sim={SimId} Old={Old:F2} → New={New:F2}", modemId, sim.Id, oldSimBalance, newBalance);
-            else
-                _logger.LogInformation("Balance updated via *222#: Modem={ModemId} Sim={SimId} Old={Old:F2} → New={New:F2}", modemId, sim.Id, oldSimBalance, newBalance);
+            if (userId.HasValue && userId.Value > 0)
+            {
+                var delta = newBalance - oldSimBalance;
+                var (credited, userOld, userNew) = CreditUserBalance(db, userId.Value, delta, sim.Id);
+                if (credited)
+                    _logger.LogInformation("CREDIT via Solde SMS: Modem={ModemId} Sim={SimId} User={UserId} +{Delta:F2} DZD, SIM: {Old:F2} → {New:F2}, Wallet: {UserOld:F2} → {UserNew:F2}",
+                        modemId, sim.Id, userId.Value, delta, oldSimBalance, newBalance, userOld, userNew);
+            }
         }
-
-        await db.SaveChangesAsync(ct);
-        return true;
-    }
+        else if (newBalance < oldSimBalance)
+        {
+            _logger.LogInformation("Balance decreased via Solde SMS: Modem={ModemId} Sim={SimId} Old={Old:F2} → New={New:F2}",
+                modemId, sim.Id, oldSimBalance, newBalance);
+        }
 
         await db.SaveChangesAsync(ct);
         return true;
@@ -564,38 +581,9 @@ public class DatabaseWriteChannel
                 }
             }
         }
-        else
+        else if (IsRechargeSms(sms.Content))
         {
-            var rechargeAmount = ExtractRechargeAmountFromContent(sms.Content);
-            if (rechargeAmount.HasValue && rechargeAmount.Value > 0)
-            {
-                var userId = await ModemHelper.ResolveUserIdForModemAsync(db, sim.ModemId, ct);
-                if (userId.HasValue)
-                {
-                    var user = await db.Users.FirstOrDefaultAsync(u => u.Id == userId.Value, ct);
-                    if (user != null)
-                    {
-                        var oldUserBalance = user.Balance;
-                        user.Balance += rechargeAmount.Value;
-                        user.UpdatedAt = now;
-
-                        db.UserBalanceHistories.Add(new UserBalanceHistory
-                        {
-                            UserId = user.Id,
-                            Amount = rechargeAmount.Value,
-                            BalanceAfter = user.Balance,
-                            Type = 0, // Credit
-                            SimCardId = sim.Id,
-                            Note = $"Recharge SMS: {rechargeAmount.Value:F2} DZD from {sms.SenderNumber}",
-                            RecordedAt = now,
-                            UpdatedAt = now
-                        });
-
-                        _logger.LogInformation("User wallet credited from SMS: User={UserId} Amount={Amount:F2} DZD (Old: {Old:F2} → New: {New:F2} DZD)",
-                            user.Id, rechargeAmount.Value, oldUserBalance, user.Balance);
-                    }
-                }
-            }
+            _logger.LogInformation("Recharge SMS detected (trigger handled by MeetMob/*222#): Sim={SimId}", sim.Id);
         }
     }
 
