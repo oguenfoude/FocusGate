@@ -593,7 +593,7 @@ public class DatabaseWriteChannel
                 var userId = await ModemHelper.ResolveUserIdForModemAsync(db, sim.ModemId, ct);
                 if (userId.HasValue && userId.Value > 0)
                 {
-                    var cutoff = DateTime.UtcNow.AddMinutes(-30);
+                    var cutoff = DateTime.UtcNow.AddSeconds(-15);
                     var alreadyCredited = await db.UserBalanceHistories.AnyAsync(h =>
                         h.UserId == userId.Value
                         && h.SimCardId == sim.Id
