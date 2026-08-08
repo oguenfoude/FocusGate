@@ -146,6 +146,9 @@ public class SmsProcessingEngine : ISmsProcessingEngine
         if (msg.Content.Contains("rechargé", StringComparison.OrdinalIgnoreCase))
             return true;
 
+        if (msg.Content.Contains("transféré", StringComparison.OrdinalIgnoreCase))
+            return true;
+
         return false;
     }
 }

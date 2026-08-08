@@ -94,13 +94,13 @@ public class BalanceLogicTests
     [Theory]
     [InlineData("Vous avez reçu un montant de 500 DZD DA de 0555123456")]
     [InlineData("Montant de 1000 DZD reçu de 0661123456")]
+    [InlineData("Vous avez rechargé 500 DZD DA au compte 0555123456")]
     public void IsRechargeSms_MontantDe_Recu_ReturnsTrue(string content)
     {
         Assert.True(DatabaseWriteChannel.IsRechargeSms(content));
     }
 
     [Theory]
-    [InlineData("Vous avez rechargé 500 DZD DA au compte 0555123456")]
     [InlineData("Solde de votre compte: 5000 DZD")]
     public void IsRechargeSms_NoMontantDe_ReturnsFalse(string content)
     {
@@ -221,7 +221,7 @@ public class BalanceLogicTests
     {
         var channel = CreateDatabaseWriteChannel();
         channel.MarkPendingBalanceCheck(100);
-        Assert.True(channel.TryClaimPendingBalanceCheck(100));
+        Assert.True(channel.TryClaimPendingBalanceCheck(100, out _));
     }
 
     [Fact]
@@ -232,17 +232,17 @@ public class BalanceLogicTests
 
         // Simulate expired timestamp by setting to 11 minutes ago (beyond the 10-minute window)
         var field = typeof(DatabaseWriteChannel).GetField("_pendingBalanceChecks", BindingFlags.NonPublic | BindingFlags.Instance);
-        var dict = (ConcurrentDictionary<long, DateTime>)field!.GetValue(channel)!;
-        dict[101] = DateTime.UtcNow.AddMinutes(-11);
+        var dict = (ConcurrentDictionary<long, (DateTime At, decimal? RechargeAmount)>)field!.GetValue(channel)!;
+        dict[101] = (DateTime.UtcNow.AddMinutes(-11), null);
 
-        Assert.False(channel.TryClaimPendingBalanceCheck(101));
+        Assert.False(channel.TryClaimPendingBalanceCheck(101, out _));
     }
 
     [Fact]
     public void PendingBalanceCheck_NotSet_ReturnsFalse()
     {
         var channel = CreateDatabaseWriteChannel();
-        Assert.False(channel.TryClaimPendingBalanceCheck(999));
+        Assert.False(channel.TryClaimPendingBalanceCheck(999, out _));
     }
 
     [Fact]
@@ -250,8 +250,8 @@ public class BalanceLogicTests
     {
         var channel = CreateDatabaseWriteChannel();
         channel.MarkPendingBalanceCheck(200);
-        Assert.True(channel.TryClaimPendingBalanceCheck(200));
-        Assert.False(channel.TryClaimPendingBalanceCheck(200));
+        Assert.True(channel.TryClaimPendingBalanceCheck(200, out _));
+        Assert.False(channel.TryClaimPendingBalanceCheck(200, out _));
     }
 
     [Fact]
@@ -260,7 +260,7 @@ public class BalanceLogicTests
         var channel = CreateDatabaseWriteChannel();
         channel.MarkPendingBalanceCheck(300);
         channel.ClearPendingBalanceCheck(300);
-        Assert.False(channel.TryClaimPendingBalanceCheck(300));
+        Assert.False(channel.TryClaimPendingBalanceCheck(300, out _));
     }
 
     #endregion

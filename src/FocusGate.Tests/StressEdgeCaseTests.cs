@@ -60,6 +60,7 @@ public class StressEdgeCaseTests
         Assert.True(smsCount >= 1, $"Expected at least 1 SMS, got {smsCount}");
     }
 
+    // UpdateSimBalance updates SIM balance only. It does NOT credit the user wallet.
     [Theory]
     [InlineData(0.01)]
     [InlineData(999999.99)]
@@ -74,7 +75,7 @@ public class StressEdgeCaseTests
         var sim = await TestHelper.ReadAsync(services, db => db.SimCards.FirstAsync(s => s.Id == simId));
         var user = await TestHelper.ReadAsync(services, db => db.Users.FirstAsync(u => u.Id == userId));
         Assert.Equal(balance, sim.Balance);
-        Assert.Equal(balance, user.Balance);
+        Assert.Equal(0, user.Balance); // No credit from balance snapshot
     }
 
     [Theory]
@@ -169,12 +170,13 @@ public class StressEdgeCaseTests
     {
         var (channel, services, modemId, simId, userId) = await SetupAsync();
 
-        var sms = TestHelper.CreateMobilisRechargeSms(simId, 2000);
+        var sms = TestHelper.CreateMobilisRechargeSms(simId, 5000);
         await TestHelper.EnqueueAndWaitAsync(channel, InsertSms(sms));
 
         var savedSms = await TestHelper.ReadAsync(services, db => db.SmsRecords.FirstAsync(s => s.SimCardId == simId));
         Assert.NotNull(savedSms);
 
+        // Balance snapshot from MeetMob (updates SIM balance)
         await TestHelper.EnqueueAndWaitAsync(channel, UpdateSimBalance(modemId, 5000, "MeetMob"));
 
         var sim = await TestHelper.ReadAsync(services, db => db.SimCards.FirstAsync(s => s.Id == simId));
@@ -197,8 +199,10 @@ public class StressEdgeCaseTests
         Assert.Equal(WithdrawalStatus.Approved, wr.Status);
     }
 
+    // Balance snapshots accumulate in BalanceHistory, but do NOT credit the user wallet.
+    // The user wallet only grows via CreditUserFromRechargeSms (exact recharge amounts).
     [Fact]
-    public async Task MultipleRecharges_AccumulateWallet()
+    public async Task MultipleRecharges_AccumulateHistory()
     {
         var (channel, services, modemId, simId, userId) = await SetupAsync();
 
@@ -206,10 +210,12 @@ public class StressEdgeCaseTests
         await TestHelper.EnqueueAndWaitAsync(channel, UpdateSimBalance(modemId, 7000, "MeetMob"));
         await TestHelper.EnqueueAndWaitAsync(channel, UpdateSimBalance(modemId, 12000, "MeetMob"));
 
-        var user = await TestHelper.ReadAsync(services, db => db.Users.FirstAsync(u => u.Id == userId));
-        Assert.Equal(12000, user.Balance);
-
+        // Balance history records each SIM balance snapshot (3 increases)
         var histories = await TestHelper.ReadAllAsync(services, db => db.BalanceHistories.Where(b => b.SimCardId == simId));
         Assert.Equal(3, histories.Count);
+
+        // User wallet stays 0 — no credit without CreditUserFromRechargeSms
+        var user = await TestHelper.ReadAsync(services, db => db.Users.FirstAsync(u => u.Id == userId));
+        Assert.Equal(0, user.Balance);
     }
 }

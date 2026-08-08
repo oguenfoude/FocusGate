@@ -19,7 +19,7 @@ public class DatabaseWriteChannel
     private readonly IServiceProvider _services;
     private readonly ILogger<DatabaseWriteChannel> _logger;
     private Task? _processingTask;
-    private readonly ConcurrentDictionary<long, DateTime> _pendingBalanceChecks = new();
+    private readonly ConcurrentDictionary<long, (DateTime At, decimal? RechargeAmount)> _pendingBalanceChecks = new();
 
     public enum Op
     {
@@ -50,14 +50,17 @@ public class DatabaseWriteChannel
     public void Start(CancellationToken ct) => _processingTask = Task.Run(() => ProcessQueueAsync(ct), ct);
     public ValueTask EnqueueAsync(WriteOperation op) => _channel.Writer.WriteAsync(op);
 
-    public void MarkPendingBalanceCheck(long modemId) =>
-        _pendingBalanceChecks[modemId] = DateTime.UtcNow;
+    public void MarkPendingBalanceCheck(long modemId, decimal? rechargeAmount = null) =>
+        _pendingBalanceChecks[modemId] = (DateTime.UtcNow, rechargeAmount);
 
-    public bool TryClaimPendingBalanceCheck(long modemId)
+    public bool TryClaimPendingBalanceCheck(long modemId, out decimal? rechargeAmount)
     {
         CleanupStalePendingBalanceChecks();
-        return _pendingBalanceChecks.TryRemove(modemId, out var pendingAt)
-            && DateTime.UtcNow - pendingAt < TimeSpan.FromMinutes(10);
+        rechargeAmount = null;
+        if (!_pendingBalanceChecks.TryRemove(modemId, out var entry)) return false;
+        if (DateTime.UtcNow - entry.At >= TimeSpan.FromMinutes(10)) return false;
+        rechargeAmount = entry.RechargeAmount;
+        return true;
     }
 
     public void ClearPendingBalanceCheck(long modemId) =>
@@ -68,7 +71,7 @@ public class DatabaseWriteChannel
         var cutoff = DateTime.UtcNow - TimeSpan.FromMinutes(15);
         foreach (var kvp in _pendingBalanceChecks)
         {
-            if (kvp.Value < cutoff)
+            if (kvp.Value.At < cutoff)
                 _pendingBalanceChecks.TryRemove(kvp.Key, out _);
         }
     }
@@ -376,18 +379,12 @@ public class DatabaseWriteChannel
                     RecordedAt = DateTime.UtcNow
                 });
 
-                if (userId.HasValue && userId.Value > 0)
-                {
-                    var delta = newBalance - oldBalance;
-                    var (credited, userOld, userNew) = CreditUserBalance(db, userId.Value, delta, sim.Id);
-                    if (credited)
-                        _logger.LogInformation("{Source} credit: Modem={ModemId} Sim={SimId} User={UserId} +{Delta:F2} DZD, Wallet: {UserOld:F2} → {UserNew:F2}",
-                            source, modemId, sim.Id, userId.Value, delta, userOld, userNew);
-                }
+                _logger.LogInformation("{Source} balance recorded: Modem={ModemId} Sim={SimId} {Old:F2} → {New:F2} DZD (user credit via recharge SMS)",
+                    source, modemId, sim.Id, oldBalance, newBalance);
             }
             else if (newBalance < oldBalance)
             {
-                _logger.LogInformation("Balance decreased via {Source}: Modem={ModemId} Sim={SimId} Old={Old:F2} → New={New:F2}",
+                _logger.LogInformation("Balance decreased via {Source}: Modem={ModemId} Sim={SimId} {Old:F2} → {New:F2} DZD",
                     source, modemId, sim.Id, oldBalance, newBalance);
             }
 
@@ -427,18 +424,12 @@ public class DatabaseWriteChannel
                 RecordedAt = DateTime.UtcNow
             });
 
-            if (userId.HasValue && userId.Value > 0)
-            {
-                var delta = newBalance - oldSimBalance;
-                var (credited, userOld, userNew) = CreditUserBalance(db, userId.Value, delta, sim.Id);
-                if (credited)
-                    _logger.LogInformation("CREDIT via Solde SMS: Modem={ModemId} Sim={SimId} User={UserId} +{Delta:F2} DZD, SIM: {Old:F2} → {New:F2}, Wallet: {UserOld:F2} → {UserNew:F2}",
-                        modemId, sim.Id, userId.Value, delta, oldSimBalance, newBalance, userOld, userNew);
-            }
+            _logger.LogInformation("Balance recorded via *222# after recharge: Modem={ModemId} Sim={SimId} {Old:F2} → {New:F2} DZD (user credit via recharge SMS)",
+                modemId, sim.Id, oldSimBalance, newBalance);
         }
         else if (newBalance < oldSimBalance)
         {
-            _logger.LogInformation("Balance decreased via Solde SMS: Modem={ModemId} Sim={SimId} Old={Old:F2} → New={New:F2}",
+            _logger.LogInformation("Balance decreased via *222# SMS: Modem={ModemId} Sim={SimId} {Old:F2} → {New:F2} DZD",
                 modemId, sim.Id, oldSimBalance, newBalance);
         }
 
@@ -478,30 +469,17 @@ public class DatabaseWriteChannel
             return false;
         }
 
-        var oldSimBalance = sim.Balance;
-        sim.Balance += rechargeAmount;
-        sim.VerifiedAt = DateTime.UtcNow;
-        sim.LastSeen = DateTime.UtcNow;
-
-        db.BalanceHistories.Add(new BalanceHistory
-        {
-            SimCardId = sim.Id,
-            ModemId = modemId,
-            UserId = userId,
-            Balance = sim.Balance,
-            PreviousBalance = oldSimBalance,
-            Source = BalanceSource.SMS,
-            RecordedAt = DateTime.UtcNow
-        });
-
+        // Credit user wallet only — SIM balance is updated separately by MeetMob/USSD snapshot.
+        // Do NOT modify sim.Balance here to avoid double-counting when a balance snapshot already ran.
         var (credited, userOld, userNew) = CreditUserBalance(db, userId, rechargeAmount, sim.Id);
         if (credited)
-            _logger.LogInformation("CREDIT via recharge SMS: Modem={ModemId} Sim={SimId} User={UserId} +{Amount:F2} DZD, SIM: {Old:F2} → {New:F2}, Wallet: {UserOld:F2} → {UserNew:F2}", modemId, sim.Id, userId, rechargeAmount, oldSimBalance, sim.Balance, userOld, userNew);
+            _logger.LogInformation("CREDIT via recharge SMS: Modem={ModemId} Sim={SimId} User={UserId} +{Amount:F2} DZD, Wallet: {UserOld:F2} → {UserNew:F2}",
+                modemId, sim.Id, userId, rechargeAmount, userOld, userNew);
         else
             _logger.LogWarning("CREDIT FAILED via recharge SMS: Modem={ModemId} Sim={SimId} +{Amount:F2} DZD — user {UserId} not found", modemId, sim.Id, rechargeAmount, userId);
 
         await db.SaveChangesAsync(ct);
-        return true;
+        return credited;
     }
 
     private async Task<bool> HandleInsertSmsAsync(FocusGateDbContext db, SmsRecord sms, CancellationToken ct)
@@ -561,9 +539,10 @@ public class DatabaseWriteChannel
                 sim.VerifiedAt = now;
                 sim.LastSeen = now;
 
+                long? userId = null;
                 if (oldSimBalance != balance.Value)
                 {
-                    var userId = await ModemHelper.ResolveUserIdForModemAsync(db, sim.ModemId, ct);
+                    userId = await ModemHelper.ResolveUserIdForModemAsync(db, sim.ModemId, ct);
 
                     db.BalanceHistories.Add(new BalanceHistory
                     {
@@ -576,14 +555,73 @@ public class DatabaseWriteChannel
                         RecordedAt = now
                     });
 
-                    _logger.LogInformation("SIM Balance updated from Solde SMS: Sim={SimId} Modem={ModemId} Old={Old:F2} → New={New:F2} DZD",
+                    _logger.LogInformation("SIM Balance updated from Solde SMS: Sim={SimId} Modem={ModemId} {Old:F2} → {New:F2} DZD",
                         sim.Id, sim.ModemId, oldSimBalance, balance.Value);
+                }
+
+                // If a pending balance check was set (from a recharge SMS where balance was unavailable),
+                // credit the user with the stored exact recharge amount.
+                if (TryClaimPendingBalanceCheck(sim.ModemId, out var pendingRechargeAmount))
+                {
+                    if (pendingRechargeAmount.HasValue && pendingRechargeAmount.Value > 0)
+                    {
+                        userId ??= await ModemHelper.ResolveUserIdForModemAsync(db, sim.ModemId, ct);
+                        if (userId.HasValue && userId.Value > 0)
+                        {
+                            var (credited, userOld, userNew) = CreditUserBalance(db, userId.Value, pendingRechargeAmount.Value, sim.Id);
+                            if (credited)
+                                _logger.LogInformation("CREDIT via Solde SMS (pending): Modem={ModemId} Sim={SimId} User={UserId} +{Amount:F2} DZD, Wallet: {Old:F2} → {New:F2}",
+                                    sim.ModemId, sim.Id, userId.Value, pendingRechargeAmount.Value, userOld, userNew);
+                            else
+                                _logger.LogWarning("CREDIT FAILED via Solde SMS (pending): Modem={ModemId} Sim={SimId} +{Amount:F2} DZD — user not found",
+                                    sim.ModemId, sim.Id, pendingRechargeAmount.Value);
+                        }
+                    }
+                    else
+                    {
+                        _logger.LogWarning("Solde SMS claimed pending flag but no recharge amount stored — skipping user credit: Modem={ModemId} Sim={SimId}",
+                            sim.ModemId, sim.Id);
+                    }
                 }
             }
         }
         else if (IsRechargeSms(sms.Content))
         {
-            _logger.LogInformation("Recharge SMS detected (trigger handled by MeetMob/*222#): Sim={SimId}", sim.Id);
+            var rechargeAmount = ExtractRechargeAmountFromContent(sms.Content);
+            if (rechargeAmount.HasValue && rechargeAmount.Value > 0)
+            {
+                var userId = await ModemHelper.ResolveUserIdForModemAsync(db, sim.ModemId, ct);
+                if (userId.HasValue && userId.Value > 0)
+                {
+                    var cutoff = DateTime.UtcNow.AddMinutes(-30);
+                    var alreadyCredited = await db.UserBalanceHistories.AnyAsync(h =>
+                        h.UserId == userId.Value
+                        && h.SimCardId == sim.Id
+                        && h.Amount == rechargeAmount.Value
+                        && h.Type == 0
+                        && h.RecordedAt >= cutoff, ct);
+
+                    if (!alreadyCredited)
+                    {
+                        var (credited, userOld, userNew) = CreditUserBalance(db, userId.Value, rechargeAmount.Value, sim.Id);
+                        if (credited)
+                        {
+                            _logger.LogInformation("INSTANT CREDIT via Recharge SMS: Modem={ModemId} Sim={SimId} User={UserId} +{Amount:F2} DZD, Wallet: {UserOld:F2} → {UserNew:F2}",
+                                sim.ModemId, sim.Id, userId.Value, rechargeAmount.Value, userOld, userNew);
+                        }
+                    }
+                    else
+                    {
+                        _logger.LogInformation("Recharge SMS already credited within 30min: Modem={ModemId} Sim={SimId} User={UserId} Amount={Amount:F2} DZD",
+                            sim.ModemId, sim.Id, userId.Value, rechargeAmount.Value);
+                    }
+                }
+                else
+                {
+                    _logger.LogWarning("Recharge SMS received but no user assigned to Modem={ModemId}: Sim={SimId} +{Amount:F2} DZD",
+                        sim.ModemId, sim.Id, rechargeAmount.Value);
+                }
+            }
         }
     }
 
@@ -619,8 +657,19 @@ public class DatabaseWriteChannel
 
     internal static bool IsRechargeSms(string content)
     {
-        return content.Contains("montant de", StringComparison.OrdinalIgnoreCase)
-            && content.Contains("reçu", StringComparison.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(content)) return false;
+
+        if (content.Contains("montant de", StringComparison.OrdinalIgnoreCase)
+            && content.Contains("reçu", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (content.Contains("rechargé", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (content.Contains("transféré", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return false;
     }
 
     internal static string ClassifySmsType(string sender, string content)
@@ -630,6 +679,7 @@ public class DatabaseWriteChannel
         if (content.Contains("montant de", StringComparison.OrdinalIgnoreCase)
             && content.Contains("reçu", StringComparison.OrdinalIgnoreCase)) return "transfer";
         if (content.Contains("rechargé", StringComparison.OrdinalIgnoreCase)) return "recharge";
+        if (content.Contains("transféré", StringComparison.OrdinalIgnoreCase)) return "transfer";
         if (content.Contains("Votre offre", StringComparison.OrdinalIgnoreCase)
             || content.Contains("offre", StringComparison.OrdinalIgnoreCase)) return "offer";
         return "mobilis-other";
@@ -642,6 +692,10 @@ public class DatabaseWriteChannel
             return ParseAmount(match.Groups[1].Value);
 
         match = System.Text.RegularExpressions.Regex.Match(content, @"rechargé\s+(?:de\s+)?(\d[\d.,]*)", RegexOptions.IgnoreCase);
+        if (match.Success)
+            return ParseAmount(match.Groups[1].Value);
+
+        match = System.Text.RegularExpressions.Regex.Match(content, @"transféré\s+(?:un\s+credit\s+de\s+)?(\d[\d.,]*)", RegexOptions.IgnoreCase);
         if (match.Success)
             return ParseAmount(match.Groups[1].Value);
 

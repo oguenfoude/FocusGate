@@ -15,9 +15,9 @@ public class PendingBalanceCheckTests
         channel.MarkPendingBalanceCheck(2);
         channel.MarkPendingBalanceCheck(3);
 
-        Assert.True(channel.TryClaimPendingBalanceCheck(1));
-        Assert.True(channel.TryClaimPendingBalanceCheck(2));
-        Assert.True(channel.TryClaimPendingBalanceCheck(3));
+        Assert.True(channel.TryClaimPendingBalanceCheck(1, out _));
+        Assert.True(channel.TryClaimPendingBalanceCheck(2, out _));
+        Assert.True(channel.TryClaimPendingBalanceCheck(3, out _));
     }
 
     [Fact]
@@ -27,9 +27,9 @@ public class PendingBalanceCheckTests
         channel.MarkPendingBalanceCheck(10);
         channel.MarkPendingBalanceCheck(20);
 
-        Assert.True(channel.TryClaimPendingBalanceCheck(10));
-        Assert.False(channel.TryClaimPendingBalanceCheck(10));
-        Assert.True(channel.TryClaimPendingBalanceCheck(20));
+        Assert.True(channel.TryClaimPendingBalanceCheck(10, out _));
+        Assert.False(channel.TryClaimPendingBalanceCheck(10, out _));
+        Assert.True(channel.TryClaimPendingBalanceCheck(20, out _));
     }
 
     [Fact]
@@ -39,7 +39,7 @@ public class PendingBalanceCheckTests
         channel.MarkPendingBalanceCheck(50);
         channel.MarkPendingBalanceCheck(50);
 
-        Assert.True(channel.TryClaimPendingBalanceCheck(50));
+        Assert.True(channel.TryClaimPendingBalanceCheck(50, out _));
     }
 
     [Fact]
@@ -47,7 +47,7 @@ public class PendingBalanceCheckTests
     {
         var channel = CreateChannel();
         channel.ClearPendingBalanceCheck(999);
-        Assert.False(channel.TryClaimPendingBalanceCheck(999));
+        Assert.False(channel.TryClaimPendingBalanceCheck(999, out _));
     }
 
     [Fact]
@@ -57,10 +57,10 @@ public class PendingBalanceCheckTests
         channel.MarkPendingBalanceCheck(70);
 
         var field = typeof(DatabaseWriteChannel).GetField("_pendingBalanceChecks", BindingFlags.NonPublic | BindingFlags.Instance);
-        var dict = (ConcurrentDictionary<long, DateTime>)field!.GetValue(channel)!;
-        dict[70] = DateTime.UtcNow.AddMinutes(-9.9);
+        var dict = (ConcurrentDictionary<long, (DateTime At, decimal? RechargeAmount)>)field!.GetValue(channel)!;
+        dict[70] = (DateTime.UtcNow.AddMinutes(-9.9), null);
 
-        Assert.True(channel.TryClaimPendingBalanceCheck(70));
+        Assert.True(channel.TryClaimPendingBalanceCheck(70, out _));
     }
 
     [Fact]
@@ -70,10 +70,10 @@ public class PendingBalanceCheckTests
         channel.MarkPendingBalanceCheck(71);
 
         var field = typeof(DatabaseWriteChannel).GetField("_pendingBalanceChecks", BindingFlags.NonPublic | BindingFlags.Instance);
-        var dict = (ConcurrentDictionary<long, DateTime>)field!.GetValue(channel)!;
-        dict[71] = DateTime.UtcNow.AddMinutes(-10.1);
+        var dict = (ConcurrentDictionary<long, (DateTime At, decimal? RechargeAmount)>)field!.GetValue(channel)!;
+        dict[71] = (DateTime.UtcNow.AddMinutes(-10.1), null);
 
-        Assert.False(channel.TryClaimPendingBalanceCheck(71));
+        Assert.False(channel.TryClaimPendingBalanceCheck(71, out _));
     }
 
     [Fact]
@@ -81,7 +81,7 @@ public class PendingBalanceCheckTests
     {
         var channel = CreateChannel();
         channel.MarkPendingBalanceCheck(0);
-        Assert.True(channel.TryClaimPendingBalanceCheck(0));
+        Assert.True(channel.TryClaimPendingBalanceCheck(0, out _));
     }
 
     [Fact]
@@ -89,7 +89,7 @@ public class PendingBalanceCheckTests
     {
         var channel = CreateChannel();
         channel.MarkPendingBalanceCheck(-1);
-        Assert.True(channel.TryClaimPendingBalanceCheck(-1));
+        Assert.True(channel.TryClaimPendingBalanceCheck(-1, out _));
     }
 
     private static DatabaseWriteChannel CreateChannel()

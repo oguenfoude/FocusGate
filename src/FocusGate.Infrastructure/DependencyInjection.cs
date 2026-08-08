@@ -61,8 +61,11 @@ public static class DependencyInjection
             Console.WriteLine($"[*] MongoDB URI: {masked}");
             Console.WriteLine($"[*] MongoDB Database: {mongoDb}");
         }
-        var syncStr = flatConfig.GetValueOrDefault("sync.interval_seconds") ?? config["sync:interval_seconds"];
-        var syncInterval = int.TryParse(syncStr, out var si) ? si : 30;
+        var syncStr = flatConfig.GetValueOrDefault("mongodb.sync_interval_seconds")
+            ?? flatConfig.GetValueOrDefault("sync.interval_seconds")
+            ?? config["mongodb:sync_interval_seconds"]
+            ?? config["sync:interval_seconds"];
+        var syncInterval = int.TryParse(syncStr, out var si) ? si : 15;
 
         services.AddSingleton(sp =>
         {

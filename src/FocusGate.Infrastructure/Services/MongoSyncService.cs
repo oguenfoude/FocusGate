@@ -205,107 +205,88 @@ public class MongoSyncService : BackgroundService
         }
     }
 
+    private async Task<int> PushBatchAsync<T>(IMongoCollection<T> collection, List<T> items, CancellationToken ct) where T : class
+    {
+        if (items.Count == 0) return 0;
+        var pushedCount = 0;
+        foreach (var chunk in items.Chunk(25))
+        {
+            var tasks = chunk.Select(async doc =>
+            {
+                var ok = await SafeUpsertAsync(collection, doc, ct);
+                if (ok) Interlocked.Increment(ref pushedCount);
+            });
+            await Task.WhenAll(tasks);
+        }
+        return pushedCount;
+    }
+
     private async Task<bool> PushToMongoAsync(FocusGateDbContext db, CancellationToken ct)
     {
         var since = _lastSyncAt;
         var pushed = 0;
-        var skipped = 0;
-
         var failedCollections = new List<string>();
 
         try
         {
             var modems = await db.Modems.IgnoreQueryFilters().Where(m => m.UpdatedAt > since).ToListAsync(ct);
-            foreach (var m in modems)
-            {
-                if (!await SafeUpsertAsync(_mongo.Modems, m, ct)) skipped++;
-            }
-            pushed += modems.Count;
+            pushed += await PushBatchAsync(_mongo.Modems, modems, ct);
         }
         catch (Exception ex) { _logger.LogWarning(ex, "Push modems failed — skipping collection"); failedCollections.Add("modems"); }
 
         try
         {
             var sims = await db.SimCards.IgnoreQueryFilters().Where(s => s.UpdatedAt > since).ToListAsync(ct);
-            foreach (var s in sims)
-            {
-                if (!await SafeUpsertAsync(_mongo.SimCards, s, ct)) skipped++;
-            }
-            pushed += sims.Count;
+            pushed += await PushBatchAsync(_mongo.SimCards, sims, ct);
         }
         catch (Exception ex) { _logger.LogWarning(ex, "Push sims failed — skipping collection"); failedCollections.Add("sims"); }
 
         try
         {
             var sms = await db.SmsRecords.IgnoreQueryFilters().Where(s => s.UpdatedAt > since).ToListAsync(ct);
-            foreach (var s in sms)
-            {
-                if (!await SafeUpsertAsync(_mongo.SmsRecords, s, ct)) skipped++;
-            }
-            pushed += sms.Count;
+            pushed += await PushBatchAsync(_mongo.SmsRecords, sms, ct);
         }
         catch (Exception ex) { _logger.LogWarning(ex, "Push sms failed — skipping collection"); failedCollections.Add("sms"); }
 
         try
         {
             var balances = await db.BalanceHistories.IgnoreQueryFilters().Where(b => b.UpdatedAt > since).ToListAsync(ct);
-            foreach (var b in balances)
-            {
-                if (!await SafeUpsertAsync(_mongo.BalanceHistories, b, ct)) skipped++;
-            }
-            pushed += balances.Count;
+            pushed += await PushBatchAsync(_mongo.BalanceHistories, balances, ct);
         }
         catch (Exception ex) { _logger.LogWarning(ex, "Push balances failed — skipping collection"); failedCollections.Add("balances"); }
 
         try
         {
             var users = await db.Users.IgnoreQueryFilters().Where(u => u.UpdatedAt > since).ToListAsync(ct);
-            foreach (var u in users)
-            {
-                if (!await SafeUpsertAsync(_mongo.Users, u, ct)) skipped++;
-            }
-            pushed += users.Count;
+            pushed += await PushBatchAsync(_mongo.Users, users, ct);
         }
         catch (Exception ex) { _logger.LogWarning(ex, "Push users failed — skipping collection"); failedCollections.Add("users"); }
 
         try
         {
             var userModems = await db.UserModems.IgnoreQueryFilters().Where(um => um.UpdatedAt > since).ToListAsync(ct);
-            foreach (var um in userModems)
-            {
-                if (!await SafeUpsertAsync(_mongo.UserModems, um, ct)) skipped++;
-            }
-            pushed += userModems.Count;
+            pushed += await PushBatchAsync(_mongo.UserModems, userModems, ct);
         }
         catch (Exception ex) { _logger.LogWarning(ex, "Push userModems failed — skipping collection"); failedCollections.Add("userModems"); }
 
         try
         {
             var withdrawalRequests = await db.WithdrawalRequests.IgnoreQueryFilters().Where(w => w.UpdatedAt > since).ToListAsync(ct);
-            foreach (var w in withdrawalRequests)
-            {
-                if (!await SafeUpsertAsync(_mongo.WithdrawalRequests, w, ct)) skipped++;
-            }
-            pushed += withdrawalRequests.Count;
+            pushed += await PushBatchAsync(_mongo.WithdrawalRequests, withdrawalRequests, ct);
         }
         catch (Exception ex) { _logger.LogWarning(ex, "Push withdrawalRequests failed — skipping collection"); failedCollections.Add("withdrawalRequests"); }
 
         try
         {
             var userBalanceHistories = await db.UserBalanceHistories.IgnoreQueryFilters().Where(ub => ub.UpdatedAt > since).ToListAsync(ct);
-            foreach (var ub in userBalanceHistories)
-            {
-                if (!await SafeUpsertAsync(_mongo.UserBalanceHistories, ub, ct)) skipped++;
-            }
-            pushed += userBalanceHistories.Count;
+            pushed += await PushBatchAsync(_mongo.UserBalanceHistories, userBalanceHistories, ct);
         }
         catch (Exception ex) { _logger.LogWarning(ex, "Push userBalanceHistories failed — skipping collection"); failedCollections.Add("userBalanceHistories"); }
 
-        var actualPushed = pushed - skipped;
         if (pushed > 0 || failedCollections.Count > 0)
-            _logger.LogInformation("Push: {Pushed} pushed, {Skipped} skipped, failed: [{Failed}]",
-                actualPushed, skipped, string.Join(", ", failedCollections));
-        _totalPushed += actualPushed;
+            _logger.LogInformation("Push: {Pushed} pushed, failed: [{Failed}]",
+                pushed, string.Join(", ", failedCollections));
+        _totalPushed += pushed;
         return failedCollections.Count == 0;
     }
 
@@ -542,15 +523,27 @@ public class MongoSyncService : BackgroundService
             var ids = new HashSet<long>(mongoDocs.Select(getId));
             var idList = ids.ToList();
 
-            var param = Expression.Parameter(typeof(T), "x");
-            var prop = Expression.Property(param, "Id");
-            var convertedProp = Expression.Convert(prop, typeof(long));
-            var containsMethod = typeof(List<long>).GetMethod("Contains", new[] { typeof(long) })!;
-            var call = Expression.Call(Expression.Constant(idList), containsMethod, convertedProp);
-            var predicate = Expression.Lambda<Func<T, bool>>(call, param);
+            var localDocs = new List<T>();
+            foreach (var batch in idList.Chunk(500))
+            {
+                var batchList = batch.ToList();
+                var param = Expression.Parameter(typeof(T), "x");
+                var prop = Expression.Property(param, "Id");
+                var convertedProp = Expression.Convert(prop, typeof(long));
+                var containsMethod = typeof(List<long>).GetMethod("Contains", new[] { typeof(long) })!;
+                var call = Expression.Call(Expression.Constant(batchList), containsMethod, convertedProp);
+                var predicate = Expression.Lambda<Func<T, bool>>(call, param);
 
-            var localDocs = await db.Set<T>().IgnoreQueryFilters().Where(predicate).ToListAsync(ct);
-            var localMap = localDocs.Where(x => ids.Contains(getId(x))).ToDictionary(getId);
+                var batchDocs = await db.Set<T>().IgnoreQueryFilters().Where(predicate).ToListAsync(ct);
+                localDocs.AddRange(batchDocs);
+            }
+
+            var localMap = new Dictionary<long, T>();
+            foreach (var local in localDocs)
+            {
+                var id = getId(local);
+                localMap[id] = local;
+            }
 
             var count = 0;
             foreach (var m in mongoDocs)
@@ -562,8 +555,17 @@ public class MongoSyncService : BackgroundService
                 }
                 else
                 {
-                    db.Set<T>().Add(m);
-                    localMap[id] = m;
+                    var existingEntry = db.ChangeTracker.Entries<T>().FirstOrDefault(e => getId(e.Entity) == id);
+                    if (existingEntry != null)
+                    {
+                        updateFields(existingEntry.Entity, m);
+                        localMap[id] = existingEntry.Entity;
+                    }
+                    else
+                    {
+                        db.Set<T>().Add(m);
+                        localMap[id] = m;
+                    }
                 }
                 count++;
             }

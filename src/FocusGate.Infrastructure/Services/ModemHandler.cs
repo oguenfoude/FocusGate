@@ -199,6 +199,7 @@ public class ModemHandler : IDisposable
 
             var messages = await _at.ReadAllSmsAsync();
             _log.LogDebug("Modem {Id}: {Count} SMS on SIM", _modemId, messages.Count);
+            var startupRechargeAmounts = new List<decimal>();
             string? startupRechargeContent = null;
             if (messages.Count > 0)
             {
@@ -222,8 +223,15 @@ public class ModemHandler : IDisposable
                     });
                     var smsType = DatabaseWriteChannel.ClassifySmsType(msg.Sender, msg.Content ?? "");
                     smsTypes[smsType] = smsTypes.GetValueOrDefault(smsType) + 1;
-                    if (startupRechargeContent == null && IsMobilisBalanceTrigger(msg))
-                        startupRechargeContent = msg.Content;
+                    if (IsMobilisBalanceTrigger(msg))
+                    {
+                        startupRechargeContent ??= msg.Content;
+                        var amt = DatabaseWriteChannel.ExtractRechargeAmountFromContent(msg.Content ?? "");
+                        if (amt.HasValue && amt.Value > 0)
+                        {
+                            startupRechargeAmounts.Add(amt.Value);
+                        }
+                    }
                 }
                 bool[] results;
                 try { results = await Task.WhenAll(tcsList); }
@@ -264,7 +272,15 @@ public class ModemHandler : IDisposable
                             try
                             {
                                 var meetMobOk = await TryMeetMobLoginAndBalanceAsync(loopToken);
-                                if (!meetMobOk)
+                                if (meetMobOk)
+                                {
+                                    foreach (var amount in startupRechargeAmounts)
+                                    {
+                                        _log.LogInformation("Modem {Id}: Crediting user from startup recharge SMS: {Amount:F2} DZD", _modemId, amount);
+                                        await EnqueueCreditUserFromRechargeAsync(amount, loopToken);
+                                    }
+                                }
+                                else
                                 {
                                     RecordMeetMobFailure();
                                     _log.LogInformation("Modem {Id}: MeetMob failed at startup — will retry with backoff, using USSD for now", _modemId);
@@ -374,37 +390,50 @@ public class ModemHandler : IDisposable
     private async Task RunBalanceCheckFromSmsAsync(string rechargeSmsContent, CancellationToken ct)
     {
         var smsType = DatabaseWriteChannel.ClassifySmsType("Mobilis", rechargeSmsContent);
-        _log.LogInformation("Modem {Id}: Mobilis {SmsType} SMS detected — trying MeetMob balance first... Content: {Content}", _modemId, smsType, rechargeSmsContent.Substring(0, Math.Min(80, rechargeSmsContent.Length)));
+        var rechargeAmount = DatabaseWriteChannel.ExtractRechargeAmountFromContent(rechargeSmsContent);
 
+        _log.LogInformation("Modem {Id}: Mobilis {SmsType} SMS — recharge amount from SMS: {Amount} — trying MeetMob balance first...",
+            _modemId, smsType,
+            rechargeAmount.HasValue ? $"{rechargeAmount.Value:F2} DZD" : "not found");
+
+        // --- Step 1: MeetMob balance snapshot (no credit, just updates SIM balance) ---
         if (_meetMob != null && _meetMobToken != null)
         {
             var meetMobOk = await TryMeetMobBalanceAsync(ct);
             if (meetMobOk)
             {
-                _log.LogInformation("Modem {Id}: MeetMob balance confirmed from recharge SMS — balance already saved", _modemId);
+                _log.LogInformation("Modem {Id}: MeetMob balance snapshot saved from recharge SMS", _modemId);
                 _db.ClearPendingBalanceCheck(_modemId);
+                // Credit user with exact SMS amount (not a balance delta)
+                if (rechargeAmount.HasValue && rechargeAmount.Value > 0)
+                    await EnqueueCreditUserFromRechargeAsync(rechargeAmount.Value, ct);
                 return;
             }
         }
 
+        // --- Step 2: *222# USSD for balance snapshot ---
         _log.LogInformation("Modem {Id}: MeetMob unavailable — falling back to *222# USSD", _modemId);
         var balance = await _at.GetBalanceAsync();
         if (balance.HasValue)
         {
-            _log.LogInformation("Modem {Id}: Balance confirmed via *222#: {Balance:F2} DZD", _modemId, balance.Value);
+            _log.LogInformation("Modem {Id}: Balance snapshot via *222#: {Balance:F2} DZD", _modemId, balance.Value);
             try
             {
                 await _db.EnqueueAsync(new()
                 {
-                    Type = DatabaseWriteChannel.Op.UpdateSimBalanceFromSms,
-                    Data = new { ModemId = _modemId, Balance = balance.Value, RechargeSmsContent = rechargeSmsContent }
+                    Type = DatabaseWriteChannel.Op.UpdateSimBalance,
+                    Data = new { ModemId = _modemId, Balance = balance.Value }
                 });
             }
-            catch (Exception ex) { _log.LogDebug(ex, "Modem {Id}: UpdateSimBalanceFromSms failed", _modemId); }
+            catch (Exception ex) { _log.LogDebug(ex, "Modem {Id}: UpdateSimBalance failed", _modemId); }
             _db.ClearPendingBalanceCheck(_modemId);
+            // Credit user with exact SMS amount (not a balance delta)
+            if (rechargeAmount.HasValue && rechargeAmount.Value > 0)
+                await EnqueueCreditUserFromRechargeAsync(rechargeAmount.Value, ct);
             return;
         }
 
+        // --- Step 3: MeetMob fresh login + balance ---
         _log.LogInformation("Modem {Id}: *222# returned no balance — trying MeetMob fresh login...", _modemId);
         if (_meetMob != null)
         {
@@ -417,8 +446,10 @@ public class ModemHandler : IDisposable
                     var freshOk = await TryMeetMobLoginAndBalanceInnerAsync(freshPhone, acquireAtLock: false, ct);
                     if (freshOk)
                     {
-                        _log.LogInformation("Modem {Id}: MeetMob fresh login balance confirmed — balance already saved", _modemId);
+                        _log.LogInformation("Modem {Id}: MeetMob fresh login balance snapshot saved", _modemId);
                         _db.ClearPendingBalanceCheck(_modemId);
+                        if (rechargeAmount.HasValue && rechargeAmount.Value > 0)
+                            await EnqueueCreditUserFromRechargeAsync(rechargeAmount.Value, ct);
                         return;
                     }
                 }
@@ -427,25 +458,31 @@ public class ModemHandler : IDisposable
             catch (Exception ex) { _log.LogWarning(ex, "Modem {Id}: MeetMob fresh login failed", _modemId); }
         }
 
-        var rechargeAmount = DatabaseWriteChannel.ExtractRechargeAmountFromContent(rechargeSmsContent);
+        // --- Step 4: All balance methods failed — credit from SMS amount if available ---
         if (rechargeAmount.HasValue && rechargeAmount.Value > 0)
         {
-            _log.LogInformation("Modem {Id}: Crediting user directly from recharge SMS amount: {Amount:F2} DZD", _modemId, rechargeAmount.Value);
-            try
-            {
-                await _db.EnqueueAsync(new()
-                {
-                    Type = DatabaseWriteChannel.Op.CreditUserFromRechargeSms,
-                    Data = new { ModemId = _modemId, RechargeAmount = rechargeAmount.Value }
-                });
-            }
-            catch (Exception ex) { _log.LogDebug(ex, "Modem {Id}: CreditUserFromRechargeSms failed", _modemId); }
+            _log.LogInformation("Modem {Id}: All balance methods failed — crediting user from SMS amount: {Amount:F2} DZD", _modemId, rechargeAmount.Value);
+            await EnqueueCreditUserFromRechargeAsync(rechargeAmount.Value, ct);
             _db.ClearPendingBalanceCheck(_modemId);
             return;
         }
 
-        _db.MarkPendingBalanceCheck(_modemId);
-        _log.LogWarning("Modem {Id}: All balance methods failed — pending balance check set, waiting for Solde SMS", _modemId);
+        // --- Step 5: Last resort — pending flag, wait for Solde SMS ---
+        _db.MarkPendingBalanceCheck(_modemId, null);
+        _log.LogWarning("Modem {Id}: All balance methods failed and no recharge amount in SMS — pending flag set, waiting for Solde SMS", _modemId);
+    }
+
+    private async Task EnqueueCreditUserFromRechargeAsync(decimal rechargeAmount, CancellationToken ct)
+    {
+        try
+        {
+            await _db.EnqueueAsync(new()
+            {
+                Type = DatabaseWriteChannel.Op.CreditUserFromRechargeSms,
+                Data = new { ModemId = _modemId, RechargeAmount = rechargeAmount }
+            });
+        }
+        catch (Exception ex) { _log.LogDebug(ex, "Modem {Id}: CreditUserFromRechargeSms enqueue failed", _modemId); }
     }
 
     private async Task<long> ResolveSimCardIdAsync()

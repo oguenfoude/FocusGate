@@ -469,27 +469,41 @@ public partial class HiLinkCommandService : IAtCommandService
 
             if (IsSmsInboxFull)
             {
-                _log.LogWarning("[HiLink] ReadAllSms returned empty on 125002 — deleting by index fallback (1–500)");
-                var deleteFailed = 0;
-                for (int i = 1; i <= 500; i++)
+                _log.LogWarning("[HiLink] ReadAllSms returned 125002 (inbox full) — issuing bulk delete all (-1)...");
+                var bulkSuccess = false;
+                try
                 {
-                    try
+                    await SendPostAsync("/api/sms/delete-sms", "<request><Index>-1</Index></request>");
+                    _log.LogInformation("[HiLink] Bulk delete all (-1) succeeded");
+                    bulkSuccess = true;
+                }
+                catch (Exception ex)
+                {
+                    _log.LogWarning("[HiLink] Bulk delete (-1) failed: {Error}, falling back to fast index sweep (1-50)", ex.Message);
+                }
+
+                if (!bulkSuccess)
+                {
+                    var consecutiveFailures = 0;
+                    for (int i = 1; i <= 50; i++)
                     {
-                        var body = $@"<request><Index>{i}</Index></request>";
-                        await SendPostAsync("/api/sms/delete-sms", body);
-                    }
-                    catch (HttpRequestException)
-                    {
-                        deleteFailed++;
-                    }
-                    catch (Exception ex)
-                    {
-                        _log.LogWarning(ex, "[HiLink] Index delete failed at {Index}", i);
-                        deleteFailed++;
+                        try
+                        {
+                            var body = $@"<request><Index>{i}</Index></request>";
+                            await SendPostAsync("/api/sms/delete-sms", body);
+                            consecutiveFailures = 0;
+                        }
+                        catch
+                        {
+                            consecutiveFailures++;
+                            if (consecutiveFailures >= 3)
+                            {
+                                _log.LogDebug("[HiLink] Stopped index sweep at index {Index} after 3 consecutive empty slots", i);
+                                break;
+                            }
+                        }
                     }
                 }
-                if (deleteFailed > 0)
-                    _log.LogWarning("[HiLink] Fallback delete: {Failed}/500 indices failed (expected for empty slots)", deleteFailed);
                 IsSmsInboxFull = false;
             }
         }
@@ -544,17 +558,18 @@ public partial class HiLinkCommandService : IAtCommandService
             }
 
             // Step 2: Poll /api/ussd/get — no CSRF (browser pattern)
-            var pollIntervalMs = 2000;
+            var pollIntervalMs = 800;
             var totalTimeoutMs = timeoutMs;
             var deadline = DateTime.UtcNow.AddMilliseconds(totalTimeoutMs);
             var pollCount = 0;
+            await Task.Delay(600); // Fast initial wait for instant responses
             while (DateTime.UtcNow < deadline)
             {
-                await Task.Delay(pollIntervalMs);
                 pollCount++;
                 var getResult = await SendUssdRawGetAsync("/api/ussd/get");
                 if (string.IsNullOrEmpty(getResult))
                 {
+                    await Task.Delay(pollIntervalMs);
                     continue;
                 }
 

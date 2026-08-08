@@ -36,8 +36,7 @@ public class HiLinkModemOrchestrator : BackgroundService
         _config = config;
         _loggerFactory = loggerFactory;
         _maxModems = _config.Get("modem.max_count", 30);
-        var meetMobEnabled = _config.Get<bool>("meetmob.enabled", false);
-        _meetMob = meetMobEnabled ? new MeetMobService(new MeetMobTokenStore(), loggerFactory.CreateLogger<MeetMobService>(), config) : null;
+        _meetMob = new MeetMobService(new MeetMobTokenStore(), loggerFactory.CreateLogger<MeetMobService>(), config);
     }
 
     protected override async Task ExecuteAsync(CancellationToken ct)

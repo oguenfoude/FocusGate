@@ -24,7 +24,7 @@ public partial class MeetMobService
     private string BaseUrl => _config.Get("meetmob.base_url", "https://meetmob.mobilis.dz");
     private string Password => _config.Get("meetmob.password", "00000");
     private int OtpPollTimeout => _config.Get<int>("meetmob.otp_poll_timeout", 60);
-    private int OtpPollInterval => _config.Get<int>("meetmob.otp_poll_interval", 3);
+    private int OtpPollInterval => _config.Get<int>("meetmob.otp_poll_interval", 1);
     private int TokenTtl => _config.Get<int>("meetmob.token_ttl", 2700);
     private int HttpTimeout => _config.Get<int>("meetmob.http_timeout", 10);
     private int LoginCooldown => _config.Get<int>("meetmob.login_cooldown", 120);
@@ -57,8 +57,10 @@ public partial class MeetMobService
         if (_warmedUp) return;
         try
         {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(2));
             using var req = new HttpRequestMessage(HttpMethod.Get, BaseUrl);
-            using var resp = await _http.SendAsync(req, ct);
+            using var resp = await _http.SendAsync(req, cts.Token);
             _warmedUp = true;
             _log.LogInformation("MeetMob: TLS warmup OK ({Status})", resp.StatusCode);
         }
@@ -527,7 +529,7 @@ public partial class MeetMobService
 
     private async Task<JsonDocument?> PostJsonAsync(string url, object body, string busiType, CancellationToken ct)
     {
-        for (int attempt = 0; attempt < 3; attempt++)
+        for (int attempt = 0; attempt < 2; attempt++)
         {
             try
             {
@@ -553,10 +555,10 @@ public partial class MeetMobService
                 }
                 return JsonDocument.Parse(json);
             }
-            catch (HttpRequestException ex) when (attempt < 2 && !ct.IsCancellationRequested)
+            catch (HttpRequestException ex) when (attempt < 1 && !ct.IsCancellationRequested)
             {
-                _log.LogWarning("MeetMob: HTTP request failed (attempt {Attempt}/3): {Error}", attempt + 1, ex.Message);
-                await Task.Delay(2000, ct);
+                _log.LogWarning("MeetMob: HTTP request failed (attempt {Attempt}/2): {Error}", attempt + 1, ex.Message);
+                await Task.Delay(300, ct);
             }
         }
         return null;

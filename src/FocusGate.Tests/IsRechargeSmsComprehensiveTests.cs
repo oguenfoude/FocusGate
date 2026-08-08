@@ -8,9 +8,15 @@ public class IsRechargeSmsComprehensiveTests
     [InlineData("Vous avez reçu un montant de 500 DZD DA de 0555123456")]
     [InlineData("MONTANT DE 500 DZD REÇU DE 0661123456")]
     [InlineData("montant de 1000 reçu de 0770123456")]
+    [InlineData("Le 676916007 vous a transféré un credit de 100 DA.")]
+    [InlineData("Vous avez rechargé 300.00 DZD DA avec succès le 08/08/2026 07:58:57.")]
+    [InlineData("Vous avez rechargé 2500.00 DZD DA avec succès le 08/08/2026 07:58:21.")]
+    [InlineData("Vous avez reçu un montant de 300.00 DZD,numéro de la transaction est 04237200001270348022.")]
+    [InlineData("Vous avez reçu un montant de 2500.00 DZD,numéro de la transaction est 04237500001270346825.")]
     public void IsRechargeSms_MontantDeAndRecu_ReturnsTrue(string content)
     {
         Assert.True(DatabaseWriteChannel.IsRechargeSms(content));
+        Assert.NotNull(DatabaseWriteChannel.ExtractRechargeAmountFromContent(content));
     }
 
     [Theory]
