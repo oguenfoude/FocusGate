@@ -496,8 +496,8 @@ public class DatabaseWriteChannel
             .AnyAsync(s => s.SimCardId == sms.SimCardId
                 && s.SenderNumber == sms.SenderNumber
                 && s.Content == sms.Content
-                && s.ReceivedAt >= sms.ReceivedAt.AddHours(-24)
-                && s.ReceivedAt <= sms.ReceivedAt.AddHours(24), ct);
+                && s.ReceivedAt >= sms.ReceivedAt.AddMinutes(-2)
+                && s.ReceivedAt <= sms.ReceivedAt.AddMinutes(2), ct);
 
         if (exists)
         {
