@@ -63,7 +63,7 @@ public class AtModemOrchestrator : BackgroundService
     }
 
     /// <summary>
-    /// Fires once per day at exactly 12:00:00 PM (noon).
+    /// Fires once per day at exactly 12:00:00 AM (midnight).
     /// Voids the MeetMob token cache and clears failed ports for fresh re-detection.
     /// Zero downtime, no restart required.
     /// </summary>
@@ -73,14 +73,13 @@ public class AtModemOrchestrator : BackgroundService
         {
             try
             {
+                // Calculate time until next midnight (12:00:00 AM)
                 var now = DateTime.Now;
-                var todayNoon = now.Date.AddHours(12);
-                if (now >= todayNoon)
-                    todayNoon = todayNoon.AddDays(1);
+                var nextMidnight = now.Date.AddDays(1); // always tomorrow's midnight
 
-                var delay = todayNoon - now;
-                _log.LogInformation("Daily cache void scheduled at {NoonTime:yyyy-MM-dd HH:mm:ss} (in {Hours:0}h {Minutes:0}m)",
-                    todayNoon, delay.TotalHours, delay.Minutes);
+                var delay = nextMidnight - now;
+                _log.LogInformation("Daily midnight cache void scheduled at {MidnightTime:yyyy-MM-dd HH:mm:ss} (in {Hours:0}h {Minutes:0}m)",
+                    nextMidnight, delay.TotalHours, delay.Minutes);
 
                 await Task.Delay(delay, ct);
                 if (ct.IsCancellationRequested) break;

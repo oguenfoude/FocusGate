@@ -81,9 +81,9 @@ public class HiLinkModemOrchestrator : BackgroundService
     }
 
     /// <summary>
-    /// Fires once per day at exactly 12:00:00 PM (noon).
-    /// Voids the MeetMob token cache and forces a fresh re-login + session refresh
-    /// on all active modems — zero downtime, no restart required.
+    /// Fires once per day at exactly 12:00:00 AM (midnight).
+    /// Voids the MeetMob token cache and clears any blocked IPs for fresh re-detection.
+    /// Zero downtime, no restart required.
     /// </summary>
     private async Task DailyNoonCacheVoidAsync(CancellationToken ct)
     {
@@ -91,15 +91,13 @@ public class HiLinkModemOrchestrator : BackgroundService
         {
             try
             {
-                // Calculate seconds until next 12:00:00 PM
+                // Calculate time until next midnight (12:00:00 AM)
                 var now = DateTime.Now;
-                var todayNoon = now.Date.AddHours(12);
-                if (now >= todayNoon)
-                    todayNoon = todayNoon.AddDays(1); // already past noon today → wait until tomorrow noon
+                var nextMidnight = now.Date.AddDays(1); // always tomorrow's midnight
 
-                var delay = todayNoon - now;
-                _log.LogInformation("Daily cache void scheduled at {NoonTime:yyyy-MM-dd HH:mm:ss} (in {Hours:0}h {Minutes:0}m)",
-                    todayNoon, delay.TotalHours, delay.Minutes);
+                var delay = nextMidnight - now;
+                _log.LogInformation("Daily midnight cache void scheduled at {MidnightTime:yyyy-MM-dd HH:mm:ss} (in {Hours:0}h {Minutes:0}m)",
+                    nextMidnight, delay.TotalHours, delay.Minutes);
 
                 await Task.Delay(delay, ct);
                 if (ct.IsCancellationRequested) break;
