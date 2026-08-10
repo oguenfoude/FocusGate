@@ -48,12 +48,73 @@ public class AtModemOrchestrator : BackgroundService
 
         _log.LogInformation("AT Orchestrator started (max {Max} modems)", _maxModems);
 
+        // Daily noon cache-void: runs in background, voids MeetMob token cache at 12:00pm every day
+        _ = Task.Run(() => DailyNoonCacheVoidAsync(ct), ct);
+
         while (!ct.IsCancellationRequested)
         {
             try { await ScanAsync(ct); }
+            catch (OperationCanceledException) { break; }
             catch (Exception ex) { _log.LogError(ex, "Scan error"); }
 
-            await Task.Delay(TimeSpan.FromSeconds(30), ct);
+            try { await Task.Delay(TimeSpan.FromSeconds(30), ct); }
+            catch (OperationCanceledException) { break; }
+        }
+    }
+
+    /// <summary>
+    /// Fires once per day at exactly 12:00:00 PM (noon).
+    /// Voids the MeetMob token cache and clears failed ports for fresh re-detection.
+    /// Zero downtime, no restart required.
+    /// </summary>
+    private async Task DailyNoonCacheVoidAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                var now = DateTime.Now;
+                var todayNoon = now.Date.AddHours(12);
+                if (now >= todayNoon)
+                    todayNoon = todayNoon.AddDays(1);
+
+                var delay = todayNoon - now;
+                _log.LogInformation("Daily cache void scheduled at {NoonTime:yyyy-MM-dd HH:mm:ss} (in {Hours:0}h {Minutes:0}m)",
+                    todayNoon, delay.TotalHours, delay.Minutes);
+
+                await Task.Delay(delay, ct);
+                if (ct.IsCancellationRequested) break;
+
+                _log.LogInformation("=== DAILY NOON CACHE VOID TRIGGERED ===");
+                _log.LogInformation("Clearing MeetMob token cache for {Count} active modems...", _handlers.Count);
+
+                foreach (var kv in _handlers)
+                {
+                    try
+                    {
+                        var imei = kv.Value.imei;
+                        await _meetMob.InvalidateTokenAsync(imei);
+                        _log.LogInformation("  [VOID] MeetMob token cleared for IMEI={Imei}", imei);
+                    }
+                    catch (Exception ex)
+                    {
+                        _log.LogWarning(ex, "Failed to void token for modem {Key}", kv.Key);
+                    }
+                }
+
+                // Clear failed ports so disconnected COM ports get a fresh probe
+                var failedCount = _failedPorts.Count;
+                _failedPorts.Clear();
+
+                _log.LogInformation("=== DAILY NOON CACHE VOID COMPLETE: {Count} tokens cleared, {Failed} ports unblocked ===",
+                    _handlers.Count, failedCount);
+            }
+            catch (OperationCanceledException) { break; }
+            catch (Exception ex)
+            {
+                _log.LogError(ex, "Daily noon cache void error — will retry tomorrow");
+                try { await Task.Delay(TimeSpan.FromHours(1), ct); } catch { break; }
+            }
         }
     }
 
