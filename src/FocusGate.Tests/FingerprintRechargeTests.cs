@@ -146,4 +146,47 @@ public class FingerprintRechargeTests
         var histories = await db.UserBalanceHistories.Where(h => h.UserId == 303L).ToListAsync();
         Assert.Single(histories);
     }
+
+    [Fact]
+    public async Task ThirtyRechargesDifferentAmountsInSameSecond_AllThirtyCreditedAccurately()
+    {
+        var (db, channel, provider) = await TestHelper.CreateInMemoryDatabaseWithChannelAsync();
+
+        var modem = await TestHelper.SeedModemAsync(db, id: 104);
+        var sim = await TestHelper.SeedSimCardAsync(db, modemId: 104, id: 204);
+        var user = await TestHelper.SeedUserAsync(db, id: 304, balance: 100m);
+        await TestHelper.SeedUserModemAsync(db, userId: 304, modemId: 104);
+
+        decimal expectedTotalRecharge = 0m;
+        var now = DateTime.UtcNow;
+
+        // 30 different amounts: 50, 100, 150, 200, ... 1500
+        for (int i = 1; i <= 30; i++)
+        {
+            decimal amt = i * 50m;
+            expectedTotalRecharge += amt;
+
+            var content = $"?Vous avez reçu un montant de {amt:F2} DZD,numéro de la transaction est 0423980{i:D2}";
+            channel.EnqueueInsertSms(204, "Mobilis", content, SmsType.Transfer, now);
+        }
+
+        // Wait for single-queue channel processing
+        await Task.Delay(1000);
+
+        var updatedUser = await db.Users.FindAsync(304L);
+        Assert.NotNull(updatedUser);
+
+        // Expected: initial 100 + sum(50..1500 = 23250) = 23350 DZD
+        Assert.Equal(100m + expectedTotalRecharge, updatedUser.Balance);
+
+        var histories = await db.UserBalanceHistories.Where(h => h.UserId == 304L).ToListAsync();
+        Assert.Equal(30, histories.Count);
+
+        for (int i = 1; i <= 30; i++)
+        {
+            decimal amt = i * 50m;
+            Assert.Contains(histories, h => h.Amount == amt && h.Note != null && h.Note.Contains($"TX:0423980{i:D2}"));
+        }
+    }
 }
+
