@@ -75,10 +75,25 @@ public class ClassifySmsTypeTests
     }
 
     [Fact]
-    public void ClassifySmsType_SenderNotTrimmed_RequiresExactMatch()
+    public void ClassifySmsType_SenderWithSpaces_StillMatches()
     {
+        // IsMobilisSender() trims before comparing — padded sender must still match
         var result = DatabaseWriteChannel.ClassifySmsType("  Mobilis  ", "Solde: 5000 DZD");
-        Assert.Equal("other", result);
+        Assert.Equal("balance", result);
+    }
+
+    [Theory]
+    [InlineData("MOBILIS")]
+    [InlineData("mobilis")]
+    [InlineData("Mobilis")]
+    [InlineData("600")]
+    [InlineData("666")]
+    [InlineData("610")]
+    [InlineData("77111")]
+    public void ClassifySmsType_AllMobilisSenderVariants_AreRecognized(string sender)
+    {
+        var result = DatabaseWriteChannel.ClassifySmsType(sender, "Solde: 5000 DZD");
+        Assert.Equal("balance", result);
     }
 
     [Fact]

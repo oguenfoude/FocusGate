@@ -753,7 +753,7 @@ public class ModemHandler : IDisposable
     internal static bool IsMobilisBalanceTrigger(RawSmsMessage msg)
     {
         var sender = msg.Sender.Trim();
-        if (sender != "Mobilis" && sender != "77111" && sender != "610") return false;
+        if (!DatabaseWriteChannel.IsMobilisSender(sender)) return false;
         if (msg.Content.Contains("montant de", StringComparison.OrdinalIgnoreCase)
             && msg.Content.Contains("reçu", StringComparison.OrdinalIgnoreCase))
             return true;

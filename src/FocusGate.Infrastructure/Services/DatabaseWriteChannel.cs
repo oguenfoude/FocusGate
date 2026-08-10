@@ -511,7 +511,8 @@ public class DatabaseWriteChannel
         _logger.LogInformation("SMS saved: Sim={SimId} Sender={Sender} Type={Type} Content={Content}",
             sms.SimCardId, sms.SenderNumber, smsType, (sms.Content ?? "").Substring(0, Math.Min(80, sms.Content?.Length ?? 0)));
 
-        var isMobilisSms = sms.SenderNumber?.Trim() is "Mobilis" or "77111" or "610";
+        var sender = sms.SenderNumber?.Trim() ?? "";
+        var isMobilisSms = IsMobilisSender(sender);
         if (isMobilisSms)
         {
             var sim = await db.SimCards.FirstOrDefaultAsync(s => s.Id == sms.SimCardId && s.IsActive, ct);
@@ -674,7 +675,7 @@ public class DatabaseWriteChannel
 
     internal static string ClassifySmsType(string sender, string content)
     {
-        if (sender != "Mobilis" && sender != "77111" && sender != "610") return "other";
+        if (!IsMobilisSender(sender)) return "other";
         if (content.Contains("Solde", StringComparison.OrdinalIgnoreCase)) return "balance";
         if (content.Contains("montant de", StringComparison.OrdinalIgnoreCase)
             && content.Contains("reçu", StringComparison.OrdinalIgnoreCase)) return "transfer";
@@ -683,6 +684,15 @@ public class DatabaseWriteChannel
         if (content.Contains("Votre offre", StringComparison.OrdinalIgnoreCase)
             || content.Contains("offre", StringComparison.OrdinalIgnoreCase)) return "offer";
         return "mobilis-other";
+    }
+
+    /// <summary>Returns true for any known Mobilis sender number or name (case-insensitive).</summary>
+    internal static bool IsMobilisSender(string? sender)
+    {
+        if (string.IsNullOrWhiteSpace(sender)) return false;
+        var s = sender.Trim();
+        return s.Equals("Mobilis", StringComparison.OrdinalIgnoreCase)
+            || s == "77111" || s == "610" || s == "600" || s == "666";
     }
 
     internal static decimal? ExtractRechargeAmountFromContent(string content)

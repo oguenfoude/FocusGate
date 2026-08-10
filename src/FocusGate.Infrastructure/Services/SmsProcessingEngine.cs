@@ -136,7 +136,7 @@ public class SmsProcessingEngine : ISmsProcessingEngine
             return false;
 
         var sender = msg.Sender.Trim();
-        if (sender != "Mobilis" && sender != "77111" && sender != "610")
+        if (!DatabaseWriteChannel.IsMobilisSender(sender))
             return false;
 
         if (msg.Content.Contains("montant de", StringComparison.OrdinalIgnoreCase)
