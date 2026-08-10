@@ -240,11 +240,18 @@ public class DatabaseWriteChannel
     {
         var d = Deserialize(data);
         var modemId = d["ModemId"].GetInt32();
+        var now = DateTime.UtcNow;
 
         await db.Modems
             .Where(m => m.Id == modemId)
             .ExecuteUpdateAsync(s => s
-                .SetProperty(m => m.UpdatedAt, DateTime.UtcNow), ct);
+                .SetProperty(m => m.UpdatedAt, now), ct);
+
+        await db.SimCards
+            .Where(s => s.ModemId == modemId && s.IsActive)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(s => s.LastSeen, now)
+                .SetProperty(s => s.UpdatedAt, now), ct);
     }
 
     private async Task HandleUpdateModemComPortAsync(FocusGateDbContext db, object data, CancellationToken ct)

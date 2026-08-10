@@ -32,7 +32,7 @@ public class ModemHandler : IDisposable
     private const int HiLinkMaxFailures = 5;
     private ModemStatus _lastWrittenStatus = ModemStatus.Unknown;
     private DateTime _lastHeartbeatWriteUtc = DateTime.MinValue;
-    private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan DisposeLoopTimeout = TimeSpan.FromSeconds(10);
     private DateTime? _smsCooldownUntil;
     private MeetMobToken? _meetMobToken;
