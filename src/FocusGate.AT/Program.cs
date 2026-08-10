@@ -25,14 +25,15 @@ TaskScheduler.UnobservedTaskException += (_, e) =>
 
 System.Diagnostics.Process? dashboardProcess = null;
 
+using var appCts = new CancellationTokenSource();
+CancellationTokenSource? linkedCts = null;
+
 Console.CancelKeyPress += (_, e) =>
 {
     Console.WriteLine("[*] Shutting down gracefully...");
     e.Cancel = true;
+    try { appCts.Cancel(); } catch { }
 };
-
-using var appCts = new CancellationTokenSource();
-CancellationTokenSource? linkedCts = null;
 
 var mutex = new System.Threading.Mutex(true, @"Global\FocusGate_AT", out bool createdNew);
 if (!createdNew)
@@ -59,7 +60,6 @@ try
     var configPath = PathService.ConfigPath;
     ConfigMerger.EnsureConfig(configPath);
 
-    const int maxRestarts = 5;
     int restartCount = 0;
 
     while (true)
@@ -133,48 +133,35 @@ try
             logger.LogInformation("FocusGate AT started | DB: {DbPath} | Machine: {Machine}",
                 PathService.DatabasePath, context.MachineId);
 
-            if (restartCount > 0)
-                logger.LogWarning("Auto-restart attempt {Count}/{Max}", restartCount, maxRestarts);
-
-            var lifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
-            lifetime.ApplicationStopping.Register(() =>
+            // Reset restart counter after 30 seconds of successful execution
+            _ = Task.Run(async () =>
             {
-                try { writeChannel.CompleteAsync().GetAwaiter().GetResult(); }
-                catch { }
-                linkedCts?.Cancel();
+                await Task.Delay(30000);
+                restartCount = 0;
             });
 
-            lifetime.ApplicationStopped.Register(() =>
-            {
-                if (dashboardProcess != null && !dashboardProcess.HasExited)
-                {
-                    try { dashboardProcess.Kill(); } catch { }
-                }
-            });
+            await host.RunAsync(appCts.Token);
 
-            await host.RunAsync();
-
+            try { writeChannel?.CompleteAsync().GetAwaiter().GetResult(); }
+            catch { }
             linkedCts?.Cancel();
             linkedCts?.Dispose();
 
-            break;
+            if (appCts.Token.IsCancellationRequested)
+                break;
         }
         catch (Exception ex)
         {
             try { linkedCts?.Cancel(); } catch { }
             try { linkedCts?.Dispose(); } catch { }
 
-            restartCount++;
-            if (restartCount >= maxRestarts)
-            {
-                ShowErrorDialog("FocusGate AT - Fatal Error",
-                    $"Process crashed {maxRestarts} times. Giving up.\n\n{ex.Message}\n\n{ex.InnerException?.Message}");
+            if (appCts.Token.IsCancellationRequested)
                 break;
-            }
 
+            restartCount++;
             Console.WriteLine();
             Console.WriteLine($"[!] Process error: {ex.Message}");
-            Console.WriteLine($"    Restarting in 5 seconds... ({restartCount}/{maxRestarts})");
+            Console.WriteLine($"    Auto-restarting in 5 seconds... (attempt {restartCount})");
             Console.WriteLine();
             await Task.Delay(5000);
         }
@@ -207,14 +194,6 @@ static void PersistMachineId(string configPath, string machineId)
     catch { }
 }
 
-static void ShowErrorDialog(string title, string message)
-{
-    try
-    {
-        MessageBoxW(IntPtr.Zero, message, title, 0x10);
-    }
-    catch { }
-}
 
 static System.Diagnostics.Process? StartDashboard()
 {
@@ -237,6 +216,3 @@ static System.Diagnostics.Process? StartDashboard()
     }
     catch { return null; }
 }
-
-[System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
-static extern int MessageBoxW(IntPtr hWnd, string lpText, string lpCaption, uint uType);
