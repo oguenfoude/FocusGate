@@ -223,6 +223,33 @@ public class MeetMobTokenStoreTests
         Assert.Equal("persist", result.CsrfToken);
     }
 
+    [Fact]
+    public void ExtractBalance_FromRealMeetMobHarJson_ReturnsExpectedBalance()
+    {
+        var json = "{\"result\":\"success\",\"resultBody\":{\"acctList\":[{\"acctKey\":\"1010062274161\",\"balanceResult\":[{\"balanceType\":\"C_MAIN_ACCOUNT\",\"balanceTypeName\":\"Balance\",\"totalAmount\":\"6 613,30\",\"depositFlag\":\"N\",\"refundFlag\":\"1\",\"currencyID\":\"1044\",\"balanceDetail\":[{\"balanceInstanceID\":\"193500000084881880\",\"amount\":\"6 613,30\"}]}]}]}}";
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        var root = doc.RootElement;
+
+        string amountStr = "";
+        if (root.TryGetProperty("resultBody", out var rb))
+        {
+            if (rb.TryGetProperty("acctList", out var acctList) && acctList.ValueKind == System.Text.Json.JsonValueKind.Array && acctList.GetArrayLength() > 0)
+            {
+                var firstAcct = acctList[0];
+                if (firstAcct.TryGetProperty("balanceResult", out var balRes) && balRes.ValueKind == System.Text.Json.JsonValueKind.Array && balRes.GetArrayLength() > 0)
+                {
+                    var firstBal = balRes[0];
+                    if (firstBal.TryGetProperty("totalAmount", out var elem))
+                        amountStr = elem.GetString() ?? "";
+                }
+            }
+        }
+
+        amountStr = MeetMobService.NormalizeMeetMobAmount(amountStr);
+        Assert.True(decimal.TryParse(amountStr, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var balance));
+        Assert.Equal(6613.30m, balance);
+    }
+
     private MeetMobTokenStore CreateStore()
     {
         var store = new MeetMobTokenStore();

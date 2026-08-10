@@ -433,8 +433,37 @@ public partial class MeetMobService
 
             _lastErrorCode = null;
 
-            var balanceInfo = root.GetProperty("resultBody").GetProperty("balanceInfomation");
-            var amountStr = SafeGetStringFromParent(balanceInfo, "advancedAmount", "0");
+            string amountStr = "";
+            if (root.TryGetProperty("resultBody", out var rb))
+            {
+                // 1. Modern MeetMob format (acctList -> balanceResult -> totalAmount)
+                if (rb.TryGetProperty("acctList", out var acctList) && acctList.ValueKind == JsonValueKind.Array && acctList.GetArrayLength() > 0)
+                {
+                    var firstAcct = acctList[0];
+                    if (firstAcct.TryGetProperty("balanceResult", out var balRes) && balRes.ValueKind == JsonValueKind.Array && balRes.GetArrayLength() > 0)
+                    {
+                        var firstBal = balRes[0];
+                        amountStr = SafeGetStringFromParent(firstBal, "totalAmount");
+                        if (string.IsNullOrEmpty(amountStr) && firstBal.TryGetProperty("balanceDetail", out var balDet) && balDet.ValueKind == JsonValueKind.Array && balDet.GetArrayLength() > 0)
+                            amountStr = SafeGetStringFromParent(balDet[0], "amount");
+                    }
+                }
+
+                // 2. Legacy fallback (balanceInfomation -> advancedAmount)
+                if (string.IsNullOrEmpty(amountStr) && rb.TryGetProperty("balanceInfomation", out var balInfo))
+                {
+                    amountStr = SafeGetStringFromParent(balInfo, "advancedAmount");
+                }
+
+                // 3. Direct property fallback
+                if (string.IsNullOrEmpty(amountStr))
+                {
+                    amountStr = SafeGetStringFromParent(rb, "advancedAmount");
+                    if (string.IsNullOrEmpty(amountStr))
+                        amountStr = SafeGetStringFromParent(rb, "totalAmount");
+                }
+            }
+
             amountStr = NormalizeMeetMobAmount(amountStr);
             if (decimal.TryParse(amountStr, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var balance))
                 return balance;
@@ -665,7 +694,7 @@ public partial class MeetMobService
     private string ExtractCookieFromResponse() => _sessionCookie;
 
     internal static string NormalizeMeetMobAmount(string amount) =>
-        amount.Replace(" ", "").Replace(",", ".");
+        amount.Replace(" ", "").Replace("\u00A0", "").Replace("\u202F", "").Replace(",", ".");
 
     private static string SafeGetString(JsonElement element, string defaultValue = "")
     {
