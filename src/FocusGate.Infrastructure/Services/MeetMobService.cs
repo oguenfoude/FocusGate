@@ -26,7 +26,7 @@ public partial class MeetMobService
     private int OtpPollTimeout => _config.Get<int>("meetmob.otp_poll_timeout", 60);
     private int OtpPollInterval => _config.Get<int>("meetmob.otp_poll_interval", 1);
     private int TokenTtl => _config.Get<int>("meetmob.token_ttl", 2700);
-    private int HttpTimeout => _config.Get<int>("meetmob.http_timeout", 10);
+    private int HttpTimeout => _config.Get<int>("meetmob.http_timeout", 30);
     private int LoginCooldown => _config.Get<int>("meetmob.login_cooldown", 120);
     private int FallbackCooldown => _config.Get<int>("meetmob.fallback_cooldown", 150);
     private long _wafCooldownUntilUtcTicks;
