@@ -173,8 +173,8 @@ public class MongoSyncService : BackgroundService
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<FocusGateDbContext>();
 
-        var pushOk = await PushToMongoAsync(db, ct);
         var pullOk = await PullFromMongoAsync(db, ct);
+        var pushOk = await PushToMongoAsync(db, ct);
 
         if (pushOk && pullOk)
         {
@@ -192,8 +192,8 @@ public class MongoSyncService : BackgroundService
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<FocusGateDbContext>();
 
-        var pushOk = await PushToMongoAsync(db, ct);
         var pullOk = await PullFromMongoAsync(db, ct);
+        var pushOk = await PushToMongoAsync(db, ct);
 
         if (pushOk && pullOk)
         {
@@ -424,7 +424,7 @@ public class MongoSyncService : BackgroundService
         var userPulled = await PullCollectionAsync(db, _mongo.Users, userFilter,
             u => u.Id, (local, u) =>
             {
-                if (u.UpdatedAt > local.UpdatedAt)
+                if (u.UpdatedAt >= local.UpdatedAt)
                 {
                     local.Username = u.Username;
                     local.Password = u.Password;

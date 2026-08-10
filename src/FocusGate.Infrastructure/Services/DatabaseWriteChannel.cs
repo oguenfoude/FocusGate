@@ -835,15 +835,18 @@ public class DatabaseWriteChannel
         var user = await db.Users.FirstOrDefaultAsync(u => u.Id == request.UserId, ct);
         if (user == null) { _logger.LogWarning("Process withdrawal failed: user not found"); return false; }
 
+        var now = DateTime.UtcNow;
         if (approved)
         {
             request.Status = WithdrawalStatus.Approved;
             request.ProcessedByAdminId = adminId > 0 ? adminId : null;
-            request.ProcessedAt = DateTime.UtcNow;
+            request.ProcessedAt = now;
+            request.UpdatedAt = now;
             request.AdminNote = adminNote;
 
             var oldBalance = user.Balance;
             user.Balance = Math.Max(0, user.Balance - request.Amount);
+            user.UpdatedAt = now;
 
             db.BalanceHistories.Add(new BalanceHistory
             {
@@ -853,7 +856,8 @@ public class DatabaseWriteChannel
                 Balance = user.Balance,
                 PreviousBalance = oldBalance,
                 Source = BalanceSource.Withdrawal,
-                RecordedAt = DateTime.UtcNow
+                RecordedAt = now,
+                UpdatedAt = now
             });
 
             db.UserBalanceHistories.Add(new UserBalanceHistory
@@ -864,7 +868,8 @@ public class DatabaseWriteChannel
                 Type = 1,
                 SimCardId = null,
                 Note = $"Withdrawal approved{(string.IsNullOrEmpty(adminNote) ? "" : ": " + adminNote)}",
-                RecordedAt = DateTime.UtcNow
+                RecordedAt = now,
+                UpdatedAt = now
             });
 
             _logger.LogInformation("Withdrawal approved: Request={RequestId} User={UserId} Amount={Amount} DZD", requestId, user.Id, request.Amount);
@@ -873,7 +878,8 @@ public class DatabaseWriteChannel
         {
             request.Status = WithdrawalStatus.Rejected;
             request.ProcessedByAdminId = adminId > 0 ? adminId : null;
-            request.ProcessedAt = DateTime.UtcNow;
+            request.ProcessedAt = now;
+            request.UpdatedAt = now;
             request.AdminNote = adminNote;
 
             _logger.LogInformation("Withdrawal rejected: Request={RequestId} User={UserId}", requestId, user.Id);
