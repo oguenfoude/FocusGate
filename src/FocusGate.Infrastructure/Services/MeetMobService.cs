@@ -1,5 +1,9 @@
 using System.Collections.Concurrent;
+using System.Net;
+using System.Net.Http;
 using System.Net.Http.Json;
+using System.Net.Security;
+using System.Security.Authentication;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -41,10 +45,21 @@ public partial class MeetMobService
         _tokenStore = tokenStore;
         _log = log;
         _config = config;
-        _http = new HttpClient(new HttpClientHandler
+
+        var handler = new SocketsHttpHandler
         {
-            ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
-        })
+            SslOptions = new SslClientAuthenticationOptions
+            {
+                RemoteCertificateValidationCallback = (_, _, _, _) => true,
+                EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13
+            },
+            ConnectTimeout = TimeSpan.FromSeconds(5),
+            PooledConnectionLifetime = TimeSpan.FromMinutes(2),
+            PooledConnectionIdleTimeout = TimeSpan.FromSeconds(30),
+            AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
+        };
+
+        _http = new HttpClient(handler)
         {
             Timeout = TimeSpan.FromSeconds(HttpTimeout)
         };
