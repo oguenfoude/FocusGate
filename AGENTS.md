@@ -85,14 +85,13 @@ npm start        # Production server
 - **MongoDB pull uses in-memory matching** — Loads local records by ID list, matches in Dictionary. EF Core can't translate `Func<T, object>` in LINQ expressions (CS1963).
 - **MongoDB collection names are ALL lowercase** — .NET `FocusGateMongoClient.cs` uses `"modems"`, `"simcards"`, etc. Next.js Mongoose models must match.
 - **MongoDB `_id` is Number (long)** — NOT ObjectId. `BsonClassMap.MapIdMember(m => m.Id)` maps C# `long Id` to MongoDB `_id`.
-- **Balance architecture:** Three sources for balance tracking (priority order):
-  - **MeetMob API** → primary source. OTP login via SIM, fetches balance from web API. Credits user on increase (full delta). Creates BalanceHistory (Source=MeetMob). Token cached for 45min, proactive refresh at 40min.
-  - `*222#` USSD → fallback when MeetMob fails. Credits user on increase (full delta). Creates BalanceHistory (Source=USSD).
-  - "Solde" SMS → fallback when *222# returns "processing". Updates `sim.Balance` + BalanceHistory (Source=SMS). Credits user if balance increased (pending flag or direct).
-  - **Pending flag:** When *222# returns "processing", `MarkPendingBalanceCheck(modemId)` is called. When "Solde" SMS arrives, `TryClaimPendingBalanceCheck(modemId)` gates the user credit. This prevents double-crediting and avoids crediting old startup SMS.
+- **Balance architecture & Single Source of Truth:**
+  - **User Wallet Credit:** Handled **exclusively** in `DatabaseWriteChannel.cs` (`HandleInsertSmsAsync`) upon receiving a recharge SMS (`Vous avez rechargé...` or `Vous avez reçu un montant de...`). Deduplicated against `UserBalanceHistories` (3-minute window). `ModemHandler.cs` never touches or double-credits user wallets.
+  - **SIM Hardware Balance:** Tracked in `SimCards` table (`sim.Balance`) and `BalanceHistories` table. Updated via MeetMob API (`acctList[0].balanceResult[0].totalAmount`) or USSD `*222#` snapshots.
+  - **Pending flag:** When *222# returns "processing", `MarkPendingBalanceCheck(modemId)` is called. When "Solde" SMS arrives, `TryClaimPendingBalanceCheck(modemId)` updates `sim.Balance`.
   - **MeetMob backoff:** Exponential backoff on failures (2min → 5min → 30min max). Stays under MeetMob's 1-hour lockout. Success resets counter.
-  - **Credit rules:** User wallet ONLY credited when balance increases AND user is assigned. Balance decreases = no user credit, no BalanceHistory. New SIM starts at Balance=0.
-- **MachineId:** Each machine has a unique ID from `MachineInfoService`. Dev machine: `d26b1c221259fb12`. Client (BERRAR): `419c0cfc97666753`.
+  - **Credit rules:** User wallet ONLY credited when a valid recharge SMS is processed and user is assigned to the modem. New SIM starts at Balance=0.
+- **MachineId:** Each machine has a unique ID from `MachineInfoService`. Dev machine: `d26b1c221259fb12`. Client (BERRAR): `419c0cfc97666753`. Client (Alaafi): `fb96ac5207011ae1`.
 - **HTMX in Dashboard:** POST handlers must use `Response.Headers["HX-Redirect"]` + `return new EmptyResult()` — NOT `RedirectToPage()`. `_ViewStart.cshtml` sets `Layout = null` for `HX-Request` header.
 - **Dashboard DI:** Uses `AddFocusGateDashboard()` (lightweight — no MongoSync, no ConsoleCommandHandler, no RestartService).
 - **Dashboard timezone:** Use `.ToDisplayTime(Config)` extension (NOT `.ToLocalTime()`). Reads `display.timezone_offset_hours` from config; if empty, falls back to `TimeZoneInfo.FindSystemTimeZoneById("Africa/Algiers")`.
