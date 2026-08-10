@@ -444,7 +444,8 @@ public partial class MeetMobService
         }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "MeetMob: GetBalance failed for IMSI {Imsi}", imsi[..Math.Min(8, imsi.Length)]);
+            _lastErrorCode = "NETWORK_ERROR";
+            _log.LogWarning("MeetMob: GetBalance failed for IMSI {Imsi}: {Error}", imsi[..Math.Min(8, imsi.Length)], ex.Message);
             return null;
         }
     }
@@ -485,7 +486,7 @@ public partial class MeetMobService
         }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "MeetMob: GetRechargeHistory failed");
+            _log.LogWarning("MeetMob: GetRechargeHistory failed: {Error}", ex.Message);
             return new();
         }
     }
@@ -512,7 +513,7 @@ public partial class MeetMobService
         }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "MeetMob: GetFreeResource failed");
+            _log.LogWarning("MeetMob: GetFreeResource failed: {Error}", ex.Message);
             return null;
         }
     }
@@ -537,7 +538,7 @@ public partial class MeetMobService
         }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "MeetMob: GetCustomerInfo failed");
+            _log.LogWarning("MeetMob: GetCustomerInfo failed: {Error}", ex.Message);
             return null;
         }
     }
@@ -609,11 +610,11 @@ public partial class MeetMobService
                 }
                 return JsonDocument.Parse(json);
             }
-            catch (HttpRequestException ex) when (attempt < 2 && !ct.IsCancellationRequested)
+            catch (Exception ex) when (attempt < 2 && !ct.IsCancellationRequested)
             {
                 _lastRequestNetworkError = true;
-                _log.LogWarning("MeetMob: Authenticated HTTP request failed (attempt {Attempt}/3): {Error}", attempt + 1, ex.Message);
-                await Task.Delay(2000, ct);
+                _log.LogWarning("MeetMob: HTTP request failed (attempt {Attempt}/3): {Error}", attempt + 1, ex.Message);
+                await Task.Delay(1000, ct);
             }
         }
         return null;
