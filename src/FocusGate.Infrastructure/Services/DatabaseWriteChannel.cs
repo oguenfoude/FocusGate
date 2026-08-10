@@ -594,27 +594,46 @@ public class DatabaseWriteChannel
                 var userId = await ModemHelper.ResolveUserIdForModemAsync(db, sim.ModemId, ct);
                 if (userId.HasValue && userId.Value > 0)
                 {
-                    var cutoff = DateTime.UtcNow.AddMinutes(-3);
-                    var alreadyCredited = await db.UserBalanceHistories.AnyAsync(h =>
+                    var fingerprint = ExtractRechargeFingerprint(sms.Content, sim.Id, rechargeAmount.Value, sms.ReceivedAt);
+
+                    // Check 1: Has this EXACT carrier transaction fingerprint already been credited for this user/SIM?
+                    var alreadyCreditedByFingerprint = await db.UserBalanceHistories.AnyAsync(h =>
                         h.UserId == userId.Value
                         && h.SimCardId == sim.Id
-                        && h.Amount == rechargeAmount.Value
-                        && h.Type == 0
-                        && h.RecordedAt >= cutoff, ct);
+                        && h.Note != null
+                        && h.Note.Contains(fingerprint), ct);
 
-                    if (!alreadyCredited)
+                    // Check 2: Companion pair check within 30 seconds for the same amount.
+                    // If a TX:xxx or TS:xxx was credited in the last 30s for the exact same amount on this SIM,
+                    // and current SMS has NO distinct transaction ID (e.g. generic companion confirmation SMS),
+                    // then treat it as the companion pair of the same recharge.
+                    bool alreadyCreditedCompanion = false;
+                    if (!alreadyCreditedByFingerprint && !fingerprint.StartsWith("TX:"))
                     {
-                        var (credited, userOld, userNew) = CreditUserBalance(db, userId.Value, rechargeAmount.Value, sim.Id);
+                        var companionCutoff = DateTime.UtcNow.AddSeconds(-30);
+                        alreadyCreditedCompanion = await db.UserBalanceHistories.AnyAsync(h =>
+                            h.UserId == userId.Value
+                            && h.SimCardId == sim.Id
+                            && h.Amount == rechargeAmount.Value
+                            && h.Type == 0
+                            && h.RecordedAt >= companionCutoff, ct);
+                    }
+
+                    if (!alreadyCreditedByFingerprint && !alreadyCreditedCompanion)
+                    {
+                        var note = $"Credit from SIM | {fingerprint}";
+                        var (credited, userOld, userNew) = CreditUserBalance(db, userId.Value, rechargeAmount.Value, sim.Id, note);
                         if (credited)
                         {
-                            _logger.LogInformation("INSTANT CREDIT via Recharge SMS: Modem={ModemId} Sim={SimId} User={UserId} +{Amount:F2} DZD, Wallet: {UserOld:F2} → {UserNew:F2}",
-                                sim.ModemId, sim.Id, userId.Value, rechargeAmount.Value, userOld, userNew);
+                            _logger.LogInformation("INSTANT CREDIT via Recharge SMS: Modem={ModemId} Sim={SimId} User={UserId} +{Amount:F2} DZD ({Fingerprint}), Wallet: {UserOld:F2} → {UserNew:F2}",
+                                sim.ModemId, sim.Id, userId.Value, rechargeAmount.Value, fingerprint, userOld, userNew);
                         }
                     }
                     else
                     {
-                        _logger.LogInformation("Recharge SMS already credited within 3min: Modem={ModemId} Sim={SimId} User={UserId} Amount={Amount:F2} DZD",
-                            sim.ModemId, sim.Id, userId.Value, rechargeAmount.Value);
+                        _logger.LogInformation("Recharge SMS already credited ({Reason}): Modem={ModemId} Sim={SimId} User={UserId} Amount={Amount:F2} DZD ({Fingerprint})",
+                            alreadyCreditedByFingerprint ? "Exact Fingerprint" : "Companion Pair within 30s",
+                            sim.ModemId, sim.Id, userId.Value, rechargeAmount.Value, fingerprint);
                     }
                 }
                 else
@@ -624,6 +643,26 @@ public class DatabaseWriteChannel
                 }
             }
         }
+    }
+
+    internal static string ExtractRechargeFingerprint(string content, long simId, decimal amount, DateTime receivedAt)
+    {
+        // 1. Check for Transaction ID (French / Arabic)
+        var txMatch = System.Text.RegularExpressions.Regex.Match(content, @"(?:transaction\s+est\s*|رقم\s*المعاملة\s*|numéro\s*de\s*(?:la\s*)?transaction\s*[:\s]*|transaction\s*[:#\s]*)(\d+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (txMatch.Success)
+        {
+            return $"TX:{txMatch.Groups[1].Value.Trim()}";
+        }
+
+        // 2. Check for Carrier Timestamp inside text
+        var dateMatch = System.Text.RegularExpressions.Regex.Match(content, @"(?:le\s*|بتاريخ\s*)(\d{1,2}/\d{1,2}/\d{2,4}(?:\s+\d{1,2}:\d{1,2}(?::\d{1,2})?)?)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (dateMatch.Success)
+        {
+            return $"TS:{dateMatch.Groups[1].Value.Trim()}";
+        }
+
+        // 3. Fallback: Sim + Amount + exact second
+        return $"FALLBACK:Sim={simId}_Amt={amount:F2}_{receivedAt:yyyyMMddHHmmss}";
     }
 
     internal static decimal? ExtractBalanceFromContent(string content)
@@ -889,7 +928,7 @@ public class DatabaseWriteChannel
         return true;
     }
 
-    private static (bool credited, decimal oldBalance, decimal newBalance) CreditUserBalance(FocusGateDbContext db, long? userId, decimal amount, long? simCardId)
+    private static (bool credited, decimal oldBalance, decimal newBalance) CreditUserBalance(FocusGateDbContext db, long? userId, decimal amount, long? simCardId, string? note = null)
     {
         if (amount <= 0 || !userId.HasValue) return (false, 0, 0);
 
@@ -906,7 +945,7 @@ public class DatabaseWriteChannel
             BalanceAfter = user.Balance,
             Type = 0,
             SimCardId = simCardId,
-            Note = "Credit from SIM",
+            Note = string.IsNullOrEmpty(note) ? "Credit from SIM" : note,
             RecordedAt = DateTime.UtcNow
         });
         return (true, oldBalance, user.Balance);
