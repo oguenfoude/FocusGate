@@ -594,7 +594,7 @@ public class DatabaseWriteChannel
                 var userId = await ModemHelper.ResolveUserIdForModemAsync(db, sim.ModemId, ct);
                 if (userId.HasValue && userId.Value > 0)
                 {
-                    var cutoff = DateTime.UtcNow.AddSeconds(-15);
+                    var cutoff = DateTime.UtcNow.AddMinutes(-3);
                     var alreadyCredited = await db.UserBalanceHistories.AnyAsync(h =>
                         h.UserId == userId.Value
                         && h.SimCardId == sim.Id
@@ -613,7 +613,7 @@ public class DatabaseWriteChannel
                     }
                     else
                     {
-                        _logger.LogInformation("Recharge SMS already credited within 30min: Modem={ModemId} Sim={SimId} User={UserId} Amount={Amount:F2} DZD",
+                        _logger.LogInformation("Recharge SMS already credited within 3min: Modem={ModemId} Sim={SimId} User={UserId} Amount={Amount:F2} DZD",
                             sim.ModemId, sim.Id, userId.Value, rechargeAmount.Value);
                     }
                 }
