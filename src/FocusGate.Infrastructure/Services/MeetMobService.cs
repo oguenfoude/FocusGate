@@ -226,7 +226,7 @@ public partial class MeetMobService
         }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "MeetMob: sendSms failed for {Phone}", phone);
+            _log.LogWarning("MeetMob: sendSms failed for {Phone}: {Error}", phone, ex.Message);
             return false;
         }
     }
@@ -324,7 +324,7 @@ public partial class MeetMobService
         }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "MeetMob: LoginWithOtp failed");
+            _log.LogWarning("MeetMob: LoginWithOtp failed: {Error}", ex.Message);
             return null;
         }
     }
@@ -344,7 +344,7 @@ public partial class MeetMobService
         }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "MeetMob: acceptDisclaimer failed");
+            _log.LogWarning("MeetMob: acceptDisclaimer failed: {Error}", ex.Message);
         }
     }
 
@@ -376,7 +376,7 @@ public partial class MeetMobService
         }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "MeetMob: GetSubscriberData failed");
+            _log.LogWarning("MeetMob: GetSubscriberData failed: {Error}", ex.Message);
             return null;
         }
     }

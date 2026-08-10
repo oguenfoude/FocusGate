@@ -344,7 +344,7 @@ public class ModemHandler : IDisposable
                         finally { _meetMob.RefreshLock.Release(); }
                     }
                     catch (OperationCanceledException) { break; }
-                    catch (Exception ex) { _log.LogWarning(ex, "Modem {Id}: MeetMob retry failed", _modemId); RecordMeetMobFailure(); }
+                    catch (Exception ex) { _log.LogWarning("Modem {Id}: MeetMob retry failed: {Error}", _modemId, ex.Message); RecordMeetMobFailure(); }
                 }
             }
         }
@@ -455,7 +455,7 @@ public class ModemHandler : IDisposable
                 }
             }
             catch (OperationCanceledException) { return; }
-            catch (Exception ex) { _log.LogWarning(ex, "Modem {Id}: MeetMob fresh login failed", _modemId); }
+            catch (Exception ex) { _log.LogWarning("Modem {Id}: MeetMob fresh login failed: {Error}", _modemId, ex.Message); }
         }
 
         // --- Step 4: All balance methods failed — credit from SMS amount if available ---
@@ -981,7 +981,7 @@ public class ModemHandler : IDisposable
         }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "Modem {Id}: MeetMob balance fetch failed", _modemId);
+            _log.LogWarning("Modem {Id}: MeetMob balance fetch failed: {Error}", _modemId, ex.Message);
         }
         return false;
     }
@@ -1012,7 +1012,7 @@ public class ModemHandler : IDisposable
         }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "Modem {Id}: MeetMob history fetch failed", _modemId);
+            _log.LogWarning("Modem {Id}: MeetMob history fetch failed: {Error}", _modemId, ex.Message);
         }
     }
 
