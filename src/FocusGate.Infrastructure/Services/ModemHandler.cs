@@ -785,13 +785,13 @@ public class ModemHandler : IDisposable
             var cachedBalanceOk = await TryMeetMobBalanceAsync(ct);
             if (cachedBalanceOk) return true;
 
-            if (_meetMob.WasLastRequestNetworkError() || _meetMob.GetLastErrorCode() == "MSF.100010")
+            if (_meetMob.WasLastRequestNetworkError())
             {
-                _log.LogWarning("Modem {Id}: MeetMob cached token balance failed (transient error) — token preserved, falling back to USSD", _modemId);
+                _log.LogWarning("Modem {Id}: MeetMob cached token balance failed (network error) — token preserved, falling back to USSD", _modemId);
                 return false;
             }
 
-            _log.LogWarning("Modem {Id}: MeetMob cached token balance failed (auth error) — invalidating and retrying fresh login", _modemId);
+            _log.LogWarning("Modem {Id}: MeetMob cached token balance failed (session expired: {Error}) — invalidating and retrying fresh login", _modemId, _meetMob.GetLastErrorCode() ?? "auth error");
             await _meetMob.InvalidateTokenAsync(phone);
             _meetMobToken = null;
         }
@@ -864,12 +864,7 @@ public class ModemHandler : IDisposable
             }
 
             var errorCode = _meetMob.GetLastErrorCode();
-            if (errorCode == "MSF.100010")
-            {
-                _log.LogWarning("Modem {Id}: MeetMob balance null (MSF.100010 page timeout) — token preserved, falling back to USSD", _modemId);
-                return false;
-            }
-            if (string.IsNullOrEmpty(_meetMobToken.AccountId))
+            if (string.IsNullOrEmpty(_meetMobToken.AccountId) && errorCode != "MSF.100010" && errorCode != "120")
             {
                 _log.LogWarning("Modem {Id}: MeetMob balance null (accountId empty) — skipping re-login (token preserved)", _modemId);
                 return false;
