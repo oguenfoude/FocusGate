@@ -615,15 +615,29 @@ public class DatabaseWriteChannel
                     // and current SMS has NO distinct transaction ID (e.g. generic companion confirmation SMS),
                     // then treat it as the companion pair of the same recharge.
                     bool alreadyCreditedCompanion = false;
-                    if (!alreadyCreditedByFingerprint && !fingerprint.StartsWith("TX:"))
+                    if (!alreadyCreditedByFingerprint)
                     {
                         var companionCutoff = DateTime.UtcNow.AddSeconds(-30);
-                        alreadyCreditedCompanion = await db.UserBalanceHistories.AnyAsync(h =>
-                            h.UserId == userId.Value
-                            && h.SimCardId == sim.Id
-                            && h.Amount == rechargeAmount.Value
-                            && h.Type == 0
-                            && h.RecordedAt >= companionCutoff, ct);
+                        var recentCredits = await db.UserBalanceHistories
+                            .Where(h => h.UserId == userId.Value
+                                && h.SimCardId == sim.Id
+                                && h.Amount == rechargeAmount.Value
+                                && h.Type == 0
+                                && h.RecordedAt >= companionCutoff)
+                            .ToListAsync(ct);
+
+                        if (recentCredits.Count > 0)
+                        {
+                            if (!fingerprint.StartsWith("TX:"))
+                            {
+                                alreadyCreditedCompanion = true;
+                            }
+                            else
+                            {
+                                alreadyCreditedCompanion = recentCredits.Any(h =>
+                                    h.Note != null && (h.Note.Contains("TS:") || h.Note.Contains(fingerprint)));
+                            }
+                        }
                     }
 
                     if (!alreadyCreditedByFingerprint && !alreadyCreditedCompanion)

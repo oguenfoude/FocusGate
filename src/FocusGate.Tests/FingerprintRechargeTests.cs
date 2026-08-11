@@ -187,6 +187,33 @@ public class FingerprintRechargeTests
             decimal amt = i * 50m;
             Assert.Contains(histories, h => h.Amount == amt && h.Note != null && h.Note.Contains($"TX:0423980{i:D2}"));
         }
+    [Fact]
+    public async Task ReverseArrivalOrder_ConfirmationSmsFirstThenTransferSms_CreditedExactlyOnce()
+    {
+        var (db, channel, provider) = await TestHelper.CreateInMemoryDatabaseWithChannelAsync();
+
+        var modem = await TestHelper.SeedModemAsync(db, id: 105);
+        var sim = await TestHelper.SeedSimCardAsync(db, modemId: 105, id: 205);
+        var user = await TestHelper.SeedUserAsync(db, id: 305, balance: 0m);
+        await TestHelper.SeedUserModemAsync(db, userId: 305, modemId: 105);
+
+        // SMS 1: Confirmation notification arrives FIRST
+        var sms1 = "Vous avez rechargé 700.00 DZD DA avec succès le 11/08/2026 16:30:34. Profitez d";
+        channel.EnqueueInsertSms(205, "Mobilis", sms1, SmsType.Recharge, DateTime.UtcNow);
+
+        // SMS 2: Transfer receipt arrives 1 second SECOND
+        var sms2 = "?Vous avez reçu un montant de 700.00 DZD,numéro de la transaction est 0424010000";
+        channel.EnqueueInsertSms(205, "Mobilis", sms2, SmsType.Transfer, DateTime.UtcNow.AddSeconds(1));
+
+        await Task.Delay(400);
+
+        var updatedUser = await db.Users.FindAsync(305L);
+        Assert.NotNull(updatedUser);
+        // Credited EXACTLY once: 700 DZD (not 1400 DZD)
+        Assert.Equal(700.00m, updatedUser.Balance);
+
+        var histories = await db.UserBalanceHistories.Where(h => h.UserId == 305L).ToListAsync();
+        Assert.Single(histories);
     }
 }
 
