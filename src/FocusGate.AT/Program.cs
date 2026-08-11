@@ -10,6 +10,10 @@ using Microsoft.Extensions.Logging;
 using Serilog;
 using Serilog.Events;
 
+// Prevent Windows sleep & disable QuickEdit terminal freeze
+WindowsPlatformHelper.PreventSystemSleep();
+WindowsPlatformHelper.DisableConsoleQuickEdit();
+
 AppDomain.CurrentDomain.UnhandledException += (_, e) =>
 {
     var ex = e.ExceptionObject as Exception;
