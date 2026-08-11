@@ -48,10 +48,12 @@ public class FocusGateMongoClient
             settings.ReadPreference = ReadPreference.SecondaryPreferred;
             settings.RetryWrites = true;
             settings.RetryReads = true;
-            settings.ConnectTimeout = TimeSpan.FromSeconds(15);
-            settings.ServerSelectionTimeout = TimeSpan.FromSeconds(30);
-            settings.SocketTimeout = TimeSpan.FromSeconds(60);
-            settings.HeartbeatInterval = TimeSpan.FromSeconds(30);
+            settings.ConnectTimeout = TimeSpan.FromSeconds(10);
+            settings.ServerSelectionTimeout = TimeSpan.FromSeconds(15);
+            settings.SocketTimeout = TimeSpan.FromSeconds(15);
+            settings.HeartbeatInterval = TimeSpan.FromSeconds(10);
+            settings.MaxConnectionIdleTime = TimeSpan.FromSeconds(20);
+            settings.MaxConnectionLifeTime = TimeSpan.FromMinutes(5);
             settings.SslSettings = new SslSettings
             {
                 EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13

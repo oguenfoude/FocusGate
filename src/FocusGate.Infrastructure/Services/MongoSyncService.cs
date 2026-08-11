@@ -517,8 +517,29 @@ public class MongoSyncService : BackgroundService
     {
         try
         {
-            var mongoDocs = await collection.Find(filter).ToListAsync(ct);
-            if (mongoDocs.Count == 0) return 0;
+            List<T>? mongoDocs = null;
+            for (int attempt = 1; attempt <= 2; attempt++)
+            {
+                try
+                {
+                    mongoDocs = await collection.Find(filter).ToListAsync(ct);
+                    break;
+                }
+                catch (MongoConnectionException) when (attempt == 1 && !ct.IsCancellationRequested)
+                {
+                    await Task.Delay(500, ct);
+                }
+                catch (System.IO.IOException) when (attempt == 1 && !ct.IsCancellationRequested)
+                {
+                    await Task.Delay(500, ct);
+                }
+                catch (System.Net.Sockets.SocketException) when (attempt == 1 && !ct.IsCancellationRequested)
+                {
+                    await Task.Delay(500, ct);
+                }
+            }
+
+            if (mongoDocs == null || mongoDocs.Count == 0) return 0;
 
             var ids = new HashSet<long>(mongoDocs.Select(getId));
             var idList = ids.ToList();
@@ -574,7 +595,7 @@ public class MongoSyncService : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Pull from {Collection} skipped — will retry next cycle", collectionName);
+            _logger.LogWarning("Pull from {Collection} skipped ({Error}) — will retry next cycle", collectionName, ex.Message);
             db.ChangeTracker.Clear();
             return 0;
         }
