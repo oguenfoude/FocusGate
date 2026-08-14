@@ -981,7 +981,7 @@ public class DatabaseWriteChannel
                 SimCardId = sim.Id,
                 ModemId = modemId,
                 UserId = userId > 0 ? userId : null,
-                Balance = amount,
+                Balance = sim.Balance,
                 PreviousBalance = sim.Balance - amount,
                 Source = BalanceSource.MeetMob,
                 RecordedAt = recordedAt
