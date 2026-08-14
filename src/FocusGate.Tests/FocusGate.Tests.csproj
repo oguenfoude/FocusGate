@@ -24,7 +24,6 @@
   <ItemGroup>
     <ProjectReference Include="..\FocusGate.Infrastructure\FocusGate.Infrastructure.csproj" />
     <ProjectReference Include="..\FocusGate.Core\FocusGate.Core.csproj" />
-    <ProjectReference Include="..\FocusGate.AT\FocusGate.AT.csproj" />
   </ItemGroup>
 
 </Project>

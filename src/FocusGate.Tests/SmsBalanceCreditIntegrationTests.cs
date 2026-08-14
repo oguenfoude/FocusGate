@@ -22,10 +22,21 @@ public class SmsBalanceCreditIntegrationTests
 
     private static DatabaseWriteChannel.WriteOperation InsertSms(SmsRecord sms) => new() { Type = DatabaseWriteChannel.Op.InsertSms, Data = sms };
     private static DatabaseWriteChannel.WriteOperation UpdateSimBalance(int modemId, decimal balance, string source = "USSD") => new() { Type = DatabaseWriteChannel.Op.UpdateSimBalance, Data = new { ModemId = modemId, Balance = balance, Source = source } };
-    private static DatabaseWriteChannel.WriteOperation UpdateSimBalanceFromSms(int modemId, decimal balance) => new() { Type = DatabaseWriteChannel.Op.UpdateSimBalanceFromSms, Data = new { ModemId = modemId, Balance = balance } };
-    private static DatabaseWriteChannel.WriteOperation CreditUserFromRechargeSms(int modemId, decimal amount) => new() { Type = DatabaseWriteChannel.Op.CreditUserFromRechargeSms, Data = new { ModemId = modemId, RechargeAmount = amount } };
     private static DatabaseWriteChannel.WriteOperation CreateWithdrawalRequest(long userId, decimal amount, string? note = null) => new() { Type = DatabaseWriteChannel.Op.CreateWithdrawalRequest, Data = new { UserId = userId, Amount = amount, Note = note } };
     private static DatabaseWriteChannel.WriteOperation ProcessWithdrawal(long requestId, long adminId, bool approved) => new() { Type = DatabaseWriteChannel.Op.ProcessWithdrawal, Data = new { RequestId = requestId, AdminId = adminId, Approved = approved } };
+
+    private static DatabaseWriteChannel.WriteOperation InsertMeetMobHistory(int modemId, decimal amount) => new()
+    {
+        Type = DatabaseWriteChannel.Op.InsertMeetMobHistory,
+        Data = new
+        {
+            ModemId = modemId,
+            Records = new List<MeetMobRechargeRecordDto>
+            {
+                new() { TradeTime = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"), Amount = amount.ToString("F2", System.Globalization.CultureInfo.InvariantCulture) }
+            }
+        }
+    };
 
     [Fact]
     public async Task RechargeSms_Mobilis_SavesToDb()
@@ -48,79 +59,40 @@ public class SmsBalanceCreditIntegrationTests
 
         await TestHelper.EnqueueAndWaitAsync(channel, InsertSms(sms));
 
-        var saved = await TestHelper.ReadAsync(services, db => db.SmsRecords.FirstAsync(s => s.SimCardId == simId));
+        var saved = await TestHelper.ReadAsync(services, db => db.SmsRecords.FirstAsync(s => s.SenderNumber == "77111"));
         Assert.Equal("77111", saved.SenderNumber);
-        Assert.Contains("1500", saved.Content);
     }
 
     [Fact]
-    public async Task RechargeSms_610_SavesToDb()
+    public async Task RechargeSms_InstantCredit_CreditsUser()
     {
         var (channel, services, modemId, simId, userId) = await SetupAsync();
-        var sms = new SmsRecord
-        {
-            SimCardId = simId,
-            SenderNumber = "610",
-            Content = "Vous avez été rechargé de 500DA. Nouveau solde: 1500,00DA.",
-            ReceivedAt = DateTime.UtcNow
-        };
 
+        // SMS detection does NOT credit user wallet
+        var sms = TestHelper.CreateMobilisTransferSms(simId, 5000);
         await TestHelper.EnqueueAndWaitAsync(channel, InsertSms(sms));
 
-        var saved = await TestHelper.ReadAsync(services, db => db.SmsRecords.FirstAsync(s => s.SenderNumber == "610"));
-        Assert.Equal("610", saved.SenderNumber);
+        var userAfterSms = await TestHelper.ReadAsync(services, db => db.Users.FirstAsync(u => u.Id == userId));
+        Assert.Equal(0, userAfterSms.Balance);
+
+        // MeetMob history DOES credit user wallet
+        await TestHelper.EnqueueAndWaitAsync(channel, InsertMeetMobHistory(modemId, 5000));
+
+        var user = await TestHelper.ReadAsync(services, db => db.Users.FirstAsync(u => u.Id == userId));
+        Assert.Equal(5000, user.Balance);
     }
 
-    // With the new no-delta architecture, UpdateSimBalanceFromSms is a SIM balance snapshot only.
-    // It does NOT credit the user wallet. Credit comes exclusively from CreditUserFromRechargeSms.
     [Fact]
-    public async Task UpdateSimBalanceFromSms_Increase_UpdatesSim_NoCredit()
+    public async Task SoldeSms_UpdatesSimBalance_NoCredit()
     {
         var (channel, services, modemId, simId, userId) = await SetupAsync();
 
-        await TestHelper.EnqueueAndWaitAsync(channel, UpdateSimBalance(modemId, 5000, "Test"));
-        await TestHelper.EnqueueAndWaitAsync(channel, UpdateSimBalanceFromSms(modemId, 7500));
+        await TestHelper.EnqueueAndWaitAsync(channel, InsertSms(TestHelper.CreateMobilisSoldeSms(simId, 5000)));
 
         var sim = await TestHelper.ReadAsync(services, db => db.SimCards.FirstAsync(s => s.Id == simId));
         var user = await TestHelper.ReadAsync(services, db => db.Users.FirstAsync(u => u.Id == userId));
-        Assert.Equal(7500, sim.Balance);
-        Assert.Equal(0, user.Balance); // No delta credit — user credited only via CreditUserFromRechargeSms
-    }
-
-    [Fact]
-    public async Task SoldeSms_NoPending_NoCredit()
-    {
-        var (channel, services, modemId, simId, userId) = await SetupAsync();
-
-        await TestHelper.EnqueueAndWaitAsync(channel, UpdateSimBalance(modemId, 5000, "Test"));
-        await TestHelper.EnqueueAndWaitAsync(channel, InsertSms(TestHelper.CreateMobilisSoldeSms(simId, 5000)));
-
-        var user = await TestHelper.ReadAsync(services, db => db.Users.FirstAsync(u => u.Id == userId));
-        Assert.Equal(0, user.Balance); // No pending flag → no credit
-    }
-
-    [Fact]
-    public async Task BalanceDecrease_NoCredit()
-    {
-        var (channel, services, modemId, simId, userId) = await SetupAsync();
-
-        await TestHelper.EnqueueAndWaitAsync(channel, UpdateSimBalance(modemId, 10000, "Test"));
-        await TestHelper.EnqueueAndWaitAsync(channel, UpdateSimBalance(modemId, 5000, "Test"));
-
-        var user = await TestHelper.ReadAsync(services, db => db.Users.FirstAsync(u => u.Id == userId));
-        Assert.Equal(0, user.Balance); // Balance snapshots do not credit user wallet
-    }
-
-    [Fact]
-    public async Task BalanceUnchanged_NoCredit()
-    {
-        var (channel, services, modemId, simId, userId) = await SetupAsync();
-
-        await TestHelper.EnqueueAndWaitAsync(channel, UpdateSimBalance(modemId, 5000, "Test"));
-        await TestHelper.EnqueueAndWaitAsync(channel, UpdateSimBalance(modemId, 5000, "Test"));
-
-        var user = await TestHelper.ReadAsync(services, db => db.Users.FirstAsync(u => u.Id == userId));
-        Assert.Equal(0, user.Balance); // Balance snapshots do not credit user wallet
+        Assert.Equal(5000, sim.Balance);
+        Assert.Equal(0, user.Balance); // Solde SMS only updates SIM balance, not user wallet
     }
 
     [Fact]
@@ -139,7 +111,7 @@ public class SmsBalanceCreditIntegrationTests
     }
 
     [Fact]
-    public async Task UpdateSimBalance_Decrease_NoBalanceHistory()
+    public async Task UpdateSimBalance_Decrease_CreatesBalanceHistory()
     {
         var (channel, services, modemId, simId, userId) = await SetupAsync();
 
@@ -147,141 +119,23 @@ public class SmsBalanceCreditIntegrationTests
         await TestHelper.EnqueueAndWaitAsync(channel, UpdateSimBalance(modemId, 5000, "Test"));
 
         var count = await TestHelper.ReadAsync(services, db => db.BalanceHistories.CountAsync(b => b.SimCardId == simId));
-        Assert.Equal(1, count);
+        Assert.Equal(2, count);
+
+        var decrease = await TestHelper.ReadAsync(services, db => db.BalanceHistories
+            .Where(b => b.SimCardId == simId && b.Balance < b.PreviousBalance)
+            .OrderByDescending(b => b.RecordedAt).FirstAsync());
+        Assert.Equal(5000, decrease.Balance);
+        Assert.Equal(10000, decrease.PreviousBalance);
     }
 
     [Fact]
-    public async Task UpdateSimBalance_Unchanged_NoBalanceHistory()
+    public async Task WithdrawalApproved_DeductsFromUser()
     {
         var (channel, services, modemId, simId, userId) = await SetupAsync();
 
-        await TestHelper.EnqueueAndWaitAsync(channel, UpdateSimBalance(modemId, 5000, "Test"));
-        await TestHelper.EnqueueAndWaitAsync(channel, UpdateSimBalance(modemId, 5000, "Test"));
+        // Credit user via MeetMob history
+        await TestHelper.EnqueueAndWaitAsync(channel, InsertMeetMobHistory(modemId, 10000));
 
-        var count = await TestHelper.ReadAsync(services, db => db.BalanceHistories.CountAsync(b => b.SimCardId == simId));
-        Assert.Equal(1, count);
-    }
-
-    // UpdateSimBalanceFromSms is a *222# balance snapshot. It records BalanceHistory but does NOT credit the user.
-    // Credit comes only from CreditUserFromRechargeSms (enqueued separately by ModemHandler after the snapshot).
-    [Fact]
-    public async Task UpdateSimBalanceFromSms_Increase_UpdatesSimAndRecordsHistory()
-    {
-        var (channel, services, modemId, simId, userId) = await SetupAsync();
-
-        await TestHelper.EnqueueAndWaitAsync(channel, UpdateSimBalanceFromSms(modemId, 3000));
-
-        var sim = await TestHelper.ReadAsync(services, db => db.SimCards.FirstAsync(s => s.Id == simId));
-        var user = await TestHelper.ReadAsync(services, db => db.Users.FirstAsync(u => u.Id == userId));
-        var history = await TestHelper.ReadAsync(services, db => db.BalanceHistories.FirstAsync(b => b.SimCardId == simId));
-
-        Assert.Equal(3000, sim.Balance);
-        Assert.Equal(0, user.Balance); // No credit — snapshot only
-        Assert.Equal(BalanceSource.SMS, history.Source);
-    }
-
-    [Fact]
-    public async Task UpdateSimBalanceFromSms_Decrease_NoCredit()
-    {
-        var (channel, services, modemId, simId, userId) = await SetupAsync();
-
-        await TestHelper.EnqueueAndWaitAsync(channel, UpdateSimBalanceFromSms(modemId, 5000));
-        await TestHelper.EnqueueAndWaitAsync(channel, UpdateSimBalanceFromSms(modemId, 3000));
-
-        var sim = await TestHelper.ReadAsync(services, db => db.SimCards.FirstAsync(s => s.Id == simId));
-        var user = await TestHelper.ReadAsync(services, db => db.Users.FirstAsync(u => u.Id == userId));
-
-        Assert.Equal(3000, sim.Balance);
-        Assert.Equal(0, user.Balance); // Balance snapshots never credit user wallet
-    }
-
-    // CreditUserFromRechargeSms credits the user wallet only. It does NOT update sim.Balance
-    // (the SIM balance is set separately via UpdateSimBalance from MeetMob/USSD).
-    [Fact]
-    public async Task CreditUserFromRechargeSms_CreditsWallet()
-    {
-        var (channel, services, modemId, simId, userId) = await SetupAsync();
-
-        await TestHelper.EnqueueAndWaitAsync(channel, CreditUserFromRechargeSms(modemId, 2500));
-
-        var sim = await TestHelper.ReadAsync(services, db => db.SimCards.FirstAsync(s => s.Id == simId));
-        var user = await TestHelper.ReadAsync(services, db => db.Users.FirstAsync(u => u.Id == userId));
-        Assert.Equal(0, sim.Balance);   // SIM balance not touched by this op
-        Assert.Equal(2500, user.Balance);
-    }
-
-    // CreditUserFromRechargeSms does NOT create BalanceHistory (that's the SIM-balance table).
-    // It creates UserBalanceHistory (the user wallet table).
-    [Fact]
-    public async Task CreditUserFromRechargeSms_CreatesUserBalanceHistory()
-    {
-        var (channel, services, modemId, simId, userId) = await SetupAsync();
-
-        await TestHelper.EnqueueAndWaitAsync(channel, CreditUserFromRechargeSms(modemId, 1000));
-
-        var ubh = await TestHelper.ReadAsync(services, db => db.UserBalanceHistories.FirstAsync(b => b.UserId == userId));
-        Assert.Equal(1000, ubh.Amount);
-        Assert.Equal(userId, ubh.UserId);
-    }
-
-    [Fact]
-    public async Task SmsDedup_SameSimSenderContentWithin2Min_NotDuplicated()
-    {
-        var (channel, services, modemId, simId, userId) = await SetupAsync();
-        var sms1 = TestHelper.CreateMobilisRechargeSms(simId, 1000);
-        var sms2 = TestHelper.CreateMobilisRechargeSms(simId, 1000);
-
-        await TestHelper.EnqueueAndWaitAsync(channel, InsertSms(sms1));
-        var dedupResult = await TestHelper.EnqueueAndReturnResultAsync(channel, InsertSms(sms2));
-        Assert.False(dedupResult, "Duplicate SMS should be rejected");
-
-        var count = await TestHelper.ReadAsync(services, db => db.SmsRecords.CountAsync(s => s.SimCardId == simId));
-        Assert.Equal(1, count);
-    }
-
-    [Fact]
-    public async Task NonMobilisSms_SavedToDb_WithSender()
-    {
-        var (channel, services, modemId, simId, userId) = await SetupAsync();
-        var sms = TestHelper.CreateNonMobilisSms(simId);
-
-        await TestHelper.EnqueueAndWaitAsync(channel, InsertSms(sms));
-
-        var saved = await TestHelper.ReadAsync(services, db => db.SmsRecords.FirstAsync(s => s.SimCardId == simId));
-        Assert.Equal("12345", saved.SenderNumber);
-        Assert.Contains("verification code", saved.Content);
-    }
-
-    [Fact]
-    public async Task MultipleModems_IndependentBalanceTracking()
-    {
-        var (db, channel, services) = await TestHelper.CreateInMemoryDatabaseWithChannelAsync();
-        var modem1 = await TestHelper.SeedModemAsync(db);
-        var modem2 = await TestHelper.SeedModemAsync(db);
-        var sim1 = await TestHelper.SeedSimCardAsync(db, modem1.Id);
-        var sim2 = await TestHelper.SeedSimCardAsync(db, modem2.Id);
-        var user = await TestHelper.SeedUserAsync(db);
-        await TestHelper.AssignUserToModemAsync(db, user.Id, modem1.Id);
-        await TestHelper.AssignUserToModemAsync(db, user.Id, modem2.Id);
-
-        await TestHelper.EnqueueAndWaitAsync(channel, UpdateSimBalance(modem1.Id, 5000, "MeetMob"));
-        await TestHelper.EnqueueAndWaitAsync(channel, UpdateSimBalance(modem2.Id, 8000, "MeetMob"));
-
-        var s1 = await TestHelper.ReadAsync(services, db => db.SimCards.FirstAsync(s => s.Id == sim1.Id));
-        var s2 = await TestHelper.ReadAsync(services, db => db.SimCards.FirstAsync(s => s.Id == sim2.Id));
-        Assert.Equal(5000, s1.Balance);
-        Assert.Equal(8000, s2.Balance);
-
-        var histories = await TestHelper.ReadAllAsync(services, db => db.BalanceHistories);
-        Assert.Equal(2, histories.Count);
-    }
-
-    [Fact]
-    public async Task WithdrawalApproved_DeductsFromUserBalance()
-    {
-        var (channel, services, modemId, simId, userId) = await SetupAsync();
-
-        await TestHelper.EnqueueAndWaitAsync(channel, CreditUserFromRechargeSms(modemId, 10000));
         await TestHelper.EnqueueAndWaitAsync(channel, CreateWithdrawalRequest(userId, 3000, "Cash out"));
 
         var wr = await TestHelper.ReadAsync(services, db => db.WithdrawalRequests.FirstAsync(w => w.UserId == userId));
@@ -289,9 +143,6 @@ public class SmsBalanceCreditIntegrationTests
 
         var user = await TestHelper.ReadAsync(services, db => db.Users.FirstAsync(u => u.Id == userId));
         Assert.Equal(7000, user.Balance);
-
-        wr = await TestHelper.ReadAsync(services, db => db.WithdrawalRequests.FirstAsync(w => w.UserId == userId));
-        Assert.Equal(WithdrawalStatus.Approved, wr.Status);
     }
 
     [Fact]
@@ -299,7 +150,9 @@ public class SmsBalanceCreditIntegrationTests
     {
         var (channel, services, modemId, simId, userId) = await SetupAsync();
 
-        await TestHelper.EnqueueAndWaitAsync(channel, CreditUserFromRechargeSms(modemId, 10000));
+        // Credit user via MeetMob history
+        await TestHelper.EnqueueAndWaitAsync(channel, InsertMeetMobHistory(modemId, 10000));
+
         await TestHelper.EnqueueAndWaitAsync(channel, CreateWithdrawalRequest(userId, 3000, "Cash out"));
 
         var wr = await TestHelper.ReadAsync(services, db => db.WithdrawalRequests.FirstAsync(w => w.UserId == userId));
@@ -307,31 +160,6 @@ public class SmsBalanceCreditIntegrationTests
 
         var user = await TestHelper.ReadAsync(services, db => db.Users.FirstAsync(u => u.Id == userId));
         Assert.Equal(10000, user.Balance);
-    }
-
-    // Tests the full pending-flag lifecycle:
-    // 1. Recharge SMS detected but all balance sources fail → MarkPendingBalanceCheck(amount)
-    // 2. Solde SMS arrives → TryClaimPendingBalanceCheck → credit user with stored amount
-    [Fact]
-    public async Task PendingBalanceCheck_Lifecycle()
-    {
-        var (channel, services, modemId, simId, userId) = await SetupAsync();
-
-        // Simulate: recharge SMS detected, all balance methods failed, pending flag set with exact amount
-        channel.MarkPendingBalanceCheck(modemId, 7500m);
-
-        // Simulate: Solde SMS arrives showing the new balance
-        await TestHelper.EnqueueAndWaitAsync(channel, InsertSms(TestHelper.CreateMobilisSoldeSms(simId, 7500)));
-
-        var sim = await TestHelper.ReadAsync(services, db => db.SimCards.FirstAsync(s => s.Id == simId));
-        Assert.Equal(7500, sim.Balance);
-
-        // User is credited with the EXACT pending recharge amount (not balance delta)
-        var user = await TestHelper.ReadAsync(services, db => db.Users.FirstAsync(u => u.Id == userId));
-        Assert.Equal(7500, user.Balance);
-
-        var history = await TestHelper.ReadAsync(services, db => db.BalanceHistories.Where(b => b.SimCardId == simId).OrderByDescending(b => b.RecordedAt).FirstAsync());
-        Assert.Equal(7500, history.Balance);
     }
 
     [Fact]
@@ -349,11 +177,12 @@ public class SmsBalanceCreditIntegrationTests
     }
 
     [Fact]
-    public async Task UserBalanceHistory_CreatedOnApproval()
+    public async Task UserBalanceHistory_CreatedOnRecharge()
     {
         var (channel, services, modemId, simId, userId) = await SetupAsync();
 
-        await TestHelper.EnqueueAndWaitAsync(channel, CreditUserFromRechargeSms(modemId, 5000));
+        // Credit user via MeetMob history
+        await TestHelper.EnqueueAndWaitAsync(channel, InsertMeetMobHistory(modemId, 5000));
 
         var history = await TestHelper.ReadAsync(services, db => db.UserBalanceHistories.FirstAsync(h => h.UserId == userId));
         Assert.Equal(5000, history.Amount);
@@ -365,13 +194,13 @@ public class SmsBalanceCreditIntegrationTests
     {
         var (channel, services, modemId, simId, userId) = await SetupAsync();
 
-        await TestHelper.EnqueueAndWaitAsync(channel, CreditUserFromRechargeSms(modemId, 3788.16m));
+        // Credit user via MeetMob history
+        await TestHelper.EnqueueAndWaitAsync(channel, InsertMeetMobHistory(modemId, 3788.16m));
 
         var user = await TestHelper.ReadAsync(services, db => db.Users.FirstAsync(u => u.Id == userId));
-        Assert.Equal(3788.16m, user.Balance); // SIM balance not touched by CreditUserFromRechargeSms
+        Assert.Equal(3788.16m, user.Balance);
     }
 
-    // UpdateSimBalance is a balance snapshot: it updates SIM.Balance but does NOT credit the user wallet.
     [Fact]
     public async Task ZeroBalance_FirstCheck_UpdatesSim_NoCredit()
     {

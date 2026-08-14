@@ -27,8 +27,6 @@ TaskScheduler.UnobservedTaskException += (_, e) =>
     e.SetObserved();
 };
 
-System.Diagnostics.Process? dashboardProcess = null;
-
 using var appCts = new CancellationTokenSource();
 CancellationTokenSource? linkedCts = null;
 
@@ -83,13 +81,17 @@ try
                 })
                 .UseSerilog((ctx, lc) => lc
                     .MinimumLevel.Information()
-                    .MinimumLevel.Override("Microsoft.EntityFrameworkCore.Database.Command", Serilog.Events.LogEventLevel.Warning)
-                    .MinimumLevel.Override("Microsoft.EntityFrameworkCore", Serilog.Events.LogEventLevel.Warning)
-                    .MinimumLevel.Override("MongoDB", Serilog.Events.LogEventLevel.Warning)
-                    .WriteTo.Console()
-                    .WriteTo.File(Path.Combine(PathService.LogsDirectory, "focusgate-hilink-.log"),
+                    .MinimumLevel.Override("Microsoft.EntityFrameworkCore.Database.Command", LogEventLevel.Warning)
+                    .MinimumLevel.Override("Microsoft.EntityFrameworkCore", LogEventLevel.Warning)
+                    .MinimumLevel.Override("MongoDB", LogEventLevel.Warning)
+                    .WriteTo.Console(
+                        restrictedToMinimumLevel: LogEventLevel.Error,
+                        outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
+                    .WriteTo.File(
+                        Path.Combine(PathService.LogsDirectory, "focusgate-hilink-.log"),
                         rollingInterval: RollingInterval.Day,
-                        retainedFileCountLimit: 30))
+                        retainedFileCountLimit: 30,
+                        restrictedToMinimumLevel: LogEventLevel.Verbose))
                 .ConfigureServices((ctx, services) =>
                 {
                     services.AddFocusGate(ctx.Configuration, dataDir);
@@ -130,10 +132,6 @@ try
             Console.WriteLine("  Commands: help, status, modems, exit");
             Console.WriteLine();
 
-            dashboardProcess = StartDashboard();
-            if (dashboardProcess != null)
-                Console.WriteLine("  Dashboard: http://localhost:5080");
-
             logger.LogInformation("FocusGate HiLink started | DB: {DbPath} | Machine: {Machine}",
                 PathService.DatabasePath, context.MachineId);
 
@@ -173,11 +171,6 @@ try
 }
 finally
 {
-    if (dashboardProcess != null && !dashboardProcess.HasExited)
-    {
-        try { dashboardProcess.Kill(); dashboardProcess.WaitForExit(3000); } catch { }
-        dashboardProcess.Dispose();
-    }
     mutex.ReleaseMutex();
     mutex.Dispose();
 }
@@ -198,25 +191,3 @@ static void PersistMachineId(string configPath, string machineId)
     catch { }
 }
 
-
-static System.Diagnostics.Process? StartDashboard()
-{
-    try
-    {
-        var exeDir = AppContext.BaseDirectory;
-        var dashboardExe = Path.Combine(exeDir, "FocusGate.Dashboard.exe");
-        if (!File.Exists(dashboardExe)) return null;
-
-        var existing = System.Diagnostics.Process.GetProcessesByName("FocusGate.Dashboard");
-        if (existing.Length > 0) return null;
-
-        return System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-        {
-            FileName = dashboardExe,
-            WorkingDirectory = exeDir,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        });
-    }
-    catch { return null; }
-}

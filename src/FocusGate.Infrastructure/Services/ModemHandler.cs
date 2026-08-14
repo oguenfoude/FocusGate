@@ -25,7 +25,9 @@ public class ModemHandler : IDisposable
     private Task? _watchdogLoop;
     private Task? _pollLoop;
     private Task? _networkRetryLoop;
+    private Task? _meetMobCheckLoop;
     private Task? _postStartupBalanceCheckTask;
+    private Task? _cleanupLoop;
     private readonly SemaphoreSlim _atLock = new(1, 1);
     private DateTime? _ussdUnavailableSince;
     private int _hiLinkFailureCount;
@@ -37,32 +39,75 @@ public class ModemHandler : IDisposable
     private DateTime? _smsCooldownUntil;
     private MeetMobToken? _meetMobToken;
     private DateTime _lastMeetMobRefreshUtc = DateTime.MinValue;
-    private DateTime _meetMobNextRetryUtc = DateTime.MinValue;
-    private int _meetMobConsecutiveFailures;
+    private static readonly TimeSpan MeetMobTokenProactiveRefreshWindow = TimeSpan.FromMinutes(5);
+    private string _meetMobPhone = string.Empty;
+    private decimal? _lastBalance;
+    private volatile bool _postStartupDone;
 
-    private TimeSpan GetMeetMobBackoffDelay()
+    private bool IsMeetMobTokenExpiringSoon()
     {
-        var initialSeconds = _config.Get<int>("meetmob.backoff.initial", 120);
-        var maxSeconds = _config.Get<int>("meetmob.backoff.max", 1800);
-        if (_meetMobConsecutiveFailures <= 1)
-            return TimeSpan.FromSeconds(initialSeconds);
-        if (_meetMobConsecutiveFailures == 2)
-            return TimeSpan.FromSeconds(300);
-        return TimeSpan.FromSeconds(maxSeconds);
+        if (_meetMobToken == null) return false;
+        var timeUntilExpiry = _meetMobToken.ExpiresAt - DateTime.UtcNow;
+        return timeUntilExpiry <= MeetMobTokenProactiveRefreshWindow;
     }
 
-    private void RecordMeetMobFailure()
+    private bool IsMeetMobTokenExpired()
     {
-        _meetMobConsecutiveFailures++;
-        var delay = GetMeetMobBackoffDelay();
-        _meetMobNextRetryUtc = DateTime.UtcNow + delay;
-        _log.LogWarning("Modem {Id}: MeetMob failure #{Count} — next retry in {Minutes:F1}min", _modemId, _meetMobConsecutiveFailures, delay.TotalMinutes);
+        if (_meetMobToken == null) return false;
+        return _meetMobToken.ExpiresAt <= DateTime.UtcNow;
     }
 
-    private void RecordMeetMobSuccess()
+    private async Task<bool> TryProactiveMeetMobRefreshAsync(CancellationToken ct)
     {
-        _meetMobConsecutiveFailures = 0;
-        _meetMobNextRetryUtc = DateTime.MinValue;
+        if (_meetMob == null) return false;
+        if (_meetMobToken == null) return false;
+
+        var phoneRaw = await _db.GetPhoneNumberAsync(_imsi);
+        if (string.IsNullOrEmpty(phoneRaw))
+        {
+            _log.LogDebug("Modem {Id}: Proactive MeetMob refresh skipped — no phone number", _modemId);
+            return false;
+        }
+
+        var phone = long.TryParse(phoneRaw, out var phoneLong)
+            ? MeetMobService.FormatPhone(phoneLong) ?? phoneRaw
+            : phoneRaw;
+
+        if (!_meetMob.CanRetry(phone))
+        {
+            _log.LogDebug("Modem {Id}: Proactive MeetMob refresh skipped — in cooldown", _modemId);
+            return false;
+        }
+
+        _log.LogInformation("Modem {Id}: Proactively refreshing MeetMob token (expires in {Minutes:F1}min)",
+            _modemId, (_meetMobToken.ExpiresAt - DateTime.UtcNow).TotalMinutes);
+
+        try
+        {
+            await _atLock.WaitAsync(ct);
+            try
+            {
+                var result = await _meetMob.LoginAsync(_imsi, phone, _at, ct);
+                if (result.Success && result.Token != null)
+                {
+                    _meetMobToken = result.Token;
+                    _lastMeetMobRefreshUtc = DateTime.UtcNow;
+                    _log.LogInformation("Modem {Id}: MeetMob proactive refresh success — new token expires at {Expiry}",
+                        _modemId, result.Token.ExpiresAt);
+                    return true;
+                }
+                _log.LogWarning("Modem {Id}: MeetMob proactive refresh failed — {Error}", _modemId, result.Error);
+                return false;
+            }
+            finally { SafeReleaseAtLock(); }
+        }
+        catch (OperationCanceledException) { return false; }
+        catch (ObjectDisposedException) { return false; }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Modem {Id}: MeetMob proactive refresh error", _modemId);
+            return false;
+        }
     }
 
     private readonly IUssdExecutionEngine _ussdEngine;
@@ -151,8 +196,8 @@ public class ModemHandler : IDisposable
                 await Task.Delay(5000, ct);
             }
 
-            _log.LogDebug("Modem {Id}: Waiting 5s for network...", _modemId);
-            await Task.Delay(5000, ct);
+            _log.LogDebug("Modem {Id}: Waiting 2s for network...", _modemId);
+            await Task.Delay(2000, ct);
 
             if (!_isHiLink)
             {
@@ -257,7 +302,7 @@ public class ModemHandler : IDisposable
             _watchdogLoop = WatchdogLoopAsync(
                 TimeSpan.FromSeconds(_config.Get<int>("modem.watchdog.interval", 30)), loopToken);
             _pollLoop = PollSmsLoopAsync(
-                TimeSpan.FromSeconds(_config.Get<int>("modem.sms.poll.interval", 30)), loopToken);
+                TimeSpan.FromSeconds(_config.Get<int>("modem.sms.poll.interval", 5)), loopToken);
 
             if (status == ModemStatus.Online)
             {
@@ -271,11 +316,11 @@ public class ModemHandler : IDisposable
                             await _meetMob.RefreshLock.WaitAsync(loopToken);
                             try
                             {
-                                var meetMobOk = await TryMeetMobLoginAndBalanceAsync(loopToken);
-                                if (!meetMobOk)
+                                // Login only — balance check is handled by the check loop
+                                var loginOk = await TryMeetMobLoginAsync(loopToken);
+                                if (!loginOk)
                                 {
-                                    RecordMeetMobFailure();
-                                    _log.LogInformation("Modem {Id}: MeetMob failed at startup — will retry with backoff, using USSD for now", _modemId);
+                                    _log.LogInformation("Modem {Id}: MeetMob login failed at startup — check loop will retry, using USSD for now", _modemId);
                                     if (startupRechargeContent != null)
                                         await RunBalanceCheckFromSmsAsync(startupRechargeContent, loopToken);
                                     else
@@ -286,11 +331,14 @@ public class ModemHandler : IDisposable
                         }
                     }
                     catch (OperationCanceledException) { }
-                    catch (Exception ex) { _log.LogWarning(ex, "Modem {Id}: Post-startup balance check failed", _modemId); }
+                    catch (Exception ex) { _log.LogWarning(ex, "Modem {Id}: Post-startup check failed", _modemId); }
+                    finally { _postStartupDone = true; }
                 }, loopToken);
             }
 
             _networkRetryLoop = NetworkRetryLoopAsync(loopToken);
+            _meetMobCheckLoop = MeetMobCheckLoopAsync(loopToken);
+            _cleanupLoop = CleanupLoopAsync(loopToken);
 
             _log.LogInformation("Modem {Id}: {Status} on {Port}", _modemId, status, _comPort);
             return true;
@@ -318,27 +366,6 @@ public class ModemHandler : IDisposable
             catch (OperationCanceledException) { break; }
             catch (ObjectDisposedException) { break; }
             catch (Exception ex) { _log.LogError(ex, "Modem {Id}: Watchdog loop error", _modemId); }
-
-            if (_meetMob != null && !_disposed && _meetMobToken == null)
-            {
-                if (_meetMobNextRetryUtc != DateTime.MinValue && DateTime.UtcNow >= _meetMobNextRetryUtc)
-                {
-                    _log.LogInformation("Modem {Id}: MeetMob retry after backoff ({Count} consecutive failures)", _modemId, _meetMobConsecutiveFailures);
-                    _meetMobNextRetryUtc = DateTime.MinValue;
-                    try
-                    {
-                        await _meetMob.RefreshLock.WaitAsync(ct);
-                        try
-                        {
-                            var ok = await TryMeetMobLoginAndBalanceAsync(ct);
-                            if (!ok) RecordMeetMobFailure();
-                        }
-                        finally { _meetMob.RefreshLock.Release(); }
-                    }
-                    catch (OperationCanceledException) { break; }
-                    catch (Exception ex) { _log.LogWarning("Modem {Id}: MeetMob retry failed: {Error}", _modemId, ex.Message); RecordMeetMobFailure(); }
-                }
-            }
         }
     }
 
@@ -364,63 +391,245 @@ public class ModemHandler : IDisposable
             catch (ObjectDisposedException) { break; }
             catch (Exception ex) { _log.LogError(ex, "Modem {Id}: Poll loop error", _modemId); }
 
-            if (rechargeSmsContent != null && !_disposed)
+            // Recharge SMS detected — trigger immediate MeetMob balance + history check
+            if (rechargeSmsContent != null && !_disposed && _meetMob != null && _postStartupDone)
             {
+                _log.LogInformation("Modem {Id}: Recharge SMS detected — triggering immediate MeetMob check", _modemId);
                 try
                 {
-                    await _atLock.WaitAsync(ct);
-                    try { await RunBalanceCheckFromSmsAsync(rechargeSmsContent, ct); }
-                    finally { SafeReleaseAtLock(); }
+                    if (_meetMobToken == null || IsMeetMobTokenExpired())
+                    {
+                        var loginOk = await TryMeetMobLoginAsync(ct);
+                        if (!loginOk)
+                            _log.LogWarning("Modem {Id}: MeetMob login failed for SMS-triggered check — regular cycle will retry", _modemId);
+                    }
+                    await CheckBalanceAndHistoryAsync(ct, includeHistory: true);
                 }
-                catch (OperationCanceledException) { break; }
-                catch (ObjectDisposedException) { break; }
-                catch (Exception ex) { _log.LogError(ex, "Modem {Id}: SMS-triggered balance check error", _modemId); }
+                catch (OperationCanceledException) { }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex, "Modem {Id}: SMS-triggered MeetMob check failed", _modemId);
+                }
             }
+        }
+    }
+
+    private async Task MeetMobCheckLoopAsync(CancellationToken ct)
+    {
+        var checkInterval = _config.Get<int>("meetmob.check.interval", 60);
+        _log.LogDebug("Modem {Id}: MeetMob check loop started (interval {Interval}s)", _modemId, checkInterval);
+
+        // Per-modem stagger: add random jitter (0-10s) to avoid all modems hitting server simultaneously
+        var jitter = Random.Shared.Next(0, 10);
+        _log.LogDebug("Modem {Id}: Staggering MeetMob check loop by {Jitter}s", _modemId, jitter);
+        try { await Task.Delay(TimeSpan.FromSeconds(jitter), ct); }
+        catch (OperationCanceledException) { return; }
+
+        while (!ct.IsCancellationRequested)
+        {
+            try { await Task.Delay(TimeSpan.FromSeconds(checkInterval), ct); }
+            catch (OperationCanceledException) { break; }
+
+            if (_disposed || _meetMob == null) break;
+
+            // Skip during post-startup phase to avoid duplicate balance calls
+            if (!_postStartupDone) continue;
+
+            try
+            {
+                if (!string.IsNullOrEmpty(_meetMobPhone) && !_meetMob.CanRetry(_meetMobPhone))
+                {
+                    _log.LogDebug("Modem {Id} [{Phone}]: MeetMob in cooldown, skipping", _modemId, _meetMobPhone);
+                    continue;
+                }
+
+                if (_meetMob.IsWafBlocked(_meetMobPhone))
+                {
+                    var remaining = _meetMob.GetWafCooldownRemaining(_meetMobPhone);
+                    _log.LogWarning("Modem {Id} [{Phone}]: MeetMob WAF blocking — waiting {Remaining}s for cooldown",
+                        _modemId, _meetMobPhone, (int)remaining.TotalSeconds);
+                    try { await Task.Delay(remaining, ct); }
+                    catch (OperationCanceledException) { break; }
+                    continue;
+                }
+
+                if (_meetMobToken == null || IsMeetMobTokenExpired())
+                {
+                    _log.LogInformation("Modem {Id} [{Phone}]: MeetMob token expired — logging in", _modemId, _meetMobPhone);
+                    var loginOk = await TryMeetMobLoginAsync(ct);
+                    if (!loginOk)
+                    {
+                        _meetMob.SetCooldown(_meetMobPhone, 5);
+                        continue;
+                    }
+                }
+                else if (IsMeetMobTokenExpiringSoon())
+                {
+                    _log.LogDebug("Modem {Id} [{Phone}]: MeetMob token expiring soon — proactive refresh", _modemId, _meetMobPhone);
+                    await TryProactiveMeetMobRefreshAsync(ct);
+                }
+
+                // Balance + history every cycle for faster recharge detection
+                await CheckBalanceAndHistoryAsync(ct, includeHistory: true);
+            }
+            catch (OperationCanceledException) { break; }
+            catch (ObjectDisposedException) { break; }
+            catch (Exception ex) { _log.LogError(ex, "Modem {Id}: MeetMob check failed", _modemId); }
+        }
+    }
+
+    private async Task<bool> TryMeetMobLoginAsync(CancellationToken ct)
+    {
+        if (_meetMob == null) return false;
+
+        // Try cached token first
+        var phoneRaw = await _db.GetPhoneNumberAsync(_imsi);
+        if (string.IsNullOrEmpty(phoneRaw))
+        {
+            // Need to get phone via USSD first
+            try
+            {
+                await _atLock.WaitAsync(ct);
+                try
+                {
+                    var phoneViaUssd = await _at.GetPhoneNumberViaUssdAsync();
+                    if (!string.IsNullOrEmpty(phoneViaUssd))
+                    {
+                        await _db.EnqueueAsync(new()
+                        {
+                            Type = DatabaseWriteChannel.Op.UpsertSimCard,
+                            Data = new { ModemId = _modemId, PhoneNumber = phoneViaUssd }
+                        });
+                        phoneRaw = phoneViaUssd;
+                    }
+                }
+                finally { SafeReleaseAtLock(); }
+            }
+            catch (Exception ex) { _log.LogWarning(ex, "Modem {Id}: Failed to fetch phone via USSD", _modemId); }
+        }
+
+        if (string.IsNullOrEmpty(phoneRaw))
+        {
+            _log.LogDebug("Modem {Id}: MeetMob login skipped — no phone number", _modemId);
+            return false;
+        }
+
+        var phone = long.TryParse(phoneRaw, out var phoneLong)
+            ? MeetMobService.FormatPhone(phoneLong) ?? phoneRaw
+            : phoneRaw;
+
+        _meetMobPhone = phone;
+
+        // Try cached token
+        var cachedToken = await _meetMob.GetValidTokenAsync(phone);
+        if (cachedToken != null)
+        {
+            _meetMobToken = cachedToken;
+            _lastMeetMobRefreshUtc = DateTime.UtcNow;
+            _log.LogDebug("Modem {Id} [{Phone}]: MeetMob using cached token", _modemId, phone);
+            return true;
+        }
+
+        // Need fresh login
+        if (_meetMob.IsWafBlocked(phone))
+        {
+            _log.LogWarning("Modem {Id} [{Phone}]: MeetMob WAF is blocking — skipping login", _modemId, phone);
+            return false;
+        }
+
+        _log.LogInformation("Modem {Id} [{Phone}]: MeetMob logging in via OTP...", _modemId, phone);
+        MeetMobLoginResult result;
+        try
+        {
+            await _atLock.WaitAsync(ct);
+            try { result = await _meetMob.LoginAsync(_imsi, phone, _at, ct); }
+            finally { SafeReleaseAtLock(); }
+        }
+        catch (OperationCanceledException) { return false; }
+        catch (ObjectDisposedException) { return false; }
+
+        if (!result.Success)
+        {
+            _log.LogWarning("Modem {Id} [{Phone}]: MeetMob login failed — {Error}", _modemId, phone, result.Error);
+            return false;
+        }
+
+        _meetMobToken = result.Token;
+        _lastMeetMobRefreshUtc = DateTime.UtcNow;
+        _log.LogInformation("Modem {Id} [{Phone}]: MeetMob login success — accountId={AccountId}", _modemId, phone, result.Token?.AccountId ?? "?");
+        return true;
+    }
+
+    private async Task CheckBalanceAndHistoryAsync(CancellationToken ct, bool includeHistory = true)
+    {
+        if (_meetMob == null || _meetMobToken == null) return;
+
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(15));
+
+            var balance = await _meetMob.GetBalanceAsync(_meetMobToken, timeout.Token);
+            if (balance.HasValue)
+            {
+                _lastBalance = balance.Value;
+                _log.LogInformation("Modem {Id} [{Phone}]: Balance = {Balance} DZD (MeetMob)", _modemId, _meetMobPhone, balance.Value);
+                await _db.EnqueueAsync(new()
+                {
+                    Type = DatabaseWriteChannel.Op.UpdateSimBalance,
+                    Data = new { ModemId = _modemId, Balance = balance.Value, Source = BalanceSource.MeetMob }
+                });
+            }
+            else if (_meetMob.WasLastRequestNetworkError(_meetMobPhone))
+            {
+                _log.LogWarning("Modem {Id} [{Phone}]: MeetMob balance network error — short cooldown", _modemId, _meetMobPhone);
+                _meetMob.SetCooldown(_meetMobPhone, 30);
+            }
+            else if (_meetMob.IsWafBlocked(_meetMobPhone))
+            {
+                _log.LogWarning("Modem {Id} [{Phone}]: MeetMob WAF blocking balance check", _modemId, _meetMobPhone);
+            }
+            else
+            {
+                _log.LogWarning("Modem {Id} [{Phone}]: MeetMob balance null — session expired, will re-login", _modemId, _meetMobPhone);
+                await _meetMob.InvalidateTokenAsync(_meetMobToken.Phone);
+                _meetMobToken = null;
+            }
+
+            if (includeHistory)
+                await TryMeetMobHistoryAsync(ct);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            _log.LogWarning("Modem {Id}: MeetMob balance check timed out (15s) — short cooldown", _modemId);
+            _meetMob?.SetCooldown(_meetMobPhone, 30);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Modem {Id}: MeetMob balance/history check failed", _modemId);
         }
     }
 
     private async Task RunBalanceCheckFromSmsAsync(string rechargeSmsContent, CancellationToken ct)
     {
-        var smsType = DatabaseWriteChannel.ClassifySmsType("Mobilis", rechargeSmsContent);
         var rechargeAmount = DatabaseWriteChannel.ExtractRechargeAmountFromContent(rechargeSmsContent);
 
-        _log.LogInformation("Modem {Id}: Mobilis {SmsType} SMS — recharge amount from SMS: {Amount} — trying MeetMob balance first...",
-            _modemId, smsType,
-            rechargeAmount.HasValue ? $"{rechargeAmount.Value:F2} DZD" : "not found");
+        _log.LogInformation("Modem {Id}: Recharge SMS — amount {Amount} — checking MeetMob balance...",
+            _modemId, rechargeAmount.HasValue ? $"{rechargeAmount.Value:F2} DZD" : "not found");
 
-        // --- Step 1: MeetMob balance snapshot (updates SIM balance only) ---
+        // --- Step 1: MeetMob balance with existing token ---
         if (_meetMob != null && _meetMobToken != null)
         {
             var meetMobOk = await TryMeetMobBalanceAsync(ct);
             if (meetMobOk)
             {
-                _log.LogInformation("Modem {Id}: MeetMob balance snapshot saved from recharge SMS", _modemId);
-                _db.ClearPendingBalanceCheck(_modemId);
+                _log.LogDebug("Modem {Id}: MeetMob balance snapshot saved", _modemId);
                 return;
             }
         }
 
-        // --- Step 2: *222# USSD for balance snapshot ---
-        _log.LogInformation("Modem {Id}: MeetMob unavailable — falling back to *222# USSD", _modemId);
-        var balance = await _at.GetBalanceAsync();
-        if (balance.HasValue)
-        {
-            _log.LogInformation("Modem {Id}: Balance snapshot via *222#: {Balance:F2} DZD", _modemId, balance.Value);
-            try
-            {
-                await _db.EnqueueAsync(new()
-                {
-                    Type = DatabaseWriteChannel.Op.UpdateSimBalance,
-                    Data = new { ModemId = _modemId, Balance = balance.Value }
-                });
-            }
-            catch (Exception ex) { _log.LogDebug(ex, "Modem {Id}: UpdateSimBalance failed", _modemId); }
-            _db.ClearPendingBalanceCheck(_modemId);
-            return;
-        }
-
-        // --- Step 3: MeetMob fresh login + balance ---
-        _log.LogInformation("Modem {Id}: *222# returned no balance — trying MeetMob fresh login...", _modemId);
+        // --- Step 2: MeetMob fresh login + balance ---
+        _log.LogDebug("Modem {Id}: MeetMob token invalid — trying fresh login...", _modemId);
         if (_meetMob != null)
         {
             try
@@ -432,8 +641,7 @@ public class ModemHandler : IDisposable
                     var freshOk = await TryMeetMobLoginAndBalanceInnerAsync(freshPhone, acquireAtLock: false, ct);
                     if (freshOk)
                     {
-                        _log.LogInformation("Modem {Id}: MeetMob fresh login balance snapshot saved", _modemId);
-                        _db.ClearPendingBalanceCheck(_modemId);
+                        _log.LogDebug("Modem {Id}: MeetMob fresh login balance snapshot saved", _modemId);
                         return;
                     }
                 }
@@ -442,7 +650,25 @@ public class ModemHandler : IDisposable
             catch (Exception ex) { _log.LogWarning("Modem {Id}: MeetMob fresh login failed: {Error}", _modemId, ex.Message); }
         }
 
-        _db.ClearPendingBalanceCheck(_modemId);
+        // --- Step 3: USSD *222# fallback (MeetMob unavailable) ---
+        _log.LogDebug("Modem {Id}: MeetMob unavailable — falling back to *222# USSD", _modemId);
+        var balance = await _at.GetBalanceAsync();
+        if (balance.HasValue)
+        {
+            _lastBalance = balance.Value;
+            try
+            {
+                await _db.EnqueueAsync(new()
+                {
+                    Type = DatabaseWriteChannel.Op.UpdateSimBalance,
+                    Data = new { ModemId = _modemId, Balance = balance.Value }
+                });
+            }
+            catch (Exception ex) { _log.LogDebug(ex, "Modem {Id}: UpdateSimBalance failed", _modemId); }
+            return;
+        }
+
+        _log.LogWarning("Modem {Id}: All balance check methods failed — SIM balance not updated", _modemId);
     }
 
     private async Task<long> ResolveSimCardIdAsync()
@@ -493,8 +719,10 @@ public class ModemHandler : IDisposable
                     var tasks = new List<Task>();
                     if (_watchdogLoop != null) tasks.Add(_watchdogLoop);
                     if (_pollLoop != null) tasks.Add(_pollLoop);
+                    if (_meetMobCheckLoop != null) tasks.Add(_meetMobCheckLoop);
                     if (_networkRetryLoop != null) tasks.Add(_networkRetryLoop);
                     if (_postStartupBalanceCheckTask != null) tasks.Add(_postStartupBalanceCheckTask);
+                    if (_cleanupLoop != null) tasks.Add(_cleanupLoop);
                     if (tasks.Count > 0)
                     {
                         try { await Task.WhenAll(tasks); }
@@ -679,7 +907,9 @@ public class ModemHandler : IDisposable
                     if (rechargeSmsContent == null && IsMobilisBalanceTrigger(msg))
                     {
                         rechargeSmsContent = msg.Content;
-                        _log.LogInformation("Modem {Id}: Mobilis {SmsType} trigger detected — will run *222# after poll", _modemId, smsType);
+                        var amt = DatabaseWriteChannel.ExtractRechargeAmountFromContent(msg.Content ?? "");
+                        _log.LogInformation("Modem {Id}: RECHARGE SMS detected [{SmsType}] amount={Amount} — will run MeetMob check after poll",
+                            _modemId, smsType, amt.HasValue ? $"{amt.Value:F2} DZD" : "unknown");
                     }
                 }
                 catch (TimeoutException) when (_disposed) { }
@@ -779,30 +1009,30 @@ public class ModemHandler : IDisposable
         var cachedToken = await _meetMob.GetValidTokenAsync(phone);
         if (cachedToken != null)
         {
-            _log.LogInformation("Modem {Id}: MeetMob using cached token", _modemId);
+            _log.LogDebug("Modem {Id} [{Phone}]: MeetMob using cached token", _modemId, phone);
             _meetMobToken = cachedToken;
             _lastMeetMobRefreshUtc = DateTime.UtcNow;
             var cachedBalanceOk = await TryMeetMobBalanceAsync(ct);
             if (cachedBalanceOk) return true;
 
-            if (_meetMob.WasLastRequestNetworkError())
+            if (_meetMob.WasLastRequestNetworkError(phone))
             {
-                _log.LogWarning("Modem {Id}: MeetMob cached token balance failed (network error) — token preserved, falling back to USSD", _modemId);
+                _log.LogWarning("Modem {Id} [{Phone}]: MeetMob cached token balance failed (network error) — token preserved, falling back to USSD", _modemId, phone);
                 return false;
             }
 
-            _log.LogWarning("Modem {Id}: MeetMob cached token balance failed (session expired: {Error}) — invalidating and retrying fresh login", _modemId, _meetMob.GetLastErrorCode() ?? "auth error");
+            _log.LogWarning("Modem {Id} [{Phone}]: MeetMob cached token balance failed (session expired: {Error}) — invalidating and retrying fresh login", _modemId, phone, _meetMob.GetLastErrorCode(phone) ?? "auth error");
             await _meetMob.InvalidateTokenAsync(phone);
             _meetMobToken = null;
         }
 
-        if (_meetMob.IsWafBlocked())
+        if (_meetMob.IsWafBlocked(phone))
         {
-            _log.LogWarning("Modem {Id}: MeetMob WAF is blocking — skipping fresh login", _modemId);
+            _log.LogWarning("Modem {Id} [{Phone}]: MeetMob WAF is blocking — skipping fresh login", _modemId, phone);
             return false;
         }
 
-        _log.LogInformation("Modem {Id}: MeetMob logging in via OTP...", _modemId);
+        _log.LogInformation("Modem {Id} [{Phone}]: MeetMob logging in via OTP...", _modemId, phone);
         MeetMobLoginResult result;
         try
         {
@@ -822,28 +1052,31 @@ public class ModemHandler : IDisposable
 
         if (!result.Success)
         {
-            _log.LogWarning("Modem {Id}: MeetMob login failed — {Error}, falling back to USSD", _modemId, result.Error);
-            _meetMob.SetCooldown(phone, _config.Get<int>("meetmob.fallback_cooldown", 150));
+            _log.LogWarning("Modem {Id} [{Phone}]: MeetMob login failed — {Error}, falling back to USSD", _modemId, phone, result.Error);
+            _meetMob.SetCooldown(phone, _config.Get<int>("meetmob.fallback_cooldown", 5));
             return false;
         }
 
         _meetMobToken = result.Token;
         _lastMeetMobRefreshUtc = DateTime.UtcNow;
-        _log.LogInformation("Modem {Id}: MeetMob login success", _modemId);
-        await Task.Delay(2000, ct);
+        _log.LogInformation("Modem {Id} [{Phone}]: MeetMob login success", _modemId, phone);
         return await TryMeetMobBalanceAsync(ct);
     }
 
     private async Task<bool> TryMeetMobBalanceAsync(CancellationToken ct)
     {
         if (_meetMob == null || _meetMobToken == null) return false;
+        var phone = _meetMobToken.Phone ?? _meetMobPhone;
         try
         {
-            var balance = await _meetMob.GetBalanceAsync(_imsi, _meetMobToken, ct);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(15));
+
+            var balance = await _meetMob.GetBalanceAsync(_meetMobToken, timeout.Token);
             if (balance.HasValue)
             {
-                _log.LogInformation("Modem {Id}: MeetMob balance: {Balance:F2} DZD", _modemId, balance.Value);
-                RecordMeetMobSuccess();
+                _lastBalance = balance.Value;
+                _log.LogInformation("Modem {Id} [{Phone}]: Balance = {Balance} DZD (MeetMob)", _modemId, phone, balance.Value);
                 await _db.EnqueueAsync(new()
                 {
                     Type = DatabaseWriteChannel.Op.UpdateSimBalance,
@@ -852,36 +1085,38 @@ public class ModemHandler : IDisposable
                 return true;
             }
 
-            if (_meetMob.IsWafBlocked())
+            if (_meetMob.IsWafBlocked(phone))
             {
-                _log.LogWarning("Modem {Id}: MeetMob balance null but WAF is blocking — skipping re-login (token preserved)", _modemId);
+                _log.LogWarning("Modem {Id} [{Phone}]: MeetMob balance null but WAF is blocking — skipping re-login (token preserved)", _modemId, phone);
                 return false;
             }
-            if (_meetMob.WasLastRequestNetworkError())
+            if (_meetMob.WasLastRequestNetworkError(phone))
             {
-                _log.LogWarning("Modem {Id}: MeetMob balance null due to network error (server down/timeout) — skipping re-login (token preserved)", _modemId);
+                _log.LogWarning("Modem {Id} [{Phone}]: MeetMob balance network error — short cooldown (token preserved)", _modemId, phone);
+                _meetMob.SetCooldown(phone, 30);
                 return false;
             }
 
-            var errorCode = _meetMob.GetLastErrorCode();
+            var errorCode = _meetMob.GetLastErrorCode(phone);
             if (string.IsNullOrEmpty(_meetMobToken.AccountId) && errorCode != "MSF.100010" && errorCode != "120")
             {
-                _log.LogWarning("Modem {Id}: MeetMob balance null (accountId empty) — skipping re-login (token preserved)", _modemId);
+                _log.LogWarning("Modem {Id} [{Phone}]: MeetMob balance null (accountId empty) — skipping re-login (token preserved)", _modemId, phone);
                 return false;
             }
 
-            _log.LogWarning("Modem {Id}: MeetMob balance returned null (error={Error}) — session may be expired, attempting re-login", _modemId, errorCode ?? "unknown");
-            await _meetMob.InvalidateTokenAsync(_meetMobToken.Phone);
+            _log.LogWarning("Modem {Id} [{Phone}]: MeetMob balance returned null (error={Error}) — session may be expired, attempting re-login", _modemId, phone, errorCode ?? "unknown");
+            if (!string.IsNullOrEmpty(_meetMobToken.Phone))
+                await _meetMob.InvalidateTokenAsync(_meetMobToken.Phone);
             _meetMobToken = null;
 
             var phoneRaw = await _db.GetPhoneNumberAsync(_imsi);
             if (string.IsNullOrEmpty(phoneRaw))
             {
-                _log.LogWarning("Modem {Id}: No phone number for re-login", _modemId);
+                _log.LogWarning("Modem {Id} [{Phone}]: No phone number for re-login", _modemId, phone);
                 return false;
             }
 
-            var phone = long.TryParse(phoneRaw, out var phoneLong)
+            var reloginPhone = long.TryParse(phoneRaw, out var phoneLong)
                 ? MeetMobService.FormatPhone(phoneLong) ?? phoneRaw
                 : phoneRaw;
 
@@ -889,7 +1124,7 @@ public class ModemHandler : IDisposable
             try
             {
                 await _atLock.WaitAsync(ct);
-                try { loginResult = await _meetMob.LoginAsync(_imsi, phone, _at, ct); }
+                try { loginResult = await _meetMob.LoginAsync(_imsi, reloginPhone, _at, ct); }
                 finally { SafeReleaseAtLock(); }
             }
             catch (OperationCanceledException) { return false; }
@@ -897,33 +1132,32 @@ public class ModemHandler : IDisposable
 
             if (!loginResult.Success)
             {
-                _log.LogWarning("Modem {Id}: MeetMob re-login failed — {Error}", _modemId, loginResult.Error);
-                _meetMob.SetCooldown(phone, _config.Get<int>("meetmob.fallback_cooldown", 150));
+                _log.LogWarning("Modem {Id} [{Phone}]: MeetMob re-login failed — {Error}", _modemId, reloginPhone, loginResult.Error);
+                _meetMob.SetCooldown(reloginPhone, _config.Get<int>("meetmob.fallback_cooldown", 5));
                 return false;
             }
 
             _meetMobToken = loginResult.Token;
             _lastMeetMobRefreshUtc = DateTime.UtcNow;
-            _log.LogInformation("Modem {Id}: MeetMob re-login success — retrying balance", _modemId);
-            await Task.Delay(2000, ct);
+            _log.LogInformation("Modem {Id} [{Phone}]: MeetMob re-login success — retrying balance", _modemId, reloginPhone);
 
             if (_meetMobToken == null)
             {
-                _log.LogWarning("Modem {Id}: MeetMob re-login returned null token", _modemId);
+                _log.LogWarning("Modem {Id} [{Phone}]: MeetMob re-login returned null token", _modemId, reloginPhone);
                 return false;
             }
 
-            if (_meetMob.IsWafBlocked())
+            if (_meetMob.IsWafBlocked(reloginPhone))
             {
-                _log.LogWarning("Modem {Id}: MeetMob WAF blocked after re-login — giving up this cycle", _modemId);
+                _log.LogWarning("Modem {Id} [{Phone}]: MeetMob WAF blocked after re-login — giving up this cycle", _modemId, reloginPhone);
                 return false;
             }
 
-            var retryBalance = await _meetMob.GetBalanceAsync(_imsi, _meetMobToken, ct);
+            var retryBalance = await _meetMob.GetBalanceAsync(_meetMobToken, ct);
             if (retryBalance.HasValue)
             {
-                _log.LogInformation("Modem {Id}: MeetMob balance after re-login: {Balance:F2} DZD", _modemId, retryBalance.Value);
-                RecordMeetMobSuccess();
+                _lastBalance = retryBalance.Value;
+                _log.LogInformation("Modem {Id} [{Phone}]: Balance = {Balance} DZD (MeetMob re-login)", _modemId, reloginPhone, retryBalance.Value);
                 await _db.EnqueueAsync(new()
                 {
                     Type = DatabaseWriteChannel.Op.UpdateSimBalance,
@@ -932,7 +1166,12 @@ public class ModemHandler : IDisposable
                 return true;
             }
 
-            _log.LogWarning("Modem {Id}: MeetMob balance still null after re-login", _modemId);
+            _log.LogWarning("Modem {Id} [{Phone}]: MeetMob balance still null after re-login", _modemId, reloginPhone);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            _log.LogWarning("Modem {Id} [{Phone}]: MeetMob balance timed out (15s) — short cooldown", _modemId, _meetMobPhone);
+            _meetMob.SetCooldown(_meetMobPhone, 30);
         }
         catch (Exception ex)
         {
@@ -946,14 +1185,12 @@ public class ModemHandler : IDisposable
         if (_meetMob == null || _meetMobToken == null) return;
         try
         {
-            var records = await _meetMob.GetRechargeHistoryAsync(_meetMobToken, ct);
-            if (records.Count == 0)
-            {
-                _log.LogDebug("Modem {Id}: MeetMob history returned 0 records", _modemId);
-                return;
-            }
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(15));
 
-            _log.LogInformation("Modem {Id}: MeetMob history has {Count} records — saving to DB", _modemId, records.Count);
+            var records = await _meetMob.GetRechargeHistoryAsync(_meetMobToken, timeout.Token);
+            if (records.Count == 0) return;
+
             await _db.EnqueueAsync(new()
             {
                 Type = DatabaseWriteChannel.Op.InsertMeetMobHistory,
@@ -964,6 +1201,11 @@ public class ModemHandler : IDisposable
                     Records = records.Select(r => new { TradeTime = r.TradeTime, Amount = r.Amount }).ToList()
                 }
             });
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            _log.LogWarning("Modem {Id}: MeetMob history timed out (15s) — short cooldown", _modemId);
+            _meetMob?.SetCooldown(_meetMobPhone, 30);
         }
         catch (Exception ex)
         {
@@ -1012,13 +1254,46 @@ public class ModemHandler : IDisposable
         var balance = await _at.GetBalanceAsync();
         if (balance.HasValue)
         {
-            _log.LogInformation("Modem {Id}: Balance: {Balance:F2} DZD", _modemId, balance.Value);
+            _lastBalance = balance.Value;
             await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.UpdateSimBalance, Data = new { ModemId = _modemId, Balance = balance.Value } });
         }
         else
         {
-            _db.MarkPendingBalanceCheck(_modemId);
-            _log.LogInformation("Modem {Id}: *222# returned no balance — pending balance check set", _modemId);
+            _log.LogWarning("Modem {Id}: *222# returned no balance", _modemId);
+        }
+    }
+
+    private async Task CleanupLoopAsync(CancellationToken ct)
+    {
+        _log.LogDebug("Modem {Id}: Cleanup loop started (hourly)", _modemId);
+        while (!ct.IsCancellationRequested)
+        {
+            try { await Task.Delay(TimeSpan.FromHours(1), ct); }
+            catch (OperationCanceledException) { break; }
+
+            if (_disposed) break;
+
+            try
+            {
+                _meetMob?.CleanupStaleEntries();
+                var tokenStore = _meetMob?.TokenStore;
+                if (tokenStore != null)
+                {
+                    var purged = await tokenStore.PurgeExpiredAsync();
+                    if (purged > 0)
+                        _log.LogInformation("Modem {Id}: Purged {Count} expired tokens from disk", _modemId, purged);
+                }
+
+                // Invalidate local token if expired
+                if (_meetMobToken != null && IsMeetMobTokenExpired())
+                {
+                    _log.LogDebug("Modem {Id}: MeetMob local token expired — clearing", _modemId);
+                    _meetMobToken = null;
+                }
+            }
+            catch (OperationCanceledException) { break; }
+            catch (ObjectDisposedException) { break; }
+            catch (Exception ex) { _log.LogDebug(ex, "Modem {Id}: Cleanup loop error", _modemId); }
         }
     }
 
@@ -1026,7 +1301,7 @@ public class ModemHandler : IDisposable
     {
         while (!ct.IsCancellationRequested)
         {
-            try { await Task.Delay(TimeSpan.FromMinutes(2), ct); }
+            try { await Task.Delay(TimeSpan.FromSeconds(30), ct); }
             catch (OperationCanceledException) { break; }
 
             if (_disposed) break;

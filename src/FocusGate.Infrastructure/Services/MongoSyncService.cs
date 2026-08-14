@@ -21,13 +21,11 @@ public class MongoSyncService : BackgroundService
     private bool _initialSyncDone = false;
     private DateTime _lastSyncStarted = DateTime.MinValue;
     private DateTime _lastSyncCompleted = DateTime.MinValue;
-    private int _totalPushed = 0;
     private int _totalPulled = 0;
     private string _lastError = "";
 
     public DateTime LastSyncStarted => _lastSyncStarted;
     public DateTime LastSyncCompleted => _lastSyncCompleted;
-    public int TotalPushed => _totalPushed;
     public int TotalPulled => _totalPulled;
     public string LastError => _lastError;
     public bool IsConnected => _mongo.IsConnected;
@@ -49,7 +47,7 @@ public class MongoSyncService : BackgroundService
 
     private const int RetryDelaySeconds = 30;
     private const int MaxRetryDelaySeconds = 300;
-    private const int StartupDelaySeconds = 15;
+    private const int StartupDelaySeconds = 5;
 
     private int GetRetryDelay(int retryCount)
     {
@@ -59,7 +57,7 @@ public class MongoSyncService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("MongoSync started (interval: {Interval}s, machine: {Machine})",
+        _logger.LogInformation("MongoSync started — pull-only mode (interval: {Interval}s, machine: {Machine})",
             _intervalSeconds, _machineId);
 
         _logger.LogInformation("Waiting {Delay}s for modems to initialize before connecting to MongoDB...",
@@ -120,12 +118,16 @@ public class MongoSyncService : BackgroundService
                 _lastError = "";
                 if (!_initialSyncDone)
                 {
-                    await FullSyncAsync(stoppingToken);
+                    using var scope = _scopeFactory.CreateScope();
+                    var db = scope.ServiceProvider.GetRequiredService<FocusGateDbContext>();
+                    await FullSyncAsync(db, stoppingToken);
                     _initialSyncDone = true;
                 }
                 else
                 {
-                    await IncrementalSyncAsync(stoppingToken);
+                    using var scope = _scopeFactory.CreateScope();
+                    var db = scope.ServiceProvider.GetRequiredService<FocusGateDbContext>();
+                    await IncrementalSyncAsync(db, stoppingToken);
                 }
                 _lastSyncCompleted = DateTime.UtcNow;
             }
@@ -151,272 +153,41 @@ public class MongoSyncService : BackgroundService
 
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
-        _logger.LogInformation("MongoSync stopping — performing final sync...");
+        _logger.LogInformation("MongoSync stopping — final pull...");
         try
         {
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<FocusGateDbContext>();
-            await PushToMongoAsync(db, cancellationToken);
-            _logger.LogInformation("Final sync complete");
+            await PullFromMongoAsync(db, _lastSyncAt, cancellationToken);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning("Final sync failed: {Error}", ex.Message);
+            _logger.LogError(ex, "Final pull failed");
         }
         await base.StopAsync(cancellationToken);
     }
 
-    private async Task FullSyncAsync(CancellationToken ct)
+    private async Task FullSyncAsync(FocusGateDbContext db, CancellationToken ct)
     {
-        _logger.LogInformation("Starting full sync for machine {Machine}...", _machineId);
-
-        using var scope = _scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<FocusGateDbContext>();
-
-        var pullOk = await PullFromMongoAsync(db, ct);
-        var pushOk = await PushToMongoAsync(db, ct);
-
-        if (pushOk && pullOk)
-        {
-            _lastSyncAt = DateTime.UtcNow;
-            _logger.LogInformation("Full sync complete — incremental syncs will resume from this point");
-        }
-        else
-        {
-            _logger.LogWarning("Full sync partial failure (push={PushOk}, pull={PullOk}) — will retry next cycle", pushOk, pullOk);
-        }
+        _logger.LogInformation("Full sync started (pull-only for user data)");
+        await PullFromMongoAsync(db, DateTime.MinValue, ct);
+        _lastSyncAt = DateTime.UtcNow;
+        _logger.LogInformation("Full sync completed");
     }
 
-    private async Task IncrementalSyncAsync(CancellationToken ct)
-    {
-        using var scope = _scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<FocusGateDbContext>();
-
-        var pullOk = await PullFromMongoAsync(db, ct);
-        var pushOk = await PushToMongoAsync(db, ct);
-
-        if (pushOk && pullOk)
-        {
-            _lastSyncAt = _lastSyncStarted;
-        }
-        else
-        {
-            _logger.LogWarning("Incremental sync partial failure (push={PushOk}, pull={PullOk}) — retrying next cycle", pushOk, pullOk);
-        }
-    }
-
-    private async Task<int> PushBatchAsync<T>(IMongoCollection<T> collection, List<T> items, CancellationToken ct) where T : class
-    {
-        if (items.Count == 0) return 0;
-        var pushedCount = 0;
-        foreach (var chunk in items.Chunk(25))
-        {
-            var tasks = chunk.Select(async doc =>
-            {
-                var ok = await SafeUpsertAsync(collection, doc, ct);
-                if (ok) Interlocked.Increment(ref pushedCount);
-            });
-            await Task.WhenAll(tasks);
-        }
-        return pushedCount;
-    }
-
-    private async Task<bool> PushToMongoAsync(FocusGateDbContext db, CancellationToken ct)
+    private async Task IncrementalSyncAsync(FocusGateDbContext db, CancellationToken ct)
     {
         var since = _lastSyncAt;
-        var pushed = 0;
-        var failedCollections = new List<string>();
-
-        try
-        {
-            var modems = await db.Modems.IgnoreQueryFilters().Where(m => m.UpdatedAt > since).ToListAsync(ct);
-            pushed += await PushBatchAsync(_mongo.Modems, modems, ct);
-        }
-        catch (Exception ex) { _logger.LogWarning(ex, "Push modems failed — skipping collection"); failedCollections.Add("modems"); }
-
-        try
-        {
-            var sims = await db.SimCards.IgnoreQueryFilters().Where(s => s.UpdatedAt > since).ToListAsync(ct);
-            pushed += await PushBatchAsync(_mongo.SimCards, sims, ct);
-        }
-        catch (Exception ex) { _logger.LogWarning(ex, "Push sims failed — skipping collection"); failedCollections.Add("sims"); }
-
-        try
-        {
-            var sms = await db.SmsRecords.IgnoreQueryFilters().Where(s => s.UpdatedAt > since).ToListAsync(ct);
-            pushed += await PushBatchAsync(_mongo.SmsRecords, sms, ct);
-        }
-        catch (Exception ex) { _logger.LogWarning(ex, "Push sms failed — skipping collection"); failedCollections.Add("sms"); }
-
-        try
-        {
-            var balances = await db.BalanceHistories.IgnoreQueryFilters().Where(b => b.UpdatedAt > since).ToListAsync(ct);
-            pushed += await PushBatchAsync(_mongo.BalanceHistories, balances, ct);
-        }
-        catch (Exception ex) { _logger.LogWarning(ex, "Push balances failed — skipping collection"); failedCollections.Add("balances"); }
-
-        try
-        {
-            var users = await db.Users.IgnoreQueryFilters().Where(u => u.UpdatedAt > since).ToListAsync(ct);
-            pushed += await PushBatchAsync(_mongo.Users, users, ct);
-        }
-        catch (Exception ex) { _logger.LogWarning(ex, "Push users failed — skipping collection"); failedCollections.Add("users"); }
-
-        try
-        {
-            var userModems = await db.UserModems.IgnoreQueryFilters().Where(um => um.UpdatedAt > since).ToListAsync(ct);
-            pushed += await PushBatchAsync(_mongo.UserModems, userModems, ct);
-        }
-        catch (Exception ex) { _logger.LogWarning(ex, "Push userModems failed — skipping collection"); failedCollections.Add("userModems"); }
-
-        try
-        {
-            var withdrawalRequests = await db.WithdrawalRequests.IgnoreQueryFilters().Where(w => w.UpdatedAt > since).ToListAsync(ct);
-            pushed += await PushBatchAsync(_mongo.WithdrawalRequests, withdrawalRequests, ct);
-        }
-        catch (Exception ex) { _logger.LogWarning(ex, "Push withdrawalRequests failed — skipping collection"); failedCollections.Add("withdrawalRequests"); }
-
-        try
-        {
-            var userBalanceHistories = await db.UserBalanceHistories.IgnoreQueryFilters().Where(ub => ub.UpdatedAt > since).ToListAsync(ct);
-            pushed += await PushBatchAsync(_mongo.UserBalanceHistories, userBalanceHistories, ct);
-        }
-        catch (Exception ex) { _logger.LogWarning(ex, "Push userBalanceHistories failed — skipping collection"); failedCollections.Add("userBalanceHistories"); }
-
-        if (pushed > 0 || failedCollections.Count > 0)
-            _logger.LogInformation("Push: {Pushed} pushed, failed: [{Failed}]",
-                pushed, string.Join(", ", failedCollections));
-        _totalPushed += pushed;
-        return failedCollections.Count == 0;
+        _logger.LogDebug("Incremental sync since {Since:O}", since);
+        await PullFromMongoAsync(db, since, ct);
+        _lastSyncAt = DateTime.UtcNow;
     }
 
-    private async Task<bool> SafeUpsertAsync<T>(IMongoCollection<T> collection, T document, CancellationToken ct) where T : class
+    private async Task PullFromMongoAsync(FocusGateDbContext db, DateTime since, CancellationToken ct)
     {
-        try
-        {
-            var idProp = typeof(T).GetProperty("Id")!;
-            var machineIdProp = typeof(T).GetProperty("MachineId")!;
-            var id = idProp.GetValue(document)!;
-            var machineId = machineIdProp.GetValue(document)!;
-
-            var filter = Builders<T>.Filter.And(
-                Builders<T>.Filter.Eq("_id", id),
-                Builders<T>.Filter.Eq("machineId", machineId));
-
-            await collection.ReplaceOneAsync(filter, document,
-                new ReplaceOptions { IsUpsert = true }, ct);
-            return true;
-        }
-        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
-        {
-            try
-            {
-                var idProp = typeof(T).GetProperty("Id")!;
-                var id = idProp.GetValue(document)!;
-
-                var idFilter = Builders<T>.Filter.Eq("_id", id);
-                await collection.ReplaceOneAsync(idFilter, document, new ReplaceOptions { IsUpsert = false }, ct);
-                _logger.LogInformation("Claimed {Type} Id={Id} (overwrote old machine)", typeof(T).Name, id);
-                return true;
-            }
-            catch (Exception ex2)
-            {
-                _logger.LogWarning(ex2, "Failed to claim {Type} Id={Id}", typeof(T).Name,
-                    typeof(T).GetProperty("Id")?.GetValue(document));
-                return false;
-            }
-        }
-    }
-
-    private async Task<bool> PullFromMongoAsync(FocusGateDbContext db, CancellationToken ct)
-    {
-        var since = _lastSyncAt;
+        // Only pull user-originated data (written by Dashboard/Next.js)
+        // Skip modem-originated data (written directly by .NET gateway)
         var pulled = 0;
-        var failedCollections = new List<string>();
-
-        var modemFilter = since == DateTime.MinValue
-            ? FilterDefinition<Modem>.Empty
-            : Builders<Modem>.Filter.Gt(x => x.UpdatedAt, since);
-        var modemPulled = await PullCollectionAsync(db, _mongo.Modems, modemFilter,
-            m => m.Id, (local, m) =>
-            {
-                if (m.UpdatedAt > local.UpdatedAt)
-                {
-                    local.IMEI = m.IMEI;
-                    local.ComPort = m.ComPort;
-                    local.Brand = m.Brand;
-                    local.Manufacturer = m.Manufacturer;
-                    local.Model = m.Model;
-                    local.Status = m.Status;
-                    local.UpdatedAt = m.UpdatedAt;
-                }
-                local.ArchivedAt = m.ArchivedAt;
-            }, "modems", ct);
-        pulled += modemPulled;
-
-        var simFilter = since == DateTime.MinValue
-            ? FilterDefinition<SimCard>.Empty
-            : Builders<SimCard>.Filter.Gt(x => x.UpdatedAt, since);
-        var simPulled = await PullCollectionAsync(db, _mongo.SimCards, simFilter,
-            s => s.Id, (local, s) =>
-            {
-                if (s.UpdatedAt > local.UpdatedAt)
-                {
-                    local.IMSI = s.IMSI;
-                    local.ModemId = s.ModemId;
-                    local.PhoneNumber = s.PhoneNumber;
-                    local.VerifiedAt = s.VerifiedAt;
-                    local.IsActive = s.IsActive;
-                    local.Status = s.Status;
-                    local.FirstSeen = s.FirstSeen;
-                    local.LastSeen = s.LastSeen;
-                    local.RemovedAt = s.RemovedAt;
-                    local.ReplacedAt = s.ReplacedAt;
-                    local.UpdatedAt = s.UpdatedAt;
-                }
-                local.ArchivedAt = s.ArchivedAt;
-            }, "simcards", ct);
-        pulled += simPulled;
-
-        var smsFilter = since == DateTime.MinValue
-            ? FilterDefinition<SmsRecord>.Empty
-            : Builders<SmsRecord>.Filter.Gt(x => x.UpdatedAt, since);
-        var smsPulled = await PullCollectionAsync(db, _mongo.SmsRecords, smsFilter,
-            s => s.Id, (local, s) =>
-            {
-                if (s.UpdatedAt > local.UpdatedAt)
-                {
-                    local.SimCardId = s.SimCardId;
-                    local.SenderNumber = s.SenderNumber;
-                    local.Content = s.Content;
-                    local.ReceivedAt = s.ReceivedAt;
-                    local.ProcessedAt = s.ProcessedAt;
-                    local.UpdatedAt = s.UpdatedAt;
-                }
-                local.ArchivedAt = s.ArchivedAt;
-            }, "smsrecords", ct);
-        pulled += smsPulled;
-
-        var balFilter = since == DateTime.MinValue
-            ? FilterDefinition<BalanceHistory>.Empty
-            : Builders<BalanceHistory>.Filter.Gt(x => x.UpdatedAt, since);
-        var balPulled = await PullCollectionAsync(db, _mongo.BalanceHistories, balFilter,
-            b => b.Id, (local, b) =>
-            {
-                if (b.UpdatedAt > local.UpdatedAt)
-                {
-                    local.SimCardId = b.SimCardId;
-                    local.ModemId = b.ModemId;
-                    local.UserId = b.UserId;
-                    local.Balance = b.Balance;
-                    local.PreviousBalance = b.PreviousBalance;
-                    local.Source = b.Source;
-                    local.RecordedAt = b.RecordedAt;
-                    local.UpdatedAt = b.UpdatedAt;
-                }
-                local.ArchivedAt = b.ArchivedAt;
-            }, "balancehistories", ct);
-        pulled += balPulled;
 
         var userFilter = since == DateTime.MinValue
             ? FilterDefinition<User>.Empty
@@ -424,16 +195,13 @@ public class MongoSyncService : BackgroundService
         var userPulled = await PullCollectionAsync(db, _mongo.Users, userFilter,
             u => u.Id, (local, u) =>
             {
-                if (u.UpdatedAt >= local.UpdatedAt)
-                {
-                    local.Username = u.Username;
-                    local.Password = u.Password;
-                    local.DisplayName = u.DisplayName;
-                    local.Role = u.Role;
-                    local.IsActive = u.IsActive;
-                    local.Balance = u.Balance;
-                    local.UpdatedAt = u.UpdatedAt;
-                }
+                local.Username = u.Username;
+                local.Password = u.Password;
+                local.DisplayName = u.DisplayName;
+                local.Role = u.Role;
+                local.IsActive = u.IsActive;
+                local.Balance = u.Balance;
+                local.UpdatedAt = u.UpdatedAt;
                 local.ArchivedAt = u.ArchivedAt;
             }, "users", ct);
         pulled += userPulled;
@@ -444,14 +212,11 @@ public class MongoSyncService : BackgroundService
         var umPulled = await PullCollectionAsync(db, _mongo.UserModems, umFilter,
             um => um.Id, (local, um) =>
             {
-                if (um.UpdatedAt > local.UpdatedAt)
-                {
-                    local.UserId = um.UserId;
-                    local.ModemId = um.ModemId;
-                    local.AssignedAt = um.AssignedAt;
-                    local.RemovedAt = um.RemovedAt;
-                    local.UpdatedAt = um.UpdatedAt;
-                }
+                local.UserId = um.UserId;
+                local.ModemId = um.ModemId;
+                local.AssignedAt = um.AssignedAt;
+                local.RemovedAt = um.RemovedAt;
+                local.UpdatedAt = um.UpdatedAt;
                 local.ArchivedAt = um.ArchivedAt;
             }, "usermodems", ct);
         pulled += umPulled;
@@ -462,18 +227,15 @@ public class MongoSyncService : BackgroundService
         var wrPulled = await PullCollectionAsync(db, _mongo.WithdrawalRequests, wrFilter,
             w => w.Id, (local, w) =>
             {
-                if (w.UpdatedAt > local.UpdatedAt)
-                {
-                    local.UserId = w.UserId;
-                    local.Amount = w.Amount;
-                    local.Status = w.Status;
-                    local.Note = w.Note;
-                    local.AdminNote = w.AdminNote;
-                    local.ProcessedByAdminId = w.ProcessedByAdminId;
-                    local.RequestedAt = w.RequestedAt;
-                    local.ProcessedAt = w.ProcessedAt;
-                    local.UpdatedAt = w.UpdatedAt;
-                }
+                local.UserId = w.UserId;
+                local.Amount = w.Amount;
+                local.Status = w.Status;
+                local.Note = w.Note;
+                local.AdminNote = w.AdminNote;
+                local.ProcessedByAdminId = w.ProcessedByAdminId;
+                local.RequestedAt = w.RequestedAt;
+                local.ProcessedAt = w.ProcessedAt;
+                local.UpdatedAt = w.UpdatedAt;
                 local.ArchivedAt = w.ArchivedAt;
             }, "withdrawalrequests", ct);
         pulled += wrPulled;
@@ -484,26 +246,22 @@ public class MongoSyncService : BackgroundService
         var ubhPulled = await PullCollectionAsync(db, _mongo.UserBalanceHistories, ubhFilter,
             ub => ub.Id, (local, ub) =>
             {
-                if (ub.UpdatedAt > local.UpdatedAt)
-                {
-                    local.UserId = ub.UserId;
-                    local.Amount = ub.Amount;
-                    local.BalanceAfter = ub.BalanceAfter;
-                    local.Type = ub.Type;
-                    local.SimCardId = ub.SimCardId;
-                    local.Note = ub.Note;
-                    local.RecordedAt = ub.RecordedAt;
-                    local.UpdatedAt = ub.UpdatedAt;
-                }
+                local.UserId = ub.UserId;
+                local.Amount = ub.Amount;
+                local.BalanceAfter = ub.BalanceAfter;
+                local.Type = ub.Type;
+                local.SimCardId = ub.SimCardId;
+                local.Note = ub.Note;
+                local.RecordedAt = ub.RecordedAt;
+                local.UpdatedAt = ub.UpdatedAt;
                 local.ArchivedAt = ub.ArchivedAt;
             }, "userbalancehistories", ct);
         pulled += ubhPulled;
 
         if (pulled > 0)
-            _logger.LogInformation("Pull: {ModemCount} modems, {SimCount} sims, {SmsCount} sms, {BalCount} bal, {UserCount} users, {UmCount} um, {WrCount} wr, {UbhCount} ubh",
-                modemPulled, simPulled, smsPulled, balPulled, userPulled, umPulled, wrPulled, ubhPulled);
+            _logger.LogInformation("Pull: {UserCount} users, {UmCount} um, {WrCount} wr, {UbhCount} ubh",
+                userPulled, umPulled, wrPulled, ubhPulled);
         _totalPulled += pulled;
-        return true;
     }
 
     private async Task<int> PullCollectionAsync<T>(

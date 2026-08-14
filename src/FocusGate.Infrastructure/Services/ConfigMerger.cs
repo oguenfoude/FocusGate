@@ -16,7 +16,7 @@ public static class ConfigMerger
         ["balance.limit.default"] = "50000",
         ["alert.low_balance_threshold"] = "10",
         ["modem.watchdog.interval"] = "30",
-        ["modem.sms.poll.interval"] = "30",
+        ["modem.sms.poll.interval"] = "5",
 
         ["serial.read.timeout"] = "5000",
         ["modem.ussd.phone_code"] = "*101#",
@@ -37,13 +37,12 @@ public static class ConfigMerger
         ["meetmob.password"] = "00000",
         ["meetmob.otp_shortcode"] = "100",
         ["meetmob.otp_poll_timeout"] = "60",
-        ["meetmob.otp_poll_interval"] = "3",
+        ["meetmob.otp_poll_interval"] = "1",
         ["meetmob.token_ttl"] = "2700",
         ["meetmob.http_timeout"] = "30",
-        ["meetmob.login_cooldown"] = "120",
-        ["meetmob.fallback_cooldown"] = "150",
-        ["meetmob.backoff.initial"] = "120",
-        ["meetmob.backoff.max"] = "1800",
+        ["meetmob.login_cooldown"] = "30",
+        ["meetmob.fallback_cooldown"] = "30",
+        ["meetmob.check.interval"] = "60",
         ["meetmob.base_url"] = "https://meetmob.mobilis.dz"
     };
 

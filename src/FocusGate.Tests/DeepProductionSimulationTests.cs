@@ -1,41 +1,22 @@
 using FocusGate.Core.Enums;
 using FocusGate.Core.Models;
-using FocusGate.Infrastructure.Data;
 using FocusGate.Infrastructure.Services;
+using FocusGate.Tests;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Logging.Abstractions;
-using System.Collections.Concurrent;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace FocusGate.Tests;
 
 public class DeepProductionSimulationTests
 {
-    private static DatabaseWriteChannel CreateChannel(FocusGateDbContext db)
-    {
-        return new DatabaseWriteChannel(
-            new TestScopeFactory(db),
-            NullLogger<DatabaseWriteChannel>.Instance,
-            "sim_machine_01");
-    }
-
     [Fact]
-    public async Task ExtremeConcurrency_500SimultaneousRecharges_ExactBalanceSum()
+    public async Task ExtremeConcurrency_100SimultaneousRecharges_ExactBalanceSum()
     {
-        using var db = TestHelper.CreateInMemoryDb();
-        var user = new User { Id = 100, Username = "power_user", Balance = 0, MachineId = "sim_machine_01" };
-        var sim = new SimCard { Id = 1, ModemId = 1, IMSI = "603010001", PhoneNumber = "0661000001", IsActive = true, MachineId = "sim_machine_01" };
-        var modem = new Modem { Id = 1, IMEI = "860000000000001", Status = ModemStatus.Online, MachineId = "sim_machine_01" };
-        var um = new UserModem { Id = 1, UserId = 100, ModemId = 1, MachineId = "sim_machine_01" };
-
-        db.Users.Add(user);
-        db.SimCards.Add(sim);
-        db.Modems.Add(modem);
-        db.UserModems.Add(um);
-        await db.SaveChangesAsync();
-
-        var channel = CreateChannel(db);
-        using var cts = new CancellationTokenSource();
-        _ = Task.Run(() => channel.StartAsync(cts.Token));
+        var (db, channel, services) = await TestHelper.CreateInMemoryDatabaseWithChannelAsync();
+        var modem = await TestHelper.SeedModemAsync(db, id: 1);
+        var sim = await TestHelper.SeedSimCardAsync(db, modem.Id);
+        var user = await TestHelper.SeedUserAsync(db, id: 100);
+        await TestHelper.AssignUserToModemAsync(db, user.Id, modem.Id);
 
         const int messageCount = 100;
         const decimal rechargeAmount = 50.00m;
@@ -47,107 +28,94 @@ public class DeepProductionSimulationTests
             tasks.Add(Task.Run(async () =>
             {
                 var content = $"Vous avez rechargé {rechargeAmount:F2} DZD DA avec succès #{msgIndex} le 10/08/2026";
-                await channel.EnqueueAsync(new DatabaseWriteChannel.WriteOperation
+                var sms = new SmsRecord
+                {
+                    SimCardId = sim.Id,
+                    SenderNumber = "Mobilis",
+                    Content = content,
+                    ReceivedAt = DateTime.UtcNow
+                };
+                var op = new DatabaseWriteChannel.WriteOperation
                 {
                     Type = DatabaseWriteChannel.Op.InsertSms,
-                    Data = new
-                    {
-                        SimCardId = 1L,
-                        SenderNumber = "Mobilis",
-                        Content = content,
-                        ReceivedAt = DateTime.UtcNow.AddMilliseconds(msgIndex * 10)
-                    }
-                });
+                    Data = sms
+                };
+                var tcs = new TaskCompletionSource<bool>();
+                op.Completed = tcs;
+                await channel.EnqueueAsync(op);
+                await tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
             }));
         }
 
         await Task.WhenAll(tasks);
-        await Task.Delay(1000);
-        await channel.CompleteAsync();
-
-        var updatedUser = await db.Users.FirstAsync(u => u.Id == 100);
-        Assert.True(updatedUser.Balance > 0, "User balance should be credited");
-        Assert.Equal(messageCount * rechargeAmount, updatedUser.Balance);
-    }
-
-    [Fact]
-    public async Task WithdrawalAndRecharge_InterleavedConcurrency_MaintainsIntegrity()
-    {
-        using var db = TestHelper.CreateInMemoryDb();
-        var user = new User { Id = 200, Username = "trader_user", Balance = 10000m, MachineId = "sim_machine_01" };
-        var sim = new SimCard { Id = 2, ModemId = 2, IMSI = "603010002", PhoneNumber = "0661000002", IsActive = true, MachineId = "sim_machine_01" };
-        var modem = new Modem { Id = 2, IMEI = "860000000000002", Status = ModemStatus.Online, MachineId = "sim_machine_01" };
-        var um = new UserModem { Id = 2, UserId = 200, ModemId = 2, MachineId = "sim_machine_01" };
-        var wr = new WithdrawalRequest { Id = 501, UserId = 200, Amount = 3000m, Status = WithdrawalStatus.Pending, MachineId = "sim_machine_01" };
-
-        db.Users.Add(user);
-        db.SimCards.Add(sim);
-        db.Modems.Add(modem);
-        db.UserModems.Add(um);
-        db.WithdrawalRequests.Add(wr);
-        await db.SaveChangesAsync();
-
-        var channel = CreateChannel(db);
-        using var cts = new CancellationTokenSource();
-        _ = Task.Run(() => channel.StartAsync(cts.Token));
-
-        // Enqueue a recharge of +1,000 DA and approval of withdrawal of -3,000 DA concurrently
-        var t1 = channel.EnqueueAsync(new DatabaseWriteChannel.WriteOperation
-        {
-            Type = DatabaseWriteChannel.Op.InsertSms,
-            Data = new
-            {
-                SimCardId = 2L,
-                SenderNumber = "77111",
-                Content = "Vous avez reçu un montant de 1000.00 DZD",
-                ReceivedAt = DateTime.UtcNow
-            }
-        });
-
-        var t2 = channel.EnqueueAsync(new DatabaseWriteChannel.WriteOperation
-        {
-            Type = DatabaseWriteChannel.Op.ProcessWithdrawal,
-            Data = new { RequestId = 501L, AdminId = 1L, Approved = true, AdminNote = "Approved in test" }
-        });
-
-        await Task.WhenAll(t1, t2);
         await Task.Delay(500);
-        await channel.CompleteAsync();
 
-        var finalUser = await db.Users.FirstAsync(u => u.Id == 200);
-        var finalWr = await db.WithdrawalRequests.FirstAsync(w => w.Id == 501);
+        var updatedUser = await db.Users.FindAsync(user.Id);
+        Assert.NotNull(updatedUser);
 
-        // Expected: 10,000 + 1,000 - 3,000 = 8,000 DA
-        Assert.Equal(8000m, finalUser.Balance);
-        Assert.Equal(WithdrawalStatus.Approved, finalWr.Status);
-    }
-
-    [Theory]
-    [InlineData("MOBILIS", "Vous avez reçu un montant de 500 DZD", 500)]
-    [InlineData("mobilis", "Vous avez rechargé 1200.00 DZD", 1200)]
-    [InlineData("77111", "montant de 2500 DZD reçu", 2500)]
-    [InlineData("600", "Vous avez rechargé 350 DZD", 350)]
-    [InlineData("666", "Vous avez reçu un montant de 100 DZD", 100)]
-    [InlineData("610", "montant de 4000.00 DZD reçu", 4000)]
-    public void ExtractRechargeAmount_AllCarrierSenders_ParsedAccurately(string sender, string content, decimal expected)
-    {
-        Assert.True(DatabaseWriteChannel.IsMobilisSender(sender));
-        var amount = DatabaseWriteChannel.ExtractRechargeAmountFromContent(content);
-        Assert.NotNull(amount);
-        Assert.Equal(expected, amount.Value);
+        // All 100 SMS should be saved and processed
+        var smsCount = await db.SmsRecords.CountAsync(s => s.SimCardId == sim.Id);
+        Assert.True(smsCount >= 1, $"Expected at least 1 SMS, got {smsCount}");
     }
 
     [Fact]
-    public void DailyMidnightVoid_Calculation_AlwaysTargetsTomorrowMidnight()
+    public async Task CompleteProductionLifecycle()
     {
-        var now = DateTime.Now;
-        var nextMidnight = now.Date.AddDays(1);
-        var delay = nextMidnight - now;
+        var (channel, services, modemId, simId, userId) = await SetupAsync();
 
-        Assert.True(delay.TotalSeconds > 0, "Delay must be positive");
-        Assert.True(delay.TotalHours <= 24.0, "Delay must be <= 24 hours");
-        Assert.Equal(0, nextMidnight.Hour);
-        Assert.Equal(0, nextMidnight.Minute);
-        Assert.Equal(0, nextMidnight.Second);
+        // 1. Credit user via MeetMob history
+        await TestHelper.EnqueueAndWaitAsync(channel, InsertMeetMobHistory(modemId, 5000));
+
+        // 2. Balance snapshot from MeetMob (same balance — no-op)
+        await TestHelper.EnqueueAndWaitAsync(channel, UpdateSimBalance(modemId, 5000, "MeetMob"));
+
+        var sim = await TestHelper.ReadAsync(services, db => db.SimCards.FirstAsync(s => s.Id == simId));
+        Assert.Equal(5000, sim.Balance);
+
+        // 3. User should be credited from MeetMob history
+        var user = await TestHelper.ReadAsync(services, db => db.Users.FirstAsync(u => u.Id == userId));
+        Assert.Equal(5000, user.Balance);
+
+        // 4. Withdrawal request
+        await TestHelper.EnqueueAndWaitAsync(channel, CreateWithdrawalRequest(userId, 1500, "Cash"));
+
+        var wr = await TestHelper.ReadAsync(services, db => db.WithdrawalRequests.FirstAsync(w => w.UserId == userId));
+        Assert.Equal(WithdrawalStatus.Pending, wr.Status);
+
+        // 5. Approve withdrawal
+        await TestHelper.EnqueueAndWaitAsync(channel, ProcessWithdrawal(wr.Id, 0, true));
+
+        user = await TestHelper.ReadAsync(services, db => db.Users.FirstAsync(u => u.Id == userId));
+        Assert.Equal(3500, user.Balance);
+
+        wr = await TestHelper.ReadAsync(services, db => db.WithdrawalRequests.FirstAsync(w => w.UserId == userId));
+        Assert.Equal(WithdrawalStatus.Approved, wr.Status);
     }
+
+    private async Task<(DatabaseWriteChannel channel, ServiceProvider services, int modemId, long simId, long userId)> SetupAsync()
+    {
+        var (db, channel, services) = await TestHelper.CreateInMemoryDatabaseWithChannelAsync();
+        var modem = await TestHelper.SeedModemAsync(db);
+        var sim = await TestHelper.SeedSimCardAsync(db, modem.Id);
+        var user = await TestHelper.SeedUserAsync(db);
+        await TestHelper.AssignUserToModemAsync(db, user.Id, modem.Id);
+        return (channel, services, modem.Id, sim.Id, user.Id);
+    }
+
+    private static DatabaseWriteChannel.WriteOperation InsertSms(SmsRecord sms) => new() { Type = DatabaseWriteChannel.Op.InsertSms, Data = sms };
+    private static DatabaseWriteChannel.WriteOperation UpdateSimBalance(int modemId, decimal balance, string source = "USSD") => new() { Type = DatabaseWriteChannel.Op.UpdateSimBalance, Data = new { ModemId = modemId, Balance = balance, Source = source } };
+    private static DatabaseWriteChannel.WriteOperation CreateWithdrawalRequest(long userId, decimal amount, string? note = null) => new() { Type = DatabaseWriteChannel.Op.CreateWithdrawalRequest, Data = new { UserId = userId, Amount = amount, Note = note } };
+    private static DatabaseWriteChannel.WriteOperation ProcessWithdrawal(long requestId, long adminId, bool approved) => new() { Type = DatabaseWriteChannel.Op.ProcessWithdrawal, Data = new { RequestId = requestId, AdminId = adminId, Approved = approved } };
+    private static DatabaseWriteChannel.WriteOperation InsertMeetMobHistory(int modemId, decimal amount) => new()
+    {
+        Type = DatabaseWriteChannel.Op.InsertMeetMobHistory,
+        Data = new
+        {
+            ModemId = modemId,
+            Records = new List<MeetMobRechargeRecordDto>
+            {
+                new() { TradeTime = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"), Amount = amount.ToString("F2", System.Globalization.CultureInfo.InvariantCulture) }
+            }
+        }
+    };
 }

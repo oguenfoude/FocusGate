@@ -53,6 +53,9 @@ public class HiLinkModemOrchestrator : BackgroundService
         // Daily noon cache-void: runs in background, voids MeetMob token cache at 12:00pm every day
         _ = Task.Run(() => DailyNoonCacheVoidAsync(ct), ct);
 
+        // Daily SMS cleanup: runs in background, deletes SMS records older than 60 days
+        _ = Task.Run(() => DailySmsCleanupAsync(ct), ct);
+
         var countBefore = _handlers.Count;
         while (!ct.IsCancellationRequested)
         {
@@ -110,9 +113,18 @@ public class HiLinkModemOrchestrator : BackgroundService
                 {
                     try
                     {
-                        var imei = kv.Value.imei;
-                        await _meetMob.InvalidateTokenAsync(imei);
-                        _log.LogInformation("  [VOID] MeetMob token cleared for IMEI={Imei}", imei);
+                        var handler = kv.Value.handler;
+                        var simInfo = await _db.GetActiveSimInfoAsync(handler.Context.ModemId);
+                        var phone = MeetMobService.FormatPhone(simInfo.PhoneNumber);
+                        if (!string.IsNullOrEmpty(phone))
+                        {
+                            await _meetMob.InvalidateTokenAsync(phone);
+                            _log.LogInformation("  [VOID] MeetMob token cleared for ModemId={ModemId} Phone={Phone}", handler.Context.ModemId, phone);
+                        }
+                        else
+                        {
+                            _log.LogWarning("  [VOID] Skipped — no phone number for ModemId={ModemId}", handler.Context.ModemId);
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -133,6 +145,52 @@ public class HiLinkModemOrchestrator : BackgroundService
             {
                 _log.LogError(ex, "Daily noon cache void error — will retry tomorrow");
                 // Wait 1 hour before retrying to avoid tight loop on persistent errors
+                try { await Task.Delay(TimeSpan.FromHours(1), ct); } catch { break; }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Daily SMS cleanup: deletes SMS records older than 60 days.
+    /// Runs once per day at 3:00 AM.
+    /// </summary>
+    private async Task DailySmsCleanupAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                var now = DateTime.Now;
+                var nextRun = now.Date.AddHours(3); // 3:00 AM daily
+                if (nextRun <= now) nextRun = nextRun.AddDays(1);
+
+                var delay = nextRun - now;
+                _log.LogInformation("Daily SMS cleanup scheduled at {Time:yyyy-MM-dd HH:mm:ss} (in {Hours:0}h {Minutes:0}m)",
+                    nextRun, delay.TotalHours, delay.TotalMinutes);
+
+                try { await Task.Delay(delay, ct); }
+                catch (OperationCanceledException) { break; }
+
+                _log.LogInformation("=== DAILY SMS CLEANUP STARTING ===");
+
+                try
+                {
+                    await _db.EnqueueAsync(new DatabaseWriteChannel.WriteOperation
+                    {
+                        Type = DatabaseWriteChannel.Op.CleanupOldSms,
+                        Data = new { }
+                    });
+                    _log.LogInformation("=== DAILY SMS CLEANUP COMPLETE ===");
+                }
+                catch (Exception ex)
+                {
+                    _log.LogError(ex, "Daily SMS cleanup error — will retry tomorrow");
+                }
+            }
+            catch (OperationCanceledException) { break; }
+            catch (Exception ex)
+            {
+                _log.LogError(ex, "Daily SMS cleanup loop error — will retry in 1 hour");
                 try { await Task.Delay(TimeSpan.FromHours(1), ct); } catch { break; }
             }
         }

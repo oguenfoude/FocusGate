@@ -43,6 +43,23 @@ public class MeetMobTokenStore
         return new Dictionary<string, MeetMobToken>(_tokens);
     }
 
+    public async Task<int> PurgeExpiredAsync()
+    {
+        await LoadAsync();
+        await _lock.WaitAsync();
+        try
+        {
+            var now = DateTime.UtcNow;
+            var expired = _tokens.Where(kvp => kvp.Value.ExpiresAt <= now).Select(kvp => kvp.Key).ToList();
+            foreach (var key in expired)
+                _tokens.Remove(key);
+            if (expired.Count > 0)
+                await PersistAsync();
+            return expired.Count;
+        }
+        finally { _lock.Release(); }
+    }
+
     private async Task LoadAsync()
     {
         if (_loaded) return;

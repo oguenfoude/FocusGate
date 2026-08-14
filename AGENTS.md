@@ -6,20 +6,21 @@ Two separate products in one repo:
 
 | Directory | What | Stack |
 |-----------|------|-------|
-| `src/` | USB modem gateway (Windows service) | .NET 10, C#, SQLite, ASP.NET Core Dashboard |
+| `src/` | USB modem gateway (Windows service) | .NET 10, C#, SQLite |
 | `focusgate-web/` | Cloud admin dashboard (Next.js) | Next.js 16, React 19, MongoDB Atlas, Tailwind 4 |
 
-### .NET Gateway (5 projects)
+### .NET Gateway (4 projects)
 
 ```
-src/FocusGate.Core/           — Models, enums, PathService (no deps, 19 files)
-src/FocusGate.Infrastructure/ — DbContext, services, MongoDB sync (16 files)
-src/FocusGate.AT/             — COM port modem entry point (3 files)
-src/FocusGate.HiLink/         — Huawei HTTP modem entry point (2 files)
-src/FocusGate.Dashboard/      — ASP.NET Core Razor Pages (port 5080, 9 pages)
+src/FocusGate.Core/           — Models, enums, PathService (no deps)
+src/FocusGate.Infrastructure/ — DbContext, services, MongoDB sync
+src/FocusGate.HiLink/         — Huawei HTTP modem entry point
+src/FocusGate.Tests/          — xunit tests (25+ test files)
 ```
 
 ### Next.js Web App
+
+See `focusgate-web/AGENTS.md` for Next.js-specific rules (Next.js 16 breaking changes).
 
 ```
 focusgate-web/src/app/        — Pages: login, admin, dashboard, API routes
@@ -37,27 +38,13 @@ focusgate-web/src/i18n/       — Translations: en.json, fr.json, ar.json
 dotnet build FocusGate.sln
 
 # Run from source
-dotnet run --project src/FocusGate.HiLink    # HiLink modems + auto-launches Dashboard
-dotnet run --project src/FocusGate.AT         # AT modems + auto-launches Dashboard
-dotnet run --project src/FocusGate.Dashboard  # Dashboard only (port 5080)
+dotnet run --project src/FocusGate.HiLink    # HiLink modems
 
-# Publish self-contained (single dist)
+# Tests
+dotnet test FocusGate.sln                     # Run all xunit tests
+
+# Publish self-contained
 dotnet publish src/FocusGate.HiLink -c Release -r win-x64 --self-contained -o dist/focusgate
-dotnet publish src/FocusGate.Dashboard -c Release -r win-x64 --self-contained -o dist/focusgate-dashboard
-
-# Merge Dashboard into HiLink dist
-Copy-Item dist\focusgate-dashboard\FocusGate.Dashboard.exe dist\focusgate\ -Force
-Copy-Item dist\focusgate-dashboard\FocusGate.Dashboard.dll dist\focusgate\ -Force
-Copy-Item dist\focusgate-dashboard\FocusGate.Dashboard.pdb dist\focusgate\ -Force
-Copy-Item dist\focusgate-dashboard\FocusGate.Dashboard.deps.json dist\focusgate\ -Force
-Copy-Item dist\focusgate-dashboard\FocusGate.Dashboard.runtimeconfig.json dist\focusgate\ -Force
-Copy-Item dist\focusgate-dashboard\FocusGate.Dashboard.staticwebassets.endpoints.json dist\focusgate\ -Force
-Copy-Item dist\focusgate-dashboard\appsettings.json dist\focusgate\ -Force
-Copy-Item dist\focusgate-dashboard\web.config dist\focusgate\ -Force
-Copy-Item dist\focusgate-dashboard\en dist\focusgate\en -Recurse -Force
-Copy-Item dist\focusgate-dashboard\fr dist\focusgate\fr -Recurse -Force
-Copy-Item dist\focusgate-dashboard\ar dist\focusgate\ar -Recurse -Force
-Copy-Item dist\focusgate-dashboard\wwwroot dist\focusgate\wwwroot -Recurse -Force
 ```
 
 ### Next.js Web App
@@ -86,16 +73,14 @@ npm start        # Production server
 - **MongoDB collection names are ALL lowercase** — .NET `FocusGateMongoClient.cs` uses `"modems"`, `"simcards"`, etc. Next.js Mongoose models must match.
 - **MongoDB `_id` is Number (long)** — NOT ObjectId. `BsonClassMap.MapIdMember(m => m.Id)` maps C# `long Id` to MongoDB `_id`.
 - **Balance architecture & Single Source of Truth:**
-  - **User Wallet Credit:** Handled **exclusively** in `DatabaseWriteChannel.cs` (`HandleInsertSmsAsync`) upon receiving a recharge SMS (`Vous avez rechargé...` or `Vous avez reçu un montant de...`). Deduplicated against `UserBalanceHistories` (3-minute window). `ModemHandler.cs` never touches or double-credits user wallets.
+  - **User Wallet Credit:** Handled **exclusively** in `DatabaseWriteChannel.cs` (`HandleInsertMeetMobHistoryAsync`) when MeetMob history shows a balance increase. SMS recharge detection only logs — does NOT credit user wallet. MeetMob is the single source of truth.
   - **SIM Hardware Balance:** Tracked in `SimCards` table (`sim.Balance`) and `BalanceHistories` table. Updated via MeetMob API (`acctList[0].balanceResult[0].totalAmount`) or USSD `*222#` snapshots.
-  - **Pending flag:** When *222# returns "processing", `MarkPendingBalanceCheck(modemId)` is called. When "Solde" SMS arrives, `TryClaimPendingBalanceCheck(modemId)` updates `sim.Balance`.
-  - **MeetMob backoff:** Exponential backoff on failures (2min → 5min → 30min max). Stays under MeetMob's 1-hour lockout. Success resets counter.
+  - **Independent Systems:** SMS (5s poll), MeetMob (5s check), Watchdog (30s) run independently with no coupling. SMS detection only — MeetMob handles all balance/credit logic.
+  - **MeetMob cooldowns:** Per-phone cooldowns (30s max). No exponential backoff. WAF cooldown per-phone (60s). `pwdWillExpired` retry immediately.
   - **Credit rules:** User wallet ONLY credited when a valid recharge SMS is processed and user is assigned to the modem. New SIM starts at Balance=0.
 - **MachineId:** Each machine has a unique ID from `MachineInfoService`. Dev machine: `d26b1c221259fb12`. Client (BERRAR): `419c0cfc97666753`. Client (Alaafi): `fb96ac5207011ae1`.
 - **HTMX in Dashboard:** POST handlers must use `Response.Headers["HX-Redirect"]` + `return new EmptyResult()` — NOT `RedirectToPage()`. `_ViewStart.cshtml` sets `Layout = null` for `HX-Request` header.
-- **Dashboard DI:** Uses `AddFocusGateDashboard()` (lightweight — no MongoSync, no ConsoleCommandHandler, no RestartService).
-- **Dashboard timezone:** Use `.ToDisplayTime(Config)` extension (NOT `.ToLocalTime()`). Reads `display.timezone_offset_hours` from config; if empty, falls back to `TimeZoneInfo.FindSystemTimeZoneById("Africa/Algiers")`.
-- **Safe shutdown:** `writeChannel.CompleteAsync()` in `ApplicationStopped` (after host.RunAsync returns). Dashboard process tracked and killed in `ApplicationStopped`.
+- **Safe shutdown:** `writeChannel.CompleteAsync()` in `ApplicationStopped` (after host.RunAsync returns).
 
 ### Next.js
 
@@ -114,205 +99,29 @@ npm start        # Production server
 USB Modems → .NET Gateway → SQLite (local) → MongoDB Atlas (cloud) ← Next.js Web App (writes users/withdrawals)
 ```
 
-### Startup Sequence
+Both .NET Gateway and Next.js Web App read from SQLite.
 
-```
-1. Mutex check (Global\FocusGate_HiLink or Global\FocusGate_AT)
-2. ConfigMerger.EnsureConfig() — creates/merges config.json (atomic write)
-3. DatabaseInitializer.Initialize() — EnsureCreated + PRAGMAs + column migrations + indexes
-4. DatabaseWriteChannel.Start() — begins processing write queue
-5. MongoSyncService waits 15s, then connects to MongoDB (5 retries)
-6. HiLinkDiscovery probes IPs (parallel, 5s timeout) → finds modems
-7. For each modem found:
-   a. HiLinkCommandService.OpenAsync() — gets session cookie + CSRF token
-   b. ModemHandler created → StartAsync():
-      - GetImeiAsync, GetImsiAsync, GetNetworkRegistrationAsync
-      - Insert modem + SIM to SQLite
-      - *101# phone detection (if missing)
-      - Read startup SMS → save to SQLite → delete from SIM
-      - Start 3 async loops (watchdog, SMS poll, network retry)
-      - MeetMob login + balance (primary) → fallback to *222# if fails
-8. Orphan check — marks missing modems as Offline
-```
+**Data Ownership:** `Modems`, `SimCards`, `SmsRecords`, `BalanceHistories` — .NET only. `Users`, `UserModems`, `WithdrawalRequests`, `UserBalanceHistories` — Dashboard/Next.js only.
 
-### Steady State (every 30s)
+MongoDB Collections (8): `modems`, `simcards`, `smsrecords`, `users`, `usermodems`, `balancehistories`, `withdrawalrequests`, `userbalancehistories`. Full schema: `MONGO_SCHEMA.md`
 
-```
-SMS Poll (30s): ReadAllSmsAsync → save to SQLite (dedup: SimCardId+Sender+Content+ReceivedAt) → DeleteAllSmsAsync
-Watchdog (30s): TryRefreshSessionAsync → IsAliveAsync → mark Online/Offline/Disconnect
-Network Retry (2min): GetNetworkRegistrationAsync → mark Online + write status
-MongoDB Sync (30s): push SQLite changes → pull MongoDB changes
-Scan Cycle (30s): probe for new modems → orphan check for missing modems
-```
+## Branches
 
-### Mobilis SMS Trigger
+| Branch | MongoDB Database | Use Case |
+|--------|-----------------|----------|
+| `main` | `focusgate` | Original/dev — BERRAR machine |
+| `alaafi` | `alaafi` | Alaafi deployment |
+| `flixiDz` | `flixiDz` | bmsoft machine |
 
-```
-When recharge/transfer SMS from "Mobilis" or "77111" detected (contains "montant de" + "reçu"):
-  → MeetMob balance check (primary) → credit user if increased
-  → If MeetMob fails: *222# USSD to confirm real balance
-  → If *222# returns balance: credit user + create BalanceHistory (Source=USSD)
-  → If *222# returns "processing": set pending flag, wait for "Solde" SMS
-  → When "Solde" SMS arrives with pending flag: credit user + create BalanceHistory (Source=SMS)
-```
-
-### Key: `*222#` Only Fires At
-
-1. **Startup** — once per modem when connected (if MeetMob fails)
-2. **Mobilis SMS** — when recharge/transfer SMS detected (if MeetMob fails)
-3. **Never periodically** — no auto-refresh, no timer, no retry loop
-
-## Data Ownership (who writes each SQLite table)
-
-| Table | Writer | Notes |
-|-------|--------|-------|
-| `Modems` | .NET only | Status, IMEI, ComPort, Brand, Model, UpdatedAt |
-| `SimCards` | .NET only | Balance (from MeetMob/USSD), IMSI, PhoneNumber, IsActive |
-| `SmsRecords` | .NET only | SMS received by modems |
-| `BalanceHistories` | .NET only | SIM balance change records (from MeetMob/USSD/SMS) |
-| `Users` | Dashboard only | Created/edited by admin in ASP.NET Dashboard |
-| `UserModems` | Dashboard only | Assign/remove modem-to-user |
-| `WithdrawalRequests` | Dashboard only | User requests, admin approve/reject |
-| `UserBalanceHistories` | Dashboard only | Created on withdrawal approval |
-
-Both .NET Gateway and Dashboard read from SQLite. Next.js Web App reads from MongoDB.
-
-## MongoDB Collections (8)
-
-`modems`, `simcards`, `smsrecords`, `users`, `usermodems`, `balancehistories`, `withdrawalrequests`, `userbalancehistories`
-
-Full schema reference: `MONGO_SCHEMA.md`
-
-## Per-Modem Architecture
-
-### ModemHandler
-
-Single handler per connected modem. Manages modem lifecycle with 3 async loops:
-
-| Loop | Interval | What it does |
-|------|----------|-------------|
-| **Watchdog** | 30s | HiLink: TryRefreshSessionAsync → IsAliveAsync → Online/Offline/Disconnect. AT: send "AT" → Online/Disconnect. Also: MeetMob token refresh at 40min, retry after backoff |
-| **SMS Poll** | 30s | ReadAllSmsAsync → save to SQLite → DeleteAllSmsAsync → check for Mobilis balance SMS → trigger MeetMob/*222# if recharge |
-| **Network Retry** | 2min | GetNetworkRegistrationAsync → mark Online + write status |
-
-**Startup:** GetImei → GetImsi → GetNetworkReg → *101# phone (if missing) → startup SMS read → start loops → MeetMob login + balance
-
-**Shutdown:** Cancel CTS → loops exit → Dispose AT service → orchestrator removes handler
-
-### HiLinkCommandService
-
-HTTP API for Huawei HiLink modems:
-- `OpenAsync(ip)` — tries HTTP then HTTPS, gets SesInfo/CsrfToken
-- `TryRefreshSessionAsync()` — re-fetches SesInfo/CsrfToken, clears state on failure
-- `SendGetAsync/SendPostAsync` — with `LastRequestFailed` flag, throws on non-2xx
-- `ReadAllSmsAsync()` — XML parsing, throws on HTTP failure (caller catches and disconnects)
-- `SendUssdAsync(code, timeout)` — sends USSD, polls `/api/ussd/get`, 15s lock timeout
-- `GetBalanceAsync()` — sends *222#, parses "Solde" from response
-- `DeleteAllSmsAsync()` — deletes SMS by index, fallback 1-50 on 125002 inbox full
-
-### AtCommandService (in FocusGate.AT)
-
-Serial port AT commands:
-- Multi-baud opening (9600/115200/57600/19200)
-- AT+CMGL SMS reading with UDH concatenation reassembly + consecutive-index merge
-- GSM 7-bit/UTF-16/ISO-8859-1 SMS decoding
-- AT+CUSD USSD with hex/UTF-16/plain text response decoding
-- 10s lock timeout on SendCommand/SendUssd
-
-### MeetMobService
-
-HTTP API for MeetMob balance/data (primary source):
-- `LoginAsync(imsi, phone, at)` — sends OTP via API, polls SIM for code, logs in
-- `GetBalanceAsync(imsi, token)` — fetches balance from web API
-- `GetRechargeHistoryAsync(token)` — fetches recharge history (on-demand only)
-- `InvalidateTokenAsync(imsi)` — removes cached token
-- `CanRetryAsync(imsi)` / `SetCooldownAsync(imsi, seconds)` — per-IMSI cooldown
-- Shared across all modem handlers via orchestrator
-- Token persisted to `meetmob-tokens.json` (atomic write)
-- Exponential backoff: 2min → 5min → 30min on failures
-
-### HiLinkModemOrchestrator (in FocusGate.HiLink)
-
-BackgroundService scanning 14 IPs every 30s (max 15 modems):
-- Parallel probe → create HiLinkCommandService → create ModemHandler
-- Blacklists IPs after 3 failures; known modem IPs retried indefinitely
-- Orphan check: marks missing modems Offline (skipped when new handlers starting)
-
-### DatabaseWriteChannel
-
-Single serialized write queue using `Channel<Op>`. ALL DB writes go through here.
-
-**Operations:**
-- `InsertModem` — modem + SIM (atomic)
-- `UpdateModemStatus` — status + UpdatedAt
-- `TouchModemUpdatedAt` — heartbeat (no status change)
-- `UpsertSimCard` — detect SIM changes
-- `UpdateSimCardPhone` — phone number from USSD
-- `UpdateSimBalance` — balance from MeetMob/USSD + BalanceHistory
-- `UpdateSimBalanceFromSms` — balance from Mobilis SMS + user credit
-- `InsertSms` — with dedup (SimCardId+Sender+Content+ReceivedAt) + Mobilis trigger
-- `UpdateOrphanedModems` — marks missing modems Offline
-- `CreateWithdrawalRequest` / `ProcessWithdrawal` — withdrawal workflow
-
-### MongoSyncService
-
-BackgroundService. Bidirectional sync every 30s:
-- **Push:** SQLite → MongoDB (upsert by `_id` + `machineId`). Per-collection counts logged
-- **Pull:** MongoDB → SQLite (in-memory matching by ID). SimCard balance only overwritten when `remote.UpdatedAt > local.UpdatedAt`
-- `_lastSyncAt` only advances when BOTH push AND pull succeed
-- `_initialSyncDone` only set on full success
-- `SafeUpsertAsync` handles DuplicateKey by claiming with `_id`-only filter
-- `StopAsync` performs final sync before shutdown
-
-## Dashboard Pages (ASP.NET Razor Pages)
-
-| Page | Purpose |
-|------|---------|
-| `Index` | Dashboard home: 4 stat cards (modems, SIM balance, user wallets, pending withdrawals) |
-| `Modems` | Modem list with filter pills (All/Online/Offline/Assigned/Unassigned), HTMX 5s refresh |
-| `ModemDetail` | Modem detail: Info + Balance History + SMS tabs |
-| `Users` | User CRUD with search, archived toggle, add user modal |
-| `UserDetail` | User detail: Modems + Wallet + History + SMS tabs |
-| `Withdrawals` | Withdrawal requests: All/Pending/Approved/Rejected filter tabs, approve/reject |
-| `Warnings` | Modems with high SIM balance (>= 45000 DA) |
-| `AdminSettings` | Change username and password |
-
-## Console Commands
-
-`help`, `status`, `modems`, `modem <id>`, `sms [modemId] [days]`, `sim <modemId>`, `config`, `set-config <k> <v>`, `setmongo <uri>`, `users`, `adduser <u> <p> [d]`, `assign <uid> <mid>`, `unassign <uid> <mid>`, `settle <modId> <amt> [note]`, `report balance|sms [id] [days]`, `exit`
-
-## Deployment
-
-### Client PC (BERRAR)
-
-- **MachineId:** `419c0cfc97666753`
-- **Data path:** `C:\Users\BERRAR\AppData\Roaming\FocusGate\`
-- **Deploy:** Copy `dist\focusgate\*` to client PC, run `FocusGate.HiLink.exe`
-- **Database reset:** Delete `focusgate.db` + `-shm` + `-wal` files, restart to re-seed `admin:admin`
-
-### Client PC (Alaafi)
-
-- **MachineId:** `fb96ac5207011ae1`
-- **Data path:** `C:\Users\DELL\AppData\Roaming\FocusGate\`
-- **Content root:** `C:\Users\DELL\Documents\alaafi\`
-- **Deploy:** Copy `dist\focusgate\*` to content root, run `FocusGate.HiLink.exe`
-- **Database reset:** Delete `focusgate.db` + `-shm` + `-wal` files, restart to re-seed `admin:admin`
-
-### Mutexes & Pipes
-
-- `Global\FocusGate_HiLink` — prevents duplicate HiLink instances
-- `Global\FocusGate_AT` — prevents duplicate AT instances
-- `FocusGate_Restart` — named pipe for restart/stop signals (accepts "restart" or "stop")
+Code is identical across branches — only `mongodb.database` default differs in config.
 
 ## Gotchas
 
-- **Dashboard process locks DLLs** — kill `FocusGate.Dashboard` before rebuilding
 - **SumAsync on decimal** not supported by SQLite — use `ToListAsync()` then sum in C#
 - **ConfigMerger takes file path** not directory path: `Path.Combine(dataDir, "config.json")`
-- **`User` property on PageModel** conflicts with `Model.User` — use `new` keyword
 - **Global query filters** apply to all queries unless `IgnoreQueryFilters()` is used
 - **Admin user hidden from Users page** — filtered by `Role != UserRole.Admin` by design
-- **No tests exist** — verify with `dotnet build` (0 warnings, 0 errors) and manual browser testing
+- **Verify with build + tests** — `dotnet build FocusGate.sln` (0 warnings, 0 errors) + `dotnet test FocusGate.sln`
 - **USSD lock timeout** — HiLinkCommandService.SendUssdAsync has 15s lock timeout; AT has 10s
 - **SendUssdAsync on HiLink** sends `POST /api/ussd/send` then polls `GET /api/ussd/get` every 2s
 - **125002 error** means SMS inbox full — DeleteAllSmsAsync falls back to index-based deletion (1-50)
@@ -336,8 +145,7 @@ BackgroundService. Bidirectional sync every 30s:
 | `meetmob.base_url` | `https://meetmob.mobilis.dz` | MeetMob API base URL |
 | `meetmob.password` | `00000` | MeetMob password |
 | `meetmob.token_ttl` | `2700` | Token TTL in seconds (45min) |
-| `meetmob.http_timeout` | `30` | HTTP timeout in seconds |
-| `meetmob.login_cooldown` | `120` | Login cooldown in seconds |
-| `meetmob.fallback_cooldown` | `150` | Fallback cooldown in seconds |
-| `meetmob.backoff.initial` | `120` | Initial backoff delay (2min) |
-| `meetmob.backoff.max` | `1800` | Max backoff delay (30min) |
+| `meetmob.http_timeout` | `10` | HTTP timeout in seconds |
+| `meetmob.login_cooldown` | `5` | Login cooldown in seconds (per-phone) |
+| `meetmob.fallback_cooldown` | `5` | Fallback cooldown in seconds (per-phone) |
+| `meetmob.check.interval` | `60` | MeetMob check interval in seconds |

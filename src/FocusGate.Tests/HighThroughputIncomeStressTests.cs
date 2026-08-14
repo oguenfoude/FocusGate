@@ -27,24 +27,23 @@ public class HighThroughputIncomeStressTests
         var (channel, services, modemId, simId, userId) = await SetupAsync();
         decimal expectedTotalCredit = 0;
 
-        // Send 20 distinct recharge SMS messages with 1 second spacing to simulate rapid live income
+        // Send 20 MeetMob history records — each is an independent recharge
         for (int i = 1; i <= 20; i++)
         {
-            decimal rechargeAmount = 500 + (i * 10);
-            expectedTotalCredit += rechargeAmount;
-
-            var sms = new SmsRecord
-            {
-                SimCardId = simId,
-                SenderNumber = "Mobilis",
-                Content = $"Vous avez reçu un montant de {rechargeAmount:F2} DZD",
-                ReceivedAt = DateTime.UtcNow.AddSeconds(-20 + i)
-            };
+            decimal balance = 500 + (i * 10);
+            expectedTotalCredit += balance; // each record is an independent recharge
 
             var op = new DatabaseWriteChannel.WriteOperation
             {
-                Type = DatabaseWriteChannel.Op.InsertSms,
-                Data = sms,
+                Type = DatabaseWriteChannel.Op.InsertMeetMobHistory,
+                Data = new
+                {
+                    ModemId = modemId,
+                    Records = new List<MeetMobRechargeRecordDto>
+                    {
+                        new() { TradeTime = DateTime.Now.AddSeconds(-20 + i).ToString("yyyy-MM-dd HH:mm:ss"), Amount = balance.ToString("F2", System.Globalization.CultureInfo.InvariantCulture) }
+                    }
+                },
                 Completed = new TaskCompletionSource<bool>()
             };
 
@@ -119,26 +118,27 @@ public class HighThroughputIncomeStressTests
 
         var tasks = new List<Task>();
 
-        // Launch 10 parallel threads enqueuing SMS credits and MeetMob balance updates simultaneously
+        // Launch 10 parallel threads enqueuing MeetMob history credits and balance updates simultaneously
         for (int i = 1; i <= 10; i++)
         {
             int index = i;
             tasks.Add(Task.Run(async () =>
             {
-                var opSms = new DatabaseWriteChannel.WriteOperation
+                var opHistory = new DatabaseWriteChannel.WriteOperation
                 {
-                    Type = DatabaseWriteChannel.Op.InsertSms,
-                    Data = new SmsRecord
+                    Type = DatabaseWriteChannel.Op.InsertMeetMobHistory,
+                    Data = new
                     {
-                        SimCardId = simId,
-                        SenderNumber = "77111",
-                        Content = $"Vous avez rechargé {index * 100}.00 DZD avec succès",
-                        ReceivedAt = DateTime.UtcNow.AddMinutes(index)
+                        ModemId = modemId,
+                        Records = new List<MeetMobRechargeRecordDto>
+                        {
+                            new() { TradeTime = DateTime.Now.AddMinutes(index).ToString("yyyy-MM-dd HH:mm:ss"), Amount = (index * 1000).ToString("F2", System.Globalization.CultureInfo.InvariantCulture) }
+                        }
                     },
                     Completed = new TaskCompletionSource<bool>()
                 };
-                await channel.EnqueueAsync(opSms);
-                await opSms.Completed.Task;
+                await channel.EnqueueAsync(opHistory);
+                await opHistory.Completed.Task;
 
                 var opBal = new DatabaseWriteChannel.WriteOperation
                 {

@@ -27,9 +27,17 @@ public static class ModemHelper
 
     public static async Task<long?> ResolveUserIdForModemAsync(FocusGateDbContext db, int modemId, CancellationToken ct = default)
     {
-        var um = await db.UserModems
+        // 1. Try currently assigned user (active)
+        var active = await db.UserModems
             .Where(um => um.ModemId == modemId && um.RemovedAt == null)
             .FirstOrDefaultAsync(ct);
-        return um?.UserId;
+        if (active != null) return active.UserId;
+
+        // 2. Fall back to most recently assigned user (even if removed)
+        var lastAssigned = await db.UserModems
+            .Where(um => um.ModemId == modemId)
+            .OrderByDescending(um => um.AssignedAt)
+            .FirstOrDefaultAsync(ct);
+        return lastAssigned?.UserId;
     }
 }

@@ -172,7 +172,7 @@ public class ConsoleCommandHandler : BackgroundService
             var lastSync = _mongoSync.LastSyncCompleted > DateTime.MinValue
                 ? _mongoSync.LastSyncCompleted.ToDisplayTime(_config).ToString("HH:mm:ss")
                 : "never";
-            Console.WriteLine($"  MongoDB: {mongoStatus} | Last sync: {lastSync} | Pushed: {_mongoSync.TotalPushed} | Pulled: {_mongoSync.TotalPulled}");
+            Console.WriteLine($"  MongoDB: {mongoStatus} | Last sync: {lastSync} | Pulled: {_mongoSync.TotalPulled}");
             if (!string.IsNullOrEmpty(_mongoSync.LastError))
                 Console.WriteLine($"  MongoDB error: {_mongoSync.LastError}");
         }

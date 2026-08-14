@@ -214,57 +214,6 @@ public class BalanceLogicTests
 
     #endregion
 
-    #region Pending Balance Check Window
-
-    [Fact]
-    public void PendingBalanceCheck_WithinWindow_Claims()
-    {
-        var channel = CreateDatabaseWriteChannel();
-        channel.MarkPendingBalanceCheck(100);
-        Assert.True(channel.TryClaimPendingBalanceCheck(100, out _));
-    }
-
-    [Fact]
-    public void PendingBalanceCheck_AfterWindow_ReturnsFalse()
-    {
-        var channel = CreateDatabaseWriteChannel();
-        channel.MarkPendingBalanceCheck(101);
-
-        // Simulate expired timestamp by setting to 11 minutes ago (beyond the 10-minute window)
-        var field = typeof(DatabaseWriteChannel).GetField("_pendingBalanceChecks", BindingFlags.NonPublic | BindingFlags.Instance);
-        var dict = (ConcurrentDictionary<long, (DateTime At, decimal? RechargeAmount)>)field!.GetValue(channel)!;
-        dict[101] = (DateTime.UtcNow.AddMinutes(-11), null);
-
-        Assert.False(channel.TryClaimPendingBalanceCheck(101, out _));
-    }
-
-    [Fact]
-    public void PendingBalanceCheck_NotSet_ReturnsFalse()
-    {
-        var channel = CreateDatabaseWriteChannel();
-        Assert.False(channel.TryClaimPendingBalanceCheck(999, out _));
-    }
-
-    [Fact]
-    public void PendingBalanceCheck_ClaimConsumesEntry()
-    {
-        var channel = CreateDatabaseWriteChannel();
-        channel.MarkPendingBalanceCheck(200);
-        Assert.True(channel.TryClaimPendingBalanceCheck(200, out _));
-        Assert.False(channel.TryClaimPendingBalanceCheck(200, out _));
-    }
-
-    [Fact]
-    public void PendingBalanceCheck_ClearRemovesEntry()
-    {
-        var channel = CreateDatabaseWriteChannel();
-        channel.MarkPendingBalanceCheck(300);
-        channel.ClearPendingBalanceCheck(300);
-        Assert.False(channel.TryClaimPendingBalanceCheck(300, out _));
-    }
-
-    #endregion
-
     #region ConfigMerger Timezone Migration
 
     [Fact]
@@ -522,7 +471,7 @@ public class BalanceLogicTests
     public void Op_ContainsAllExpectedValues()
     {
         Assert.Equal(0, (int)DatabaseWriteChannel.Op.InsertModem);
-        Assert.Equal(14, (int)DatabaseWriteChannel.Op.InsertMeetMobHistory);
+        Assert.Equal(12, (int)DatabaseWriteChannel.Op.InsertMeetMobHistory);
     }
 
     #endregion

@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -18,8 +17,8 @@ public class DatabaseWriteChannel
     private readonly Channel<WriteOperation> _channel;
     private readonly IServiceProvider _services;
     private readonly ILogger<DatabaseWriteChannel> _logger;
+    private readonly FocusGateMongoClient? _mongo;
     private Task? _processingTask;
-    private readonly ConcurrentDictionary<long, (DateTime At, decimal? RechargeAmount)> _pendingBalanceChecks = new();
 
     public enum Op
     {
@@ -34,10 +33,9 @@ public class DatabaseWriteChannel
         UpdateOrphanedModems,
         CreateWithdrawalRequest,
         ProcessWithdrawal,
-        UpdateSimBalanceFromSms,
         TouchModemUpdatedAt,
-        CreditUserFromRechargeSms,
-        InsertMeetMobHistory
+        InsertMeetMobHistory,
+        CleanupOldSms
     }
 
     public DatabaseWriteChannel(IServiceProvider services, ILogger<DatabaseWriteChannel> logger)
@@ -45,36 +43,11 @@ public class DatabaseWriteChannel
         _services = services;
         _logger = logger;
         _channel = Channel.CreateUnbounded<WriteOperation>(new UnboundedChannelOptions { SingleReader = true });
+        _mongo = services.GetService<FocusGateMongoClient>();
     }
 
     public void Start(CancellationToken ct) => _processingTask = Task.Run(() => ProcessQueueAsync(ct), ct);
     public ValueTask EnqueueAsync(WriteOperation op) => _channel.Writer.WriteAsync(op);
-
-    public void MarkPendingBalanceCheck(long modemId, decimal? rechargeAmount = null) =>
-        _pendingBalanceChecks[modemId] = (DateTime.UtcNow, rechargeAmount);
-
-    public bool TryClaimPendingBalanceCheck(long modemId, out decimal? rechargeAmount)
-    {
-        CleanupStalePendingBalanceChecks();
-        rechargeAmount = null;
-        if (!_pendingBalanceChecks.TryRemove(modemId, out var entry)) return false;
-        if (DateTime.UtcNow - entry.At >= TimeSpan.FromMinutes(10)) return false;
-        rechargeAmount = entry.RechargeAmount;
-        return true;
-    }
-
-    public void ClearPendingBalanceCheck(long modemId) =>
-        _pendingBalanceChecks.TryRemove(modemId, out _);
-
-    private void CleanupStalePendingBalanceChecks()
-    {
-        var cutoff = DateTime.UtcNow - TimeSpan.FromMinutes(15);
-        foreach (var kvp in _pendingBalanceChecks)
-        {
-            if (kvp.Value.At < cutoff)
-                _pendingBalanceChecks.TryRemove(kvp.Key, out _);
-        }
-    }
 
     public async Task CompleteAsync()
     {
@@ -153,10 +126,9 @@ public class DatabaseWriteChannel
                     case Op.UpdateOrphanedModems: await HandleUpdateOrphanedModemsAsync(db, op.Data!, ct); success = true; break;
                     case Op.CreateWithdrawalRequest: success = await HandleCreateWithdrawalRequestAsync(db, op.Data!, ct); break;
                     case Op.ProcessWithdrawal: success = await HandleProcessWithdrawalAsync(db, op.Data!, ct); break;
-                    case Op.UpdateSimBalanceFromSms: success = await HandleUpdateSimBalanceFromSmsAsync(db, op.Data!, ct); break;
                     case Op.TouchModemUpdatedAt:    await HandleTouchModemUpdatedAtAsync(db, op.Data!, ct); success = true; break;
-                    case Op.CreditUserFromRechargeSms: success = await HandleCreditUserFromRechargeSmsAsync(db, op.Data!, ct); break;
                     case Op.InsertMeetMobHistory: success = await HandleInsertMeetMobHistoryAsync(db, op.Data!, ct); break;
+                    case Op.CleanupOldSms: success = await HandleCleanupOldSmsAsync(db, ct); break;
                 }
                 op.Completed?.TrySetResult(success);
             }
@@ -213,6 +185,12 @@ public class DatabaseWriteChannel
         await db.SaveChangesAsync(ct);
 
         _logger.LogInformation("New modem: Id={Id} IMEI={IMEI} SIM IMSI={IMSI}", modem.Id, imei, imsi);
+
+        if (_mongo?.IsConnected == true)
+        {
+            try { await _mongo.UpsertAsync(_mongo.Modems, modem, ct); }
+            catch (Exception ex) { _logger.LogWarning(ex, "MongoDB write failed for InsertModem — data saved to SQLite"); }
+        }
     }
 
     private async Task HandleUpdateModemStatusAsync(FocusGateDbContext db, object data, CancellationToken ct)
@@ -234,6 +212,16 @@ public class DatabaseWriteChannel
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(s => s.LastSeen, DateTime.UtcNow), ct);
         }
+
+        if (_mongo?.IsConnected == true)
+        {
+            try
+            {
+                var modem = await db.Modems.FirstOrDefaultAsync(m => m.Id == modemId, ct);
+                if (modem != null) await _mongo.UpsertAsync(_mongo.Modems, modem, ct);
+            }
+            catch (Exception ex) { _logger.LogWarning(ex, "MongoDB write failed for UpdateModemStatus — data saved to SQLite"); }
+        }
     }
 
     private async Task HandleTouchModemUpdatedAtAsync(FocusGateDbContext db, object data, CancellationToken ct)
@@ -252,6 +240,16 @@ public class DatabaseWriteChannel
             .ExecuteUpdateAsync(s => s
                 .SetProperty(s => s.LastSeen, now)
                 .SetProperty(s => s.UpdatedAt, now), ct);
+
+        if (_mongo?.IsConnected == true)
+        {
+            try
+            {
+                var modem = await db.Modems.FirstOrDefaultAsync(m => m.Id == modemId, ct);
+                if (modem != null) await _mongo.UpsertAsync(_mongo.Modems, modem, ct);
+            }
+            catch (Exception ex) { _logger.LogWarning(ex, "MongoDB write failed for TouchModemUpdatedAt — data saved to SQLite"); }
+        }
     }
 
     private async Task HandleUpdateModemComPortAsync(FocusGateDbContext db, object data, CancellationToken ct)
@@ -265,6 +263,16 @@ public class DatabaseWriteChannel
             .ExecuteUpdateAsync(s => s
                 .SetProperty(m => m.ComPort, comPort)
                 .SetProperty(m => m.UpdatedAt, DateTime.UtcNow), ct);
+
+        if (_mongo?.IsConnected == true)
+        {
+            try
+            {
+                var modem = await db.Modems.FirstOrDefaultAsync(m => m.Id == modemId, ct);
+                if (modem != null) await _mongo.UpsertAsync(_mongo.Modems, modem, ct);
+            }
+            catch (Exception ex) { _logger.LogWarning(ex, "MongoDB write failed for UpdateModemComPort — data saved to SQLite"); }
+        }
     }
 
     private async Task HandleUpsertSimCardAsync(FocusGateDbContext db, object data, CancellationToken ct)
@@ -283,6 +291,12 @@ public class DatabaseWriteChannel
             if (phone > 0)
                 activeSim.PhoneNumber = phone;
             await db.SaveChangesAsync(ct);
+
+            if (_mongo?.IsConnected == true)
+            {
+                try { await _mongo.UpsertAsync(_mongo.SimCards, activeSim, ct); }
+                catch (Exception ex) { _logger.LogWarning(ex, "MongoDB write failed for UpsertSimCard — data saved to SQLite"); }
+            }
             return;
         }
 
@@ -309,6 +323,12 @@ public class DatabaseWriteChannel
         await db.SaveChangesAsync(ct);
 
         _logger.LogInformation("SIM changed: ModemId={Id} IMSI={IMSI}", modemId, imsi);
+
+        if (_mongo?.IsConnected == true)
+        {
+            try { await _mongo.UpsertAsync(_mongo.SimCards, newSim, ct); }
+            catch (Exception ex) { _logger.LogWarning(ex, "MongoDB write failed for UpsertSimCard — data saved to SQLite"); }
+        }
     }
 
     private async Task HandleUpdateSimCardPhoneAsync(FocusGateDbContext db, object data, CancellationToken ct)
@@ -328,6 +348,12 @@ public class DatabaseWriteChannel
             sim.PhoneNumber = phone;
             sim.LastSeen = DateTime.UtcNow;
             await db.SaveChangesAsync(ct);
+
+            if (_mongo?.IsConnected == true)
+            {
+                try { await _mongo.UpsertAsync(_mongo.SimCards, sim, ct); }
+                catch (Exception ex) { _logger.LogWarning(ex, "MongoDB write failed for UpdateSimCardPhone — data saved to SQLite"); }
+            }
         }
     }
 
@@ -337,12 +363,28 @@ public class DatabaseWriteChannel
         var modemId = d["ModemId"].GetInt32();
         var now = DateTime.UtcNow;
 
+        var deactivated = await db.SimCards
+            .Where(s => s.ModemId == modemId && s.IsActive)
+            .ToListAsync(ct);
+
         await db.SimCards
             .Where(s => s.ModemId == modemId && s.IsActive)
             .ExecuteUpdateAsync(s => s
                 .SetProperty(x => x.IsActive, false)
                 .SetProperty(x => x.RemovedAt, now)
                 .SetProperty(x => x.LastSeen, now), ct);
+
+        if (deactivated.Count > 0 && _mongo?.IsConnected == true)
+        {
+            foreach (var sim in deactivated)
+            {
+                sim.IsActive = false;
+                sim.RemovedAt = now;
+                sim.LastSeen = now;
+            }
+            try { await _mongo.UpsertManyAsync(_mongo.SimCards, deactivated, ct); }
+            catch (Exception ex) { _logger.LogWarning(ex, "MongoDB write failed for DeactivateSimCards — data saved to SQLite"); }
+        }
     }
 
     private async Task<bool> HandleUpdateSimBalanceAsync(FocusGateDbContext db, object data, CancellationToken ct)
@@ -371,11 +413,12 @@ public class DatabaseWriteChannel
             if (modem != null)
                 modem.UpdatedAt = DateTime.UtcNow;
 
-            if (newBalance > oldBalance)
+            BalanceHistory? bh = null;
+            if (Math.Abs(newBalance - oldBalance) > 0.01m)
             {
                 var userId = await ModemHelper.ResolveUserIdForModemAsync(db, modemId, ct);
 
-                db.BalanceHistories.Add(new BalanceHistory
+                bh = new BalanceHistory
                 {
                     SimCardId = sim.Id,
                     ModemId = modemId,
@@ -384,109 +427,33 @@ public class DatabaseWriteChannel
                     PreviousBalance = oldBalance,
                     Source = source,
                     RecordedAt = DateTime.UtcNow
-                });
+                };
+                db.BalanceHistories.Add(bh);
 
-                _logger.LogInformation("{Source} balance recorded: Modem={ModemId} Sim={SimId} {Old:F2} → {New:F2} DZD (user credit via recharge SMS)",
-                    source, modemId, sim.Id, oldBalance, newBalance);
-            }
-            else if (newBalance < oldBalance)
-            {
-                _logger.LogInformation("Balance decreased via {Source}: Modem={ModemId} Sim={SimId} {Old:F2} → {New:F2} DZD",
-                    source, modemId, sim.Id, oldBalance, newBalance);
+                if (newBalance > oldBalance)
+                    _logger.LogInformation("{Source} balance increased: Modem={ModemId} Sim={SimId} {Old:F2} → {New:F2} DZD",
+                        source, modemId, sim.Id, oldBalance, newBalance);
+                else
+                    _logger.LogInformation("{Source} balance decreased: Modem={ModemId} Sim={SimId} {Old:F2} → {New:F2} DZD",
+                        source, modemId, sim.Id, oldBalance, newBalance);
             }
 
             await db.SaveChangesAsync(ct);
+
+            if (_mongo?.IsConnected == true)
+            {
+                try { await _mongo.UpsertAsync(_mongo.SimCards, sim, ct); }
+                catch (Exception ex) { _logger.LogWarning(ex, "MongoDB write failed for UpdateSimBalance (SimCard) — data saved to SQLite"); }
+                if (bh != null)
+                {
+                    try { await _mongo.UpsertAsync(_mongo.BalanceHistories, bh, ct); }
+                    catch (Exception ex) { _logger.LogWarning(ex, "MongoDB write failed for UpdateSimBalance (BalanceHistory) — data saved to SQLite"); }
+                }
+            }
             return true;
         }
         _logger.LogWarning("{Source} balance: No active SIM on modem {ModemId}", source, modemId);
         return false;
-    }
-
-    private async Task<bool> HandleUpdateSimBalanceFromSmsAsync(FocusGateDbContext db, object data, CancellationToken ct)
-    {
-        var d = Deserialize(data);
-        var modemId = d["ModemId"].GetInt32();
-        var newBalance = d["Balance"].GetDecimal();
-
-        var sim = await db.SimCards.FirstOrDefaultAsync(s => s.ModemId == modemId && s.IsActive, ct);
-        if (sim == null) return false;
-
-        var oldSimBalance = sim.Balance;
-        sim.Balance = newBalance;
-        sim.VerifiedAt = DateTime.UtcNow;
-        sim.LastSeen = DateTime.UtcNow;
-
-        if (newBalance > oldSimBalance)
-        {
-            var userId = await ModemHelper.ResolveUserIdForModemAsync(db, modemId, ct);
-
-            db.BalanceHistories.Add(new BalanceHistory
-            {
-                SimCardId = sim.Id,
-                ModemId = modemId,
-                UserId = userId,
-                Balance = newBalance,
-                PreviousBalance = oldSimBalance,
-                Source = BalanceSource.SMS,
-                RecordedAt = DateTime.UtcNow
-            });
-
-            _logger.LogInformation("Balance recorded via *222# after recharge: Modem={ModemId} Sim={SimId} {Old:F2} → {New:F2} DZD (user credit via recharge SMS)",
-                modemId, sim.Id, oldSimBalance, newBalance);
-        }
-        else if (newBalance < oldSimBalance)
-        {
-            _logger.LogInformation("Balance decreased via *222# SMS: Modem={ModemId} Sim={SimId} {Old:F2} → {New:F2} DZD",
-                modemId, sim.Id, oldSimBalance, newBalance);
-        }
-
-        await db.SaveChangesAsync(ct);
-        return true;
-    }
-
-    private async Task<bool> HandleCreditUserFromRechargeSmsAsync(FocusGateDbContext db, object data, CancellationToken ct)
-    {
-        var d = Deserialize(data);
-        var modemId = d["ModemId"].GetInt32();
-        var rechargeAmount = d["RechargeAmount"].GetDecimal();
-
-        if (rechargeAmount <= 0) return false;
-
-        var sim = await db.SimCards.FirstOrDefaultAsync(s => s.ModemId == modemId && s.IsActive, ct);
-        if (sim == null) return false;
-
-        var userId = await ModemHelper.ResolveUserIdForModemAsync(db, modemId, ct);
-        if (userId <= 0)
-        {
-            _logger.LogWarning("CREDIT ORPHANED via recharge SMS: Modem={ModemId} Sim={SimId} +{Amount:F2} DZD — no user assigned", modemId, sim.Id, rechargeAmount);
-            return false;
-        }
-
-        var cutoff = DateTime.UtcNow.AddMinutes(-30);
-        var alreadyCredited = await db.UserBalanceHistories.AnyAsync(h =>
-            h.UserId == userId
-            && h.SimCardId == sim.Id
-            && h.Amount == rechargeAmount
-            && h.Type == 0
-            && h.RecordedAt >= cutoff, ct);
-
-        if (alreadyCredited)
-        {
-            _logger.LogInformation("CREDIT SKIPPED (duplicate): Modem={ModemId} Sim={SimId} User={UserId} +{Amount:F2} DZD — already credited within 30min", modemId, sim.Id, userId, rechargeAmount);
-            return false;
-        }
-
-        // Credit user wallet only — SIM balance is updated separately by MeetMob/USSD snapshot.
-        // Do NOT modify sim.Balance here to avoid double-counting when a balance snapshot already ran.
-        var (credited, userOld, userNew) = CreditUserBalance(db, userId, rechargeAmount, sim.Id);
-        if (credited)
-            _logger.LogInformation("CREDIT via recharge SMS: Modem={ModemId} Sim={SimId} User={UserId} +{Amount:F2} DZD, Wallet: {UserOld:F2} → {UserNew:F2}",
-                modemId, sim.Id, userId, rechargeAmount, userOld, userNew);
-        else
-            _logger.LogWarning("CREDIT FAILED via recharge SMS: Modem={ModemId} Sim={SimId} +{Amount:F2} DZD — user {UserId} not found", modemId, sim.Id, rechargeAmount, userId);
-
-        await db.SaveChangesAsync(ct);
-        return credited;
     }
 
     private async Task<bool> HandleInsertSmsAsync(FocusGateDbContext db, SmsRecord sms, CancellationToken ct)
@@ -497,14 +464,13 @@ public class DatabaseWriteChannel
             return false;
         }
 
-        // Skip re-reads of the same SMS from the SIM (same sender + content + same day)
-        // Same text from same SIM on the same day is a duplicate re-read from SIM memory
+        // Simple dedup: same sender + content + SIM within 4 minutes
         var exists = await db.SmsRecords
             .AnyAsync(s => s.SimCardId == sms.SimCardId
                 && s.SenderNumber == sms.SenderNumber
                 && s.Content == sms.Content
-                && s.ReceivedAt >= sms.ReceivedAt.AddMinutes(-2)
-                && s.ReceivedAt <= sms.ReceivedAt.AddMinutes(2), ct);
+                && s.ReceivedAt >= sms.ReceivedAt.AddMinutes(-4)
+                && s.ReceivedAt <= sms.ReceivedAt.AddMinutes(4), ct);
 
         if (exists)
         {
@@ -528,6 +494,11 @@ public class DatabaseWriteChannel
         }
 
         await db.SaveChangesAsync(ct);
+
+        if (_mongo?.IsConnected == true)
+        {
+            await _mongo.WriteSmsAsync(sms, ct);
+        }
         return true;
     }
 
@@ -537,6 +508,18 @@ public class DatabaseWriteChannel
         sim.VerifiedAt = now;
         sim.LastSeen = now;
 
+        // CHECK RECHARGE FIRST — recharge SMS may contain "Solde" text (e.g. "Solde disponible: ...")
+        // This ensures recharge detection is never blocked by Solde misclassification.
+        if (IsRechargeSms(sms.Content))
+        {
+            // SMS is for detection only — MeetMob handles crediting the user wallet
+            var rechargeAmount = ExtractRechargeAmountFromContent(sms.Content);
+            _logger.LogInformation("RECHARGE SMS detected: Sim={SimId} Modem={ModemId} Amount={Amount} — MeetMob will handle crediting",
+                sim.Id, sim.ModemId, rechargeAmount?.ToString("F2") ?? "unknown");
+            return;
+        }
+
+        // THEN check Solde (balance SMS)
         if (sms.Content.Contains("Solde", StringComparison.OrdinalIgnoreCase))
         {
             var balance = ExtractBalanceFromContent(sms.Content);
@@ -547,10 +530,9 @@ public class DatabaseWriteChannel
                 sim.VerifiedAt = now;
                 sim.LastSeen = now;
 
-                long? userId = null;
                 if (oldSimBalance != balance.Value)
                 {
-                    userId = await ModemHelper.ResolveUserIdForModemAsync(db, sim.ModemId, ct);
+                    var userId = await ModemHelper.ResolveUserIdForModemAsync(db, sim.ModemId, ct);
 
                     db.BalanceHistories.Add(new BalanceHistory
                     {
@@ -566,124 +548,8 @@ public class DatabaseWriteChannel
                     _logger.LogInformation("SIM Balance updated from Solde SMS: Sim={SimId} Modem={ModemId} {Old:F2} → {New:F2} DZD",
                         sim.Id, sim.ModemId, oldSimBalance, balance.Value);
                 }
-
-                // If a pending balance check was set (from a recharge SMS where balance was unavailable),
-                // credit the user with the stored exact recharge amount.
-                if (TryClaimPendingBalanceCheck(sim.ModemId, out var pendingRechargeAmount))
-                {
-                    if (pendingRechargeAmount.HasValue && pendingRechargeAmount.Value > 0)
-                    {
-                        userId ??= await ModemHelper.ResolveUserIdForModemAsync(db, sim.ModemId, ct);
-                        if (userId.HasValue && userId.Value > 0)
-                        {
-                            var (credited, userOld, userNew) = CreditUserBalance(db, userId.Value, pendingRechargeAmount.Value, sim.Id);
-                            if (credited)
-                                _logger.LogInformation("CREDIT via Solde SMS (pending): Modem={ModemId} Sim={SimId} User={UserId} +{Amount:F2} DZD, Wallet: {Old:F2} → {New:F2}",
-                                    sim.ModemId, sim.Id, userId.Value, pendingRechargeAmount.Value, userOld, userNew);
-                            else
-                                _logger.LogWarning("CREDIT FAILED via Solde SMS (pending): Modem={ModemId} Sim={SimId} +{Amount:F2} DZD — user not found",
-                                    sim.ModemId, sim.Id, pendingRechargeAmount.Value);
-                        }
-                    }
-                    else
-                    {
-                        _logger.LogWarning("Solde SMS claimed pending flag but no recharge amount stored — skipping user credit: Modem={ModemId} Sim={SimId}",
-                            sim.ModemId, sim.Id);
-                    }
-                }
             }
         }
-        else if (IsRechargeSms(sms.Content))
-        {
-            var rechargeAmount = ExtractRechargeAmountFromContent(sms.Content);
-            if (rechargeAmount.HasValue && rechargeAmount.Value > 0)
-            {
-                var userId = await ModemHelper.ResolveUserIdForModemAsync(db, sim.ModemId, ct);
-                if (userId.HasValue && userId.Value > 0)
-                {
-                    var fingerprint = ExtractRechargeFingerprint(sms.Content, sim.Id, rechargeAmount.Value, sms.ReceivedAt);
-
-                    // Check 1: Has this EXACT carrier transaction fingerprint already been credited for this user/SIM?
-                    var alreadyCreditedByFingerprint = await db.UserBalanceHistories.AnyAsync(h =>
-                        h.UserId == userId.Value
-                        && h.SimCardId == sim.Id
-                        && h.Note != null
-                        && h.Note.Contains(fingerprint), ct);
-
-                    // Check 2: Companion pair check within 30 seconds for the same amount.
-                    // If a TX:xxx or TS:xxx was credited in the last 30s for the exact same amount on this SIM,
-                    // and current SMS has NO distinct transaction ID (e.g. generic companion confirmation SMS),
-                    // then treat it as the companion pair of the same recharge.
-                    bool alreadyCreditedCompanion = false;
-                    if (!alreadyCreditedByFingerprint)
-                    {
-                        var companionCutoff = DateTime.UtcNow.AddSeconds(-30);
-                        var recentCredits = await db.UserBalanceHistories
-                            .Where(h => h.UserId == userId.Value
-                                && h.SimCardId == sim.Id
-                                && h.Amount == rechargeAmount.Value
-                                && h.Type == 0
-                                && h.RecordedAt >= companionCutoff)
-                            .ToListAsync(ct);
-
-                        if (recentCredits.Count > 0)
-                        {
-                            if (!fingerprint.StartsWith("TX:"))
-                            {
-                                alreadyCreditedCompanion = true;
-                            }
-                            else
-                            {
-                                alreadyCreditedCompanion = recentCredits.Any(h =>
-                                    h.Note != null && (h.Note.Contains("TS:") || h.Note.Contains(fingerprint)));
-                            }
-                        }
-                    }
-
-                    if (!alreadyCreditedByFingerprint && !alreadyCreditedCompanion)
-                    {
-                        var note = $"Credit from SIM | {fingerprint}";
-                        var (credited, userOld, userNew) = CreditUserBalance(db, userId.Value, rechargeAmount.Value, sim.Id, note);
-                        if (credited)
-                        {
-                            _logger.LogInformation("INSTANT CREDIT via Recharge SMS: Modem={ModemId} Sim={SimId} User={UserId} +{Amount:F2} DZD ({Fingerprint}), Wallet: {UserOld:F2} → {UserNew:F2}",
-                                sim.ModemId, sim.Id, userId.Value, rechargeAmount.Value, fingerprint, userOld, userNew);
-                        }
-                    }
-                    else
-                    {
-                        _logger.LogInformation("Recharge SMS already credited ({Reason}): Modem={ModemId} Sim={SimId} User={UserId} Amount={Amount:F2} DZD ({Fingerprint})",
-                            alreadyCreditedByFingerprint ? "Exact Fingerprint" : "Companion Pair within 30s",
-                            sim.ModemId, sim.Id, userId.Value, rechargeAmount.Value, fingerprint);
-                    }
-                }
-                else
-                {
-                    _logger.LogWarning("Recharge SMS received but no user assigned to Modem={ModemId}: Sim={SimId} +{Amount:F2} DZD",
-                        sim.ModemId, sim.Id, rechargeAmount.Value);
-                }
-            }
-        }
-    }
-
-    internal static string ExtractRechargeFingerprint(string content, long simId, decimal amount, DateTime receivedAt)
-    {
-        // 1. Check for Transaction ID (French / Arabic)
-        var txMatch = System.Text.RegularExpressions.Regex.Match(content, @"(?:transaction\s+est\s*|رقم\s*المعاملة\s*|numéro\s*de\s*(?:la\s*)?transaction\s*[:\s]*|transaction\s*[:#\s]*)(\d+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        if (txMatch.Success)
-        {
-            return $"TX:{txMatch.Groups[1].Value.Trim()}";
-        }
-
-        // 2. Check for Carrier Timestamp inside text
-        var dateMatch = System.Text.RegularExpressions.Regex.Match(content, @"(?:le\s*|بتاريخ\s*)(\d{1,2}/\d{1,2}/\d{2,4}(?:\s+\d{1,2}:\d{1,2}(?::\d{1,2})?)?)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        if (dateMatch.Success)
-        {
-            return $"TS:{dateMatch.Groups[1].Value.Trim()}";
-        }
-
-        // 3. Fallback: Sim + Amount + exact second
-        return $"FALLBACK:Sim={simId}_Amt={amount:F2}_{receivedAt:yyyyMMddHHmmss}";
     }
 
     internal static decimal? ExtractBalanceFromContent(string content)
@@ -813,6 +679,11 @@ public class DatabaseWriteChannel
 
         if (activeImeis.Count == 0)
         {
+            var orphanedModems = await db.Modems
+                .Where(m => m.Status != ModemStatus.Offline && m.Status != ModemStatus.Error
+                         && m.Status != ModemStatus.Detected && m.Status != ModemStatus.PendingNetwork)
+                .ToListAsync(ct);
+
             int allOrphaned = await db.Modems
                 .Where(m => m.Status != ModemStatus.Offline && m.Status != ModemStatus.Error
                          && m.Status != ModemStatus.Detected && m.Status != ModemStatus.PendingNetwork)
@@ -822,11 +693,25 @@ public class DatabaseWriteChannel
                     .SetProperty(m => m.UpdatedAt, DateTime.UtcNow), ct);
 
             if (allOrphaned > 0)
+            {
                 _logger.LogWarning("All {Count} online modems orphaned -> Offline", allOrphaned);
+                if (_mongo?.IsConnected == true)
+                {
+                    foreach (var m in orphanedModems) { m.Status = ModemStatus.Offline; m.ComPort = null; }
+                    try { await _mongo.UpsertManyAsync(_mongo.Modems, orphanedModems, ct); }
+                    catch (Exception ex) { _logger.LogWarning(ex, "MongoDB write failed for UpdateOrphanedModems — data saved to SQLite"); }
+                }
+            }
             return;
         }
 
         var orphaned = await db.Modems
+            .Where(m => m.Status != ModemStatus.Offline && m.Status != ModemStatus.Error
+                     && m.Status != ModemStatus.Detected && m.Status != ModemStatus.PendingNetwork
+                     && !activeImeis.Contains(m.IMEI))
+            .ToListAsync(ct);
+
+        var orphanedCount = await db.Modems
             .Where(m => m.Status != ModemStatus.Offline && m.Status != ModemStatus.Error
                      && m.Status != ModemStatus.Detected && m.Status != ModemStatus.PendingNetwork
                      && !activeImeis.Contains(m.IMEI))
@@ -835,10 +720,16 @@ public class DatabaseWriteChannel
                 .SetProperty(m => m.ComPort, (string?)null)
                 .SetProperty(m => m.UpdatedAt, DateTime.UtcNow), ct);
 
-        if (orphaned > 0)
+        if (orphanedCount > 0)
         {
             _logger.LogWarning("{Count} modems orphaned -> Offline (active: {ActiveCount})",
-                orphaned, activeImeis.Count);
+                orphanedCount, activeImeis.Count);
+            if (_mongo?.IsConnected == true)
+            {
+                foreach (var m in orphaned) { m.Status = ModemStatus.Offline; m.ComPort = null; }
+                try { await _mongo.UpsertManyAsync(_mongo.Modems, orphaned, ct); }
+                catch (Exception ex) { _logger.LogWarning(ex, "MongoDB write failed for UpdateOrphanedModems — data saved to SQLite"); }
+            }
         }
     }
 
@@ -872,6 +763,12 @@ public class DatabaseWriteChannel
         await db.SaveChangesAsync(ct);
 
         _logger.LogInformation("Withdrawal request created: Id={Id} UserId={UserId} Amount={Amount} DZD", request.Id, userId, amount);
+
+        if (_mongo?.IsConnected == true)
+        {
+            try { await _mongo.UpsertAsync(_mongo.WithdrawalRequests, request, ct); }
+            catch (Exception ex) { _logger.LogWarning(ex, "MongoDB write failed for CreateWithdrawalRequest — data saved to SQLite"); }
+        }
         return true;
     }
 
@@ -896,6 +793,9 @@ public class DatabaseWriteChannel
         if (user == null) { _logger.LogWarning("Process withdrawal failed: user not found"); return false; }
 
         var now = DateTime.UtcNow;
+        BalanceHistory? newBh = null;
+        UserBalanceHistory? newUbh = null;
+
         if (approved)
         {
             request.Status = WithdrawalStatus.Approved;
@@ -908,7 +808,7 @@ public class DatabaseWriteChannel
             user.Balance = Math.Max(0, user.Balance - request.Amount);
             user.UpdatedAt = now;
 
-            db.BalanceHistories.Add(new BalanceHistory
+            newBh = new BalanceHistory
             {
                 SimCardId = null,
                 ModemId = null,
@@ -918,9 +818,10 @@ public class DatabaseWriteChannel
                 Source = BalanceSource.Withdrawal,
                 RecordedAt = now,
                 UpdatedAt = now
-            });
+            };
+            db.BalanceHistories.Add(newBh);
 
-            db.UserBalanceHistories.Add(new UserBalanceHistory
+            newUbh = new UserBalanceHistory
             {
                 UserId = user.Id,
                 Amount = -request.Amount,
@@ -930,7 +831,8 @@ public class DatabaseWriteChannel
                 Note = $"Withdrawal approved{(string.IsNullOrEmpty(adminNote) ? "" : ": " + adminNote)}",
                 RecordedAt = now,
                 UpdatedAt = now
-            });
+            };
+            db.UserBalanceHistories.Add(newUbh);
 
             _logger.LogInformation("Withdrawal approved: Request={RequestId} User={UserId} Amount={Amount} DZD", requestId, user.Id, request.Amount);
         }
@@ -946,6 +848,26 @@ public class DatabaseWriteChannel
         }
 
         await db.SaveChangesAsync(ct);
+
+        if (_mongo?.IsConnected == true)
+        {
+            try
+            {
+                await _mongo.UpsertAsync(_mongo.WithdrawalRequests, request, ct);
+                await _mongo.UpsertAsync(_mongo.Users, user, ct);
+            }
+            catch (Exception ex) { _logger.LogWarning(ex, "MongoDB write failed for ProcessWithdrawal — data saved to SQLite"); }
+            if (newBh != null)
+            {
+                try { await _mongo.UpsertAsync(_mongo.BalanceHistories, newBh, ct); }
+                catch (Exception ex) { _logger.LogWarning(ex, "MongoDB write failed for ProcessWithdrawal (BalanceHistory) — data saved to SQLite"); }
+            }
+            if (newUbh != null)
+            {
+                try { await _mongo.UpsertAsync(_mongo.UserBalanceHistories, newUbh, ct); }
+                catch (Exception ex) { _logger.LogWarning(ex, "MongoDB write failed for ProcessWithdrawal (UserBalanceHistory) — data saved to SQLite"); }
+            }
+        }
         return true;
     }
 
@@ -976,7 +898,6 @@ public class DatabaseWriteChannel
     {
         var d = Deserialize(data);
         var modemId = d["ModemId"].GetInt32();
-        var imsi = d["Imsi"].GetString() ?? "";
         var records = JsonSerializer.Deserialize<List<MeetMobRechargeRecordDto>>(d["Records"].GetRawText()) ?? new();
 
         var sim = await db.SimCards.FirstOrDefaultAsync(s => s.ModemId == modemId && s.IsActive, ct);
@@ -988,61 +909,163 @@ public class DatabaseWriteChannel
 
         var userId = await ModemHelper.ResolveUserIdForModemAsync(db, modemId, ct);
         var inserted = 0;
+        var credited = 0;
+        var totalCreditAmount = 0m;
+        var creditedUserIds = new HashSet<long>();
 
+        // Load existing MeetMob balance history for dedup
+        var existingHistory = await db.BalanceHistories
+            .Where(h => h.SimCardId == sim.Id && h.Source == BalanceSource.MeetMob)
+            .ToListAsync(ct);
+        var existingSet = new HashSet<(decimal Balance, DateTime RecordedAt)>(
+            existingHistory.Select(h => (h.Balance, h.RecordedAt)));
+
+        // Parse all records
+        var parsedRecords = new List<(DateTime RecordedAt, decimal Amount, string RawTime, string RawAmount)>();
         foreach (var record in records)
         {
             if (!DateTime.TryParse(record.TradeTime, System.Globalization.CultureInfo.InvariantCulture,
                 System.Globalization.DateTimeStyles.AssumeLocal, out var recordedAt))
             {
-                _logger.LogDebug("MeetMob history: Failed to parse timestamp '{Time}' for modem {ModemId}", record.TradeTime, modemId);
+                _logger.LogWarning("MeetMob history modem {ModemId}: SKIP — can't parse time '{Time}'", modemId, record.TradeTime);
                 continue;
             }
-
             if (!decimal.TryParse(MeetMobService.NormalizeMeetMobAmount(record.Amount),
                 System.Globalization.NumberStyles.Number,
                 System.Globalization.CultureInfo.InvariantCulture, out var amount) || amount <= 0)
             {
-                _logger.LogDebug("MeetMob history: Failed to parse amount '{Amount}' for modem {ModemId}", record.Amount, modemId);
+                _logger.LogWarning("MeetMob history modem {ModemId}: SKIP — can't parse amount '{Amount}'", modemId, record.Amount);
+                continue;
+            }
+            parsedRecords.Add((recordedAt, amount, record.TradeTime, record.Amount));
+        }
+
+        if (parsedRecords.Count == 0)
+        {
+            _logger.LogInformation("MeetMob history modem {ModemId}: 0 valid records from API", modemId);
+            return false;
+        }
+
+        // Sort by time ASCENDING — each record = one recharge event
+        // The API field "rechargeAmount" is the individual recharge amount, NOT a balance level
+        var byTime = parsedRecords
+            .OrderBy(r => r.RecordedAt)
+            .ToList();
+
+        var uniqueAmounts = byTime.Count;
+        _logger.LogInformation("MeetMob history modem {ModemId}: {RawCount} raw → {UniqueCount} records by time, sim={SimBalance:F2}, user={UserId})",
+            modemId, parsedRecords.Count, uniqueAmounts, sim.Balance, userId);
+
+        foreach (var (recordedAt, amount, rawTime, rawAmount) in byTime)
+        {
+            // Dedup: already credited in BalanceHistory?
+            if (existingSet.Contains((amount, recordedAt)))
+            {
+                _logger.LogDebug("MeetMob history modem {ModemId}: SKIP [{Time}] {Amount} — already credited", modemId, rawTime, rawAmount);
                 continue;
             }
 
-            var oldBalance = sim.Balance;
-            sim.Balance = amount;
+            // Skip zero/negative amounts
+            if (amount <= 0)
+            {
+                _logger.LogDebug("MeetMob history modem {ModemId}: SKIP [{Time}] {Amount} — zero/negative", modemId, rawTime, rawAmount);
+                continue;
+            }
+
+            // New recharge — credit amount directly (amount IS the recharge amount)
             sim.VerifiedAt = DateTime.UtcNow;
             sim.LastSeen = DateTime.UtcNow;
 
-            db.BalanceHistories.Add(new BalanceHistory
+            var bh = new BalanceHistory
             {
                 SimCardId = sim.Id,
                 ModemId = modemId,
                 UserId = userId > 0 ? userId : null,
                 Balance = amount,
-                PreviousBalance = oldBalance,
+                PreviousBalance = sim.Balance - amount,
                 Source = BalanceSource.MeetMob,
                 RecordedAt = recordedAt
-            });
+            };
+            db.BalanceHistories.Add(bh);
             inserted++;
+
+            _logger.LogInformation("MeetMob history modem {ModemId}: RECHARGE [{Time}] +{Amount:F2} DZD (sim balance={SimBalance:F2})",
+                modemId, rawTime, amount, sim.Balance);
+
+            if (userId > 0)
+            {
+                var creditResult = CreditUserBalance(db, userId, amount, sim.Id, $"MeetMob recharge ({rawTime})");
+                if (creditResult.credited)
+                {
+                    credited++;
+                    totalCreditAmount += amount;
+                    creditedUserIds.Add(userId!.Value);
+                    _logger.LogInformation("MeetMob history modem {ModemId}: CREDIT +{Amount:F2} DZD → user {UserId}",
+                        modemId, amount, userId);
+                }
+                else
+                {
+                    _logger.LogWarning("MeetMob history modem {ModemId}: CREDIT FAILED +{Amount:F2} DZD → user {UserId}",
+                        modemId, amount, userId);
+                }
+            }
         }
 
         if (inserted > 0)
         {
+            var newBalanceHistories = db.ChangeTracker.Entries<BalanceHistory>()
+                .Where(e => e.State == EntityState.Added)
+                .Select(e => e.Entity).ToList();
+            var newUbh = db.ChangeTracker.Entries<UserBalanceHistory>()
+                .Where(e => e.State == EntityState.Added)
+                .Select(e => e.Entity).ToList();
+
             await db.SaveChangesAsync(ct);
-            _logger.LogInformation("MeetMob history: Inserted {Count} records for modem {ModemId} SIM {SimId}", inserted, modemId, sim.Id);
+            _logger.LogInformation("MeetMob history modem {ModemId}: DONE — inserted={Inserted}, credited={Credited}, totalCredit={Total:F2} DZD, user={UserId}",
+                modemId, inserted, credited, totalCreditAmount, userId);
+
+            if (_mongo?.IsConnected == true)
+            {
+                try { await _mongo.UpsertAsync(_mongo.SimCards, sim, ct); }
+                catch (Exception ex) { _logger.LogWarning(ex, "MongoDB write failed for InsertMeetMobHistory (SimCard) — data saved to SQLite"); }
+                if (newBalanceHistories.Count > 0)
+                {
+                    try { await _mongo.InsertManyAsync(_mongo.BalanceHistories, newBalanceHistories, ct); }
+                    catch (Exception ex) { _logger.LogWarning(ex, "MongoDB write failed for InsertMeetMobHistory (BalanceHistory) — data saved to SQLite"); }
+                }
+                if (creditedUserIds.Count > 0)
+                {
+                    foreach (var uid in creditedUserIds)
+                    {
+                        try
+                        {
+                            var user = await db.Users.FirstOrDefaultAsync(u => u.Id == uid, ct);
+                            if (user != null) await _mongo.UpsertAsync(_mongo.Users, user, ct);
+                        }
+                        catch (Exception ex) { _logger.LogWarning(ex, "MongoDB write failed for InsertMeetMobHistory (User) — data saved to SQLite"); }
+                    }
+                }
+                if (newUbh.Count > 0)
+                {
+                    try { await _mongo.InsertManyAsync(_mongo.UserBalanceHistories, newUbh, ct); }
+                    catch (Exception ex) { _logger.LogWarning(ex, "MongoDB write failed for InsertMeetMobHistory (UserBalanceHistory) — data saved to SQLite"); }
+                }
+            }
         }
 
         return inserted > 0;
     }
 
-    private static async Task<bool> IsDuplicateBalanceHistoryAsync(FocusGateDbContext db, long? simCardId, BalanceSource source, DateTime recordedAt, decimal amount)
+    private static async Task<bool> HandleCleanupOldSmsAsync(FocusGateDbContext db, CancellationToken ct)
     {
-        if (simCardId == null) return false;
-        var window = TimeSpan.FromSeconds(5);
-        return await db.BalanceHistories.AnyAsync(h =>
-            h.SimCardId == simCardId &&
-            h.Source == source &&
-            h.Balance == amount &&
-            h.RecordedAt >= recordedAt - window &&
-            h.RecordedAt <= recordedAt + window);
+        var cutoff = DateTime.UtcNow.AddDays(-60);
+        var deleted = await db.SmsRecords.Where(s => s.ReceivedAt < cutoff).ExecuteDeleteAsync(ct);
+        if (deleted > 0)
+        {
+            // Also remove from MongoDB if connected
+            // Note: SMS records are not synced to MongoDB, so no MongoDB cleanup needed
+        }
+        return deleted > 0;
     }
 
     private static Dictionary<string, JsonElement> Deserialize(object data)

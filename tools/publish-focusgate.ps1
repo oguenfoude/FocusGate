@@ -33,7 +33,7 @@ $DashDist = Join-Path $DistDir "focusgate-dashboard"
 
 Write-Host "`n[3/4] Publishing Self-Contained Binaries ($Runtime)..." -ForegroundColor Yellow
 
-Get-Process -Name "FocusGate.HiLink", "FocusGate.Dashboard", "FocusGate.AT" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process -Name "FocusGate.HiLink" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Milliseconds 500
 
 try { if (Test-Path $HiLinkDist) { Remove-Item $HiLinkDist -Recurse -Force -ErrorAction SilentlyContinue } } catch {}

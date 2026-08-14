@@ -160,6 +160,90 @@ public class FocusGateMongoClient
         });
     }
 
+    public async Task<bool> UpsertAsync<T>(IMongoCollection<T> collection, T document, CancellationToken ct = default) where T : class
+    {
+        if (!IsConnected) return false;
+        try
+        {
+            var idProp = typeof(T).GetProperty("Id");
+            if (idProp == null) return false;
+            var id = idProp.GetValue(document);
+            if (id == null) return false;
+
+            var filter = Builders<T>.Filter.Eq("_id", id);
+            var options = new ReplaceOptions { IsUpsert = true };
+            await collection.ReplaceOneAsync(filter, document, options, ct);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "MongoDB upsert failed for {Type}", typeof(T).Name);
+            return false;
+        }
+    }
+
+    public async Task<bool> WriteSmsAsync(SmsRecord sms, CancellationToken ct = default)
+    {
+        if (!IsConnected) return false;
+        try
+        {
+            await SmsRecords.InsertOneAsync(sms, cancellationToken: ct);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "MongoDB SMS write failed for {Id}", sms.Id);
+            return false;
+        }
+    }
+
+    public async Task<int> UpsertManyAsync<T>(IMongoCollection<T> collection, IEnumerable<T> documents, CancellationToken ct = default) where T : class
+    {
+        if (!IsConnected) return 0;
+        var list = documents.ToList();
+        if (list.Count == 0) return 0;
+        try
+        {
+            var idProp = typeof(T).GetProperty("Id");
+            if (idProp == null) return 0;
+
+            var writes = new List<WriteModel<T>>(list.Count);
+            foreach (var doc in list)
+            {
+                var id = idProp.GetValue(doc);
+                if (id == null) continue;
+                var filter = Builders<T>.Filter.Eq("_id", id);
+                writes.Add(new ReplaceOneModel<T>(filter, doc) { IsUpsert = true });
+            }
+
+            if (writes.Count == 0) return 0;
+            var result = await collection.BulkWriteAsync(writes, new BulkWriteOptions { IsOrdered = false }, ct);
+            return (int)(result.Upserts?.Count ?? 0);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "MongoDB bulk upsert failed for {Type} ({Count} docs)", typeof(T).Name, list.Count);
+            return 0;
+        }
+    }
+
+    public async Task<int> InsertManyAsync<T>(IMongoCollection<T> collection, IEnumerable<T> documents, CancellationToken ct = default) where T : class
+    {
+        if (!IsConnected) return 0;
+        var list = documents.ToList();
+        if (list.Count == 0) return 0;
+        try
+        {
+            await collection.InsertManyAsync(list, new InsertManyOptions { IsOrdered = false }, ct);
+            return list.Count;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "MongoDB bulk insert failed for {Type} ({Count} docs)", typeof(T).Name, list.Count);
+            return 0;
+        }
+    }
+
     public async Task<bool> TestConnectionAsync()
     {
         if (_db == null)

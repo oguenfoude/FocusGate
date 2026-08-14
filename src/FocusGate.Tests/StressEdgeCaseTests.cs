@@ -23,18 +23,31 @@ public class StressEdgeCaseTests
 
     private static DatabaseWriteChannel.WriteOperation InsertSms(SmsRecord sms) => new() { Type = DatabaseWriteChannel.Op.InsertSms, Data = sms };
     private static DatabaseWriteChannel.WriteOperation UpdateSimBalance(int modemId, decimal balance, string source = "USSD") => new() { Type = DatabaseWriteChannel.Op.UpdateSimBalance, Data = new { ModemId = modemId, Balance = balance, Source = source } };
-    private static DatabaseWriteChannel.WriteOperation CreditUserFromRechargeSms(int modemId, decimal amount) => new() { Type = DatabaseWriteChannel.Op.CreditUserFromRechargeSms, Data = new { ModemId = modemId, RechargeAmount = amount } };
     private static DatabaseWriteChannel.WriteOperation CreateWithdrawalRequest(long userId, decimal amount, string? note = null) => new() { Type = DatabaseWriteChannel.Op.CreateWithdrawalRequest, Data = new { UserId = userId, Amount = amount, Note = note } };
     private static DatabaseWriteChannel.WriteOperation ProcessWithdrawal(long requestId, long adminId, bool approved) => new() { Type = DatabaseWriteChannel.Op.ProcessWithdrawal, Data = new { RequestId = requestId, AdminId = adminId, Approved = approved } };
+    private static DatabaseWriteChannel.WriteOperation InsertMeetMobHistory(int modemId, decimal amount) => new()
+    {
+        Type = DatabaseWriteChannel.Op.InsertMeetMobHistory,
+        Data = new
+        {
+            ModemId = modemId,
+            Records = new List<MeetMobRechargeRecordDto>
+            {
+                new() { TradeTime = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"), Amount = amount.ToString("F2", System.Globalization.CultureInfo.InvariantCulture) }
+            }
+        }
+    };
 
     [Fact]
     public async Task ConcurrentEnqueue_MultipleCreditsAndBalanceUpdates()
     {
         var (channel, services, modemId, simId, userId) = await SetupAsync();
 
+        // Credit user via recharge SMS
         var tcs1 = new TaskCompletionSource<bool>();
         var tcs2 = new TaskCompletionSource<bool>();
-        var op1 = CreditUserFromRechargeSms(modemId, 1000);
+        var sms = TestHelper.CreateMobilisTransferSms(simId, 1000);
+        var op1 = InsertSms(sms);
         op1.Completed = tcs1;
         var op2 = UpdateSimBalance(modemId, 5000, "MeetMob");
         op2.Completed = tcs2;
@@ -75,7 +88,7 @@ public class StressEdgeCaseTests
         var sim = await TestHelper.ReadAsync(services, db => db.SimCards.FirstAsync(s => s.Id == simId));
         var user = await TestHelper.ReadAsync(services, db => db.Users.FirstAsync(u => u.Id == userId));
         Assert.Equal(balance, sim.Balance);
-        Assert.Equal(0, user.Balance); // No credit from balance snapshot
+        Assert.Equal(0, user.Balance); // No credit from balance snapshot — history handles crediting
     }
 
     [Theory]
@@ -170,13 +183,10 @@ public class StressEdgeCaseTests
     {
         var (channel, services, modemId, simId, userId) = await SetupAsync();
 
-        var sms = TestHelper.CreateMobilisRechargeSms(simId, 5000);
-        await TestHelper.EnqueueAndWaitAsync(channel, InsertSms(sms));
+        // Credit user via MeetMob history
+        await TestHelper.EnqueueAndWaitAsync(channel, InsertMeetMobHistory(modemId, 5000));
 
-        var savedSms = await TestHelper.ReadAsync(services, db => db.SmsRecords.FirstAsync(s => s.SimCardId == simId));
-        Assert.NotNull(savedSms);
-
-        // Balance snapshot from MeetMob (updates SIM balance)
+        // Balance snapshot from MeetMob (same balance — no-op)
         await TestHelper.EnqueueAndWaitAsync(channel, UpdateSimBalance(modemId, 5000, "MeetMob"));
 
         var sim = await TestHelper.ReadAsync(services, db => db.SimCards.FirstAsync(s => s.Id == simId));
@@ -200,7 +210,7 @@ public class StressEdgeCaseTests
     }
 
     // Balance snapshots accumulate in BalanceHistory, but do NOT credit the user wallet.
-    // The user wallet only grows via CreditUserFromRechargeSms (exact recharge amounts).
+    // The user wallet only grows via instant credit from recharge SMS (processed in HandleInsertSmsAsync).
     [Fact]
     public async Task MultipleRecharges_AccumulateHistory()
     {
@@ -214,7 +224,7 @@ public class StressEdgeCaseTests
         var histories = await TestHelper.ReadAllAsync(services, db => db.BalanceHistories.Where(b => b.SimCardId == simId));
         Assert.Equal(3, histories.Count);
 
-        // User wallet stays 0 — no credit without CreditUserFromRechargeSms
+        // User wallet stays 0 — no credit from balance snapshots alone
         var user = await TestHelper.ReadAsync(services, db => db.Users.FirstAsync(u => u.Id == userId));
         Assert.Equal(0, user.Balance);
     }
