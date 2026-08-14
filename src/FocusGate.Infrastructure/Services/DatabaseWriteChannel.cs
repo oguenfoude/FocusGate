@@ -871,7 +871,7 @@ public class DatabaseWriteChannel
         return true;
     }
 
-    private static (bool credited, decimal oldBalance, decimal newBalance) CreditUserBalance(FocusGateDbContext db, long? userId, decimal amount, long? simCardId, string? note = null)
+    private static (bool credited, decimal oldBalance, decimal newBalance) CreditUserBalance(FocusGateDbContext db, long? userId, decimal amount, long? simCardId, string? note = null, DateTime? recordedAt = null)
     {
         if (amount <= 0 || !userId.HasValue) return (false, 0, 0);
 
@@ -889,7 +889,7 @@ public class DatabaseWriteChannel
             Type = 0,
             SimCardId = simCardId,
             Note = string.IsNullOrEmpty(note) ? "Credit from SIM" : note,
-            RecordedAt = DateTime.UtcNow
+            RecordedAt = recordedAt ?? DateTime.UtcNow
         });
         return (true, oldBalance, user.Balance);
     }
@@ -994,7 +994,7 @@ public class DatabaseWriteChannel
 
             if (userId > 0)
             {
-                var creditResult = CreditUserBalance(db, userId, amount, sim.Id, $"MeetMob recharge ({rawTime})");
+                var creditResult = CreditUserBalance(db, userId, amount, sim.Id, $"MeetMob recharge ({rawTime})", recordedAt);
                 if (creditResult.credited)
                 {
                     credited++;
