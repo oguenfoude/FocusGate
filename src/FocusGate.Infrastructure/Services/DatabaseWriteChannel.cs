@@ -925,11 +925,12 @@ public class DatabaseWriteChannel
         foreach (var record in records)
         {
             if (!DateTime.TryParse(record.TradeTime, System.Globalization.CultureInfo.InvariantCulture,
-                System.Globalization.DateTimeStyles.AssumeLocal, out var recordedAt))
+                System.Globalization.DateTimeStyles.AssumeLocal, out var recordedAtLocal))
             {
                 _logger.LogWarning("MeetMob history modem {ModemId}: SKIP — can't parse time '{Time}'", modemId, record.TradeTime);
                 continue;
             }
+            var recordedAt = recordedAtLocal.ToUniversalTime();
             if (!decimal.TryParse(MeetMobService.NormalizeMeetMobAmount(record.Amount),
                 System.Globalization.NumberStyles.Number,
                 System.Globalization.CultureInfo.InvariantCulture, out var amount) || amount <= 0)
