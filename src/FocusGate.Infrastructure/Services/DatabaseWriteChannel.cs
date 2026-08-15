@@ -914,11 +914,14 @@ public class DatabaseWriteChannel
         var creditedUserIds = new HashSet<long>();
 
         // Load existing MeetMob balance history for dedup
+        // Dedup key: recharge amount (= Balance - PreviousBalance) + RecordedAt
         var existingHistory = await db.BalanceHistories
             .Where(h => h.SimCardId == sim.Id && h.Source == BalanceSource.MeetMob)
             .ToListAsync(ct);
-        var existingSet = new HashSet<(decimal Balance, DateTime RecordedAt)>(
-            existingHistory.Select(h => (h.Balance, h.RecordedAt)));
+        var existingSet = new HashSet<(decimal Amount, DateTime RecordedAt)>(
+            existingHistory
+                .Where(h => h.PreviousBalance.HasValue)
+                .Select(h => (h.Balance - h.PreviousBalance!.Value, h.RecordedAt)));
 
         // Parse all records
         var parsedRecords = new List<(DateTime RecordedAt, decimal Amount, string RawTime, string RawAmount)>();
