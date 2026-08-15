@@ -34,12 +34,30 @@ public partial class MeetMobService
     private int OtpPollTimeout => _config.Get<int>("meetmob.otp_poll_timeout", 60);
     private int OtpPollInterval => _config.Get<int>("meetmob.otp_poll_interval", 1);
     private int TokenTtl => _config.Get<int>("meetmob.token_ttl", 2700);
-    private int HttpTimeout => _config.Get<int>("meetmob.http_timeout", 10);
-    private int LoginCooldown => _config.Get<int>("meetmob.login_cooldown", 5);
-    private int FallbackCooldown => _config.Get<int>("meetmob.fallback_cooldown", 5);
+    private int HttpTimeout => _config.Get<int>("meetmob.http_timeout", 7);
+    private int LoginCooldown => _config.Get<int>("meetmob.login_cooldown", 3);
+    private int FallbackCooldown => _config.Get<int>("meetmob.fallback_cooldown", 3);
     private long _wafCooldownUntilUtcTicks; // Legacy global WAF cooldown (kept for backward compatibility)
     private readonly ConcurrentDictionary<string, bool> _lastRequestNetworkErrors = new();
     private readonly ConcurrentDictionary<string, string?> _lastErrorCodes = new();
+    private readonly SemaphoreSlim _httpThrottle = new(3, 3); // Max 3 concurrent HTTP requests to MeetMob
+    private static DateTime _lastRequestUtc = DateTime.MinValue;
+    private static readonly object _rateLimitLock = new();
+
+    private static async Task ThrottleGlobalAsync(CancellationToken ct)
+    {
+        lock (_rateLimitLock)
+        {
+            var elapsed = DateTime.UtcNow - _lastRequestUtc;
+            if (elapsed < TimeSpan.FromMilliseconds(500))
+            {
+                var wait = TimeSpan.FromMilliseconds(500) - elapsed;
+                Task.Delay(wait, ct).Wait(ct);
+            }
+            _lastRequestUtc = DateTime.UtcNow;
+        }
+        await Task.CompletedTask;
+    }
 
     public bool WasLastRequestNetworkError(string? key = null)
     {
@@ -68,7 +86,7 @@ public partial class MeetMobService
                 RemoteCertificateValidationCallback = (_, _, _, _) => true,
                 EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13
             },
-            ConnectTimeout = TimeSpan.FromSeconds(5),
+            ConnectTimeout = TimeSpan.FromSeconds(3),
             PooledConnectionLifetime = TimeSpan.FromMinutes(2),
             PooledConnectionIdleTimeout = TimeSpan.FromSeconds(30),
             AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
@@ -103,7 +121,7 @@ public partial class MeetMobService
     public async Task InvalidateTokenAsync(string key)
     {
         await _tokenStore.RemoveAsync(key);
-        _log.LogDebug("MeetMob [{Phone}]: Token invalidated", key);
+
     }
 
     public bool CanRetry(string key)
@@ -120,8 +138,9 @@ public partial class MeetMobService
 
     public void SetCooldown(string key, int seconds)
     {
-        _cooldowns[key] = DateTime.UtcNow.AddSeconds(seconds);
-        _log.LogDebug("MeetMob [{Phone}]: Cooldown set — {Seconds}s", key, seconds);
+        var jitteredSeconds = seconds + Random.Shared.Next(0, Math.Max(1, seconds / 4));
+        _cooldowns[key] = DateTime.UtcNow.AddSeconds(jitteredSeconds);
+        _log.LogDebug("MeetMob [{Phone}]: Cooldown {Seconds}s", key, jitteredSeconds);
     }
 
     public bool IsWafBlocked(string? phone = null)
@@ -150,27 +169,26 @@ public partial class MeetMobService
         return TimeSpan.Zero;
     }
 
-    public void SetWafCooldown(string? phone = null, int seconds = 120)
+    public void SetWafCooldown(string? phone = null, int seconds = 60)
     {
         if (!string.IsNullOrEmpty(phone))
         {
             var consecutive = _wafConsecutiveBlocks.AddOrUpdate(phone, 1, (_, old) => old + 1);
-            // Exponential backoff: 120s, 240s, 480s, capped at 180s
+            // Exponential backoff: 60s, 120s, 180s (capped)
             var effectiveSeconds = Math.Min(seconds * (1 << (consecutive - 1)), 180);
-            var newExpiry = DateTime.UtcNow.AddSeconds(effectiveSeconds);
-            // Don't reset the timer — only extend if new expiry is later than existing
+            var jitteredSeconds = effectiveSeconds + Random.Shared.Next(0, 10);
+            var newExpiry = DateTime.UtcNow.AddSeconds(jitteredSeconds);
             if (_wafCooldowns.TryGetValue(phone, out var existing) && existing > newExpiry)
             {
-                _log.LogDebug("MeetMob: WAF cooldown for {Phone} not shortened — existing {Remaining}s > new {New}s", phone, (int)(existing - DateTime.UtcNow).TotalSeconds, effectiveSeconds);
                 return;
             }
             _wafCooldowns[phone] = newExpiry;
-            _log.LogWarning("MeetMob: WAF cooldown set for {Phone} — {Seconds}s (consecutive={Consecutive})", phone, effectiveSeconds, consecutive);
+            _log.LogWarning("MeetMob: WAF {Phone} — {Seconds}s (n={Consecutive})", phone, jitteredSeconds, consecutive);
         }
         else
         {
-            Interlocked.Exchange(ref _wafCooldownUntilUtcTicks, DateTime.UtcNow.AddSeconds(seconds).Ticks);
-            _log.LogWarning("MeetMob: WAF cooldown set for global — {Seconds}s", seconds);
+            var jitteredSeconds = seconds + Random.Shared.Next(0, 10);
+            Interlocked.Exchange(ref _wafCooldownUntilUtcTicks, DateTime.UtcNow.AddSeconds(jitteredSeconds).Ticks);
         }
     }
 
@@ -217,9 +235,6 @@ public partial class MeetMobService
             }
         }
 
-        if (cleaned > 0)
-            _log.LogInformation("MeetMob: Cleanup — removed {Count} stale entries", cleaned);
-
         return cleaned;
     }
 
@@ -231,7 +246,6 @@ public partial class MeetMobService
             return null;
         if (token.ExpiresAt < DateTime.UtcNow.AddMinutes(2))
         {
-            _log.LogDebug("MeetMob [{Phone}]: Token expired ({Expired:F0}min ago)", key, (DateTime.UtcNow - token.ExpiresAt).TotalMinutes);
             return null;
         }
         return token;
@@ -279,7 +293,6 @@ public partial class MeetMobService
                 }
                 subData = await GetSubscriberDataAsync(token, ct);
                 if (subData != null) break;
-                _log.LogWarning("MeetMob [{Phone}]: Subscriber data attempt {Attempt}/3 failed, retrying...", phone, attempt + 1);
                 await Task.Delay(300, ct);
             }
 
@@ -324,7 +337,10 @@ public partial class MeetMobService
             if (doc.RootElement.GetProperty("result").GetString() != "success")
             {
                 var raw = doc.RootElement.GetRawText();
-                _log.LogWarning("MeetMob [{Phone}]: sendSms non-success: {Resp}", phone, raw[..Math.Min(200, raw.Length)]);
+                var errorCode = doc.RootElement.TryGetProperty("code", out var codeEl) ? codeEl.GetString() ?? "" : "";
+                _log.LogWarning("MeetMob [{Phone}]: sendSms non-success (code={Code}): {Resp}", phone, errorCode, raw[..Math.Min(200, raw.Length)]);
+                if (errorCode.Contains("100206"))
+                    SetCooldown(phone, 120);
                 return false;
             }
             return true;
@@ -341,7 +357,7 @@ public partial class MeetMobService
         var deadline = DateTime.UtcNow.AddSeconds(OtpPollTimeout);
         int consecutiveEmpty = 0;
         bool inboxCleared = false;
-        _log.LogDebug("MeetMob [{Phone}]: Polling SIM inbox for OTP (timeout={Timeout}s)", phone, OtpPollTimeout);
+        _log.LogDebug("MeetMob [{Phone}]: Polling OTP (timeout={Timeout}s)", phone, OtpPollTimeout);
         while (DateTime.UtcNow < deadline && !ct.IsCancellationRequested)
         {
             try
@@ -352,7 +368,6 @@ public partial class MeetMobService
                     var code = ExtractOtpCode(msg.Content);
                     if (code != null)
                     {
-                        _log.LogInformation("MeetMob [{Phone}]: OTP found in SMS from {Sender}", phone, msg.Sender);
                         return code;
                     }
                 }
@@ -366,10 +381,9 @@ public partial class MeetMobService
             }
             catch (Exception ex) when (!ct.IsCancellationRequested)
             {
-                _log.LogDebug(ex, "MeetMob [{Phone}]: OTP poll read failed", phone);
+                _log.LogWarning(ex, "MeetMob [{Phone}]: OTP poll failed", phone);
                 if (IsWafBlocked(phone))
                 {
-                    _log.LogWarning("MeetMob [{Phone}]: OTP poll aborting — WAF cooldown active", phone);
                     return null;
                 }
             }
@@ -429,7 +443,6 @@ public partial class MeetMobService
                 return null;
             }
 
-            _log.LogDebug("MeetMob [{Phone}]: OTP login OK — csrfToken={TokenLen} chars, cookie={CookieLen} chars", phone, csrfToken.Length, cookie.Length);
             return new MeetMobToken
             {
                 CsrfToken = csrfToken,
@@ -458,7 +471,6 @@ public partial class MeetMobService
                 operType = "1",
                 token = csrfToken
             };
-            _log.LogDebug("MeetMob [{Phone}]: Accepting disclaimer", phone);
             using var doc = await PostJsonAuthenticated($"{BaseUrl}/crm/ms/ecare/v1/login/agreeDisclaCtz", body, "EC107", csrfToken, cookie, phone, ct);
             _log.LogInformation("MeetMob [{Phone}]: Disclaimer accepted", phone);
         }
@@ -473,7 +485,6 @@ public partial class MeetMobService
         var phone = token.Phone ?? "unknown";
         try
         {
-            _log.LogDebug("MeetMob [{Phone}]: Requesting subscriber data", phone);
             using var doc = await PostJsonAuthenticated($"{BaseUrl}/crm/ms/ecare/v1/subscriber/querySubscriberData", new { }, "EC044", token.CsrfToken, token.Cookie, phone, ct);
             if (doc == null)
             {
@@ -512,10 +523,9 @@ public partial class MeetMobService
         {
             if (IsWafBlocked(phone))
             {
-                _log.LogWarning("MeetMob [{Phone}]: No accountId and WAF is blocking — skipping balance", phone);
+                _log.LogWarning("MeetMob [{Phone}]: No accountId and WAF blocking — skipping", phone);
                 return null;
             }
-            _log.LogInformation("MeetMob [{Phone}]: No accountId, re-fetching subscriber data", phone);
             for (int attempt = 0; attempt < 3; attempt++)
             {
                 var subData = await GetSubscriberDataAsync(token, ct);
@@ -524,7 +534,6 @@ public partial class MeetMobService
                     token.AccountId = subData.AccountId;
                     token.SubscriberKey = subData.SubscriberKey;
                     await _tokenStore.SaveAsync(phone, token);
-                    _log.LogInformation("MeetMob [{Phone}]: Subscriber data fetched — accountId={AccountId}", phone, token.AccountId);
                     break;
                 }
                 if (attempt < 2)
@@ -540,7 +549,6 @@ public partial class MeetMobService
         try
         {
             var body = new { accessInfos = new { code = "2", value = token.AccountId } };
-            _log.LogDebug("MeetMob [{Phone}]: Requesting balance (accountId={AccountId})", phone, token.AccountId);
             using var doc = await PostJsonAuthenticated($"{BaseUrl}/crm/ms/ecare/v1/billing/queryBalance", body, "EC046", token.CsrfToken, token.Cookie, phone, ct);
             if (doc == null)
             {
@@ -594,7 +602,6 @@ public partial class MeetMobService
             amountStr = NormalizeMeetMobAmount(amountStr);
             if (decimal.TryParse(amountStr, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var balance))
             {
-                _log.LogDebug("MeetMob [{Phone}]: Balance = {Balance} DZD", phone, balance);
                 return balance;
             }
 
@@ -614,7 +621,6 @@ public partial class MeetMobService
         var phone = token.Phone ?? "unknown";
         try
         {
-            _log.LogDebug("MeetMob [{Phone}]: Requesting recharge history", phone);
             using var doc = await PostJsonAuthenticated($"{BaseUrl}/crm/ms/ecare/v1/ecare/queryRechargeHistory", new { }, "EC049", token.CsrfToken, token.Cookie, phone, ct);
             if (doc == null)
             {
@@ -644,10 +650,7 @@ public partial class MeetMobService
             }
             if (records.Count > 0)
             {
-                _log.LogInformation("MeetMob [{Phone}]: Recharge history — {Count} records:", phone, records.Count);
-                var idx = 1;
-                foreach (var r in records)
-                    _log.LogInformation("  #{Index} [{Time}] {Amount} DZD", idx++, r.TradeTime, r.Amount);
+                _log.LogInformation("MeetMob [{Phone}]: Recharge history — {Count} records", phone, records.Count);
             }
             else
             {
@@ -667,13 +670,11 @@ public partial class MeetMobService
         var phone = token.Phone ?? "unknown";
         if (string.IsNullOrEmpty(token.SubscriberKey))
         {
-            _log.LogDebug("MeetMob [{Phone}]: FreeResource skipped — no subscriberKey", phone);
             return null;
         }
         try
         {
             var body = new { queryObj = new { subAccessCode = new { subscriberKey = token.SubscriberKey } } };
-            _log.LogDebug("MeetMob [{Phone}]: Requesting free resources", phone);
             using var doc = await PostJsonAuthenticated($"{BaseUrl}/crm/ms/ecare/v1/ecare/queryFreeResource", body, "EC048", token.CsrfToken, token.Cookie, phone, ct);
             if (doc == null) return null;
 
@@ -702,7 +703,6 @@ public partial class MeetMobService
         var phone = token.Phone ?? "unknown";
         try
         {
-            _log.LogDebug("MeetMob [{Phone}]: Requesting customer info", phone);
             using var doc = await PostJsonAuthenticated($"{BaseUrl}/crm/ms/ecare/v1/customer/customerInfo", new { }, "EC041", token.CsrfToken, token.Cookie, phone, ct);
             if (doc == null) return null;
 
@@ -732,14 +732,22 @@ public partial class MeetMobService
         {
             try
             {
-                var request = new HttpRequestMessage(HttpMethod.Post, url)
+                await ThrottleGlobalAsync(ct);
+                // Global throttle: max 3 concurrent HTTP requests to MeetMob
+                await _httpThrottle.WaitAsync(ct);
+                HttpResponseMessage response;
+                try
                 {
-                    Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
-                };
-                ApplyBrowserHeaders(request, busiType, null, null, null);
+                    var request = new HttpRequestMessage(HttpMethod.Post, url)
+                    {
+                        Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
+                    };
+                    ApplyBrowserHeaders(request, busiType, null, null, null);
 
-                _log.LogDebug("MeetMob [{Phone}]: POST {BusiType} → {Url} (attempt {Attempt})", phone ?? "?", busiType, url, attempt + 1);
-                var response = await _http.SendAsync(request, ct);
+                    response = await _http.SendAsync(request, ct);
+                }
+                finally { _httpThrottle.Release(); }
+
                 if (!response.IsSuccessStatusCode)
                 {
                     _log.LogWarning("MeetMob [{Phone}]: HTTP {Status} from {Url}", phone ?? "?", response.StatusCode, url);
@@ -750,10 +758,9 @@ public partial class MeetMobService
                 if (json.Length > 0 && json[0] == '<')
                 {
                     _log.LogWarning("MeetMob [{Phone}]: WAF block — HTML response from {Url} ({Length} bytes)", phone ?? "?", url, json.Length);
-                    SetWafCooldown(phone, 120);
+                    SetWafCooldown(phone);
                     return (null, response);
                 }
-                _log.LogDebug("MeetMob [{Phone}]: {BusiType} OK ({Length} bytes)", phone ?? "?", busiType, json.Length);
                 return (JsonDocument.Parse(json), response);
             }
             catch (HttpRequestException ex) when (attempt < 1 && !ct.IsCancellationRequested)
@@ -763,7 +770,7 @@ public partial class MeetMobService
             }
             catch (TaskCanceledException) when (!ct.IsCancellationRequested)
             {
-                _log.LogWarning("MeetMob [{Phone}]: {BusiType} timed out ({Timeout}s)", phone ?? "?", busiType, HttpTimeout);
+                _log.LogWarning("MeetMob [{Phone}]: {BusiType} timeout ({Timeout}s)", phone ?? "?", busiType, HttpTimeout);
                 return (null, null);
             }
         }
@@ -776,14 +783,22 @@ public partial class MeetMobService
         {
             try
             {
-                var request = new HttpRequestMessage(HttpMethod.Post, url)
+                await ThrottleGlobalAsync(ct);
+                // Global throttle: max 3 concurrent HTTP requests to MeetMob
+                await _httpThrottle.WaitAsync(ct);
+                HttpResponseMessage response;
+                try
                 {
-                    Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
-                };
-                ApplyBrowserHeaders(request, busiType, csrfToken, cookie, phone);
+                    var request = new HttpRequestMessage(HttpMethod.Post, url)
+                    {
+                        Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
+                    };
+                    ApplyBrowserHeaders(request, busiType, csrfToken, cookie, phone);
 
-                _log.LogDebug("MeetMob [{Phone}]: POST {BusiType} (auth) attempt {Attempt} → {Url}", phone, busiType, attempt + 1, url);
-                var response = await _http.SendAsync(request, ct);
+                    response = await _http.SendAsync(request, ct);
+                }
+                finally { _httpThrottle.Release(); }
+
                 _lastRequestNetworkErrors[phone] = false;
                 if (!response.IsSuccessStatusCode)
                 {
@@ -795,10 +810,9 @@ public partial class MeetMobService
                 if (json.Length > 0 && json[0] == '<')
                 {
                     _log.LogWarning("MeetMob [{Phone}]: WAF block — HTML response from {Url} ({Length} bytes)", phone, url, json.Length);
-                    SetWafCooldown(phone, 120);
+                    SetWafCooldown(phone);
                     return null;
                 }
-                _log.LogDebug("MeetMob [{Phone}]: {BusiType} OK ({Length} bytes)", phone, busiType, json.Length);
                 ResetWafConsecutiveBlocks(phone);
                 return JsonDocument.Parse(json);
             }
@@ -810,8 +824,8 @@ public partial class MeetMobService
             catch (TaskCanceledException) when (!ct.IsCancellationRequested)
             {
                 _lastRequestNetworkErrors[phone] = true;
-                _log.LogWarning("MeetMob [{Phone}]: {BusiType} timed out ({Timeout}s) — short cooldown", phone, busiType, HttpTimeout);
-                SetWafCooldown(phone, 30);
+                _log.LogWarning("MeetMob [{Phone}]: {BusiType} timeout ({Timeout}s)", phone, busiType, HttpTimeout);
+                SetWafCooldown(phone, 15);
                 return null;
             }
             catch (Exception ex) when (!ct.IsCancellationRequested)

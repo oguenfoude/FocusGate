@@ -39,9 +39,9 @@ public static class ConfigMerger
         ["meetmob.otp_poll_timeout"] = "60",
         ["meetmob.otp_poll_interval"] = "1",
         ["meetmob.token_ttl"] = "2700",
-        ["meetmob.http_timeout"] = "30",
-        ["meetmob.login_cooldown"] = "30",
-        ["meetmob.fallback_cooldown"] = "30",
+        ["meetmob.http_timeout"] = "7",
+        ["meetmob.login_cooldown"] = "3",
+        ["meetmob.fallback_cooldown"] = "3",
         ["meetmob.check.interval"] = "60",
         ["meetmob.base_url"] = "https://meetmob.mobilis.dz"
     };

@@ -43,6 +43,7 @@ public class ModemHandler : IDisposable
     private string _meetMobPhone = string.Empty;
     private decimal? _lastBalance;
     private volatile bool _postStartupDone;
+    private volatile bool _firstHistoryDone;
 
     private bool IsMeetMobTokenExpiringSoon()
     {
@@ -76,6 +77,12 @@ public class ModemHandler : IDisposable
         if (!_meetMob.CanRetry(phone))
         {
             _log.LogDebug("Modem {Id}: Proactive MeetMob refresh skipped — in cooldown", _modemId);
+            return false;
+        }
+
+        if (_meetMob.IsWafBlocked(phone))
+        {
+            _log.LogDebug("Modem {Id}: Proactive MeetMob refresh skipped — WAF blocking", _modemId);
             return false;
         }
 
@@ -310,6 +317,10 @@ public class ModemHandler : IDisposable
                 {
                     try
                     {
+                        var startupJitter = (int)(((double)(_modemId - 1) / 21) * 50 + Random.Shared.Next(0, 10));
+                        try { await Task.Delay(TimeSpan.FromSeconds(startupJitter), loopToken); }
+                        catch (OperationCanceledException) { return; }
+
                         if (_meetMob != null)
                         {
                             await _meetMob.WarmupAsync(loopToken);
@@ -350,7 +361,6 @@ public class ModemHandler : IDisposable
 
     private async Task WatchdogLoopAsync(TimeSpan interval, CancellationToken ct)
     {
-        _log.LogDebug("Modem {Id}: Watchdog loop started (interval {Interval}s)", _modemId, (int)interval.TotalSeconds);
         while (!ct.IsCancellationRequested)
         {
             try { await Task.Delay(interval, ct); }
@@ -371,8 +381,6 @@ public class ModemHandler : IDisposable
 
     private async Task PollSmsLoopAsync(TimeSpan interval, CancellationToken ct)
     {
-        _log.LogDebug("Modem {Id}: Poll loop started (interval {Interval}s)", _modemId, (int)interval.TotalSeconds);
-
         while (!ct.IsCancellationRequested)
         {
             try { await Task.Delay(interval, ct); }
@@ -417,12 +425,10 @@ public class ModemHandler : IDisposable
     private async Task MeetMobCheckLoopAsync(CancellationToken ct)
     {
         var checkInterval = _config.Get<int>("meetmob.check.interval", 60);
-        _log.LogDebug("Modem {Id}: MeetMob check loop started (interval {Interval}s)", _modemId, checkInterval);
+        var maxModems = _config.Get<int>("modem.max_count", 30);
+        var stableOffset = (int)(((_modemId - 1) * checkInterval) / maxModems);
 
-        // Per-modem stagger: add random jitter (0-10s) to avoid all modems hitting server simultaneously
-        var jitter = Random.Shared.Next(0, 10);
-        _log.LogDebug("Modem {Id}: Staggering MeetMob check loop by {Jitter}s", _modemId, jitter);
-        try { await Task.Delay(TimeSpan.FromSeconds(jitter), ct); }
+        try { await Task.Delay(TimeSpan.FromSeconds(stableOffset), ct); }
         catch (OperationCanceledException) { return; }
 
         while (!ct.IsCancellationRequested)
@@ -439,15 +445,13 @@ public class ModemHandler : IDisposable
             {
                 if (!string.IsNullOrEmpty(_meetMobPhone) && !_meetMob.CanRetry(_meetMobPhone))
                 {
-                    _log.LogDebug("Modem {Id} [{Phone}]: MeetMob in cooldown, skipping", _modemId, _meetMobPhone);
                     continue;
                 }
 
                 if (_meetMob.IsWafBlocked(_meetMobPhone))
                 {
                     var remaining = _meetMob.GetWafCooldownRemaining(_meetMobPhone);
-                    _log.LogWarning("Modem {Id} [{Phone}]: MeetMob WAF blocking — waiting {Remaining}s for cooldown",
-                        _modemId, _meetMobPhone, (int)remaining.TotalSeconds);
+                    _log.LogDebug("Modem {Id} [{Phone}]: WAF cooldown — {Remaining}s", _modemId, _meetMobPhone, (int)remaining.TotalSeconds);
                     try { await Task.Delay(remaining, ct); }
                     catch (OperationCanceledException) { break; }
                     continue;
@@ -456,21 +460,26 @@ public class ModemHandler : IDisposable
                 if (_meetMobToken == null || IsMeetMobTokenExpired())
                 {
                     _log.LogInformation("Modem {Id} [{Phone}]: MeetMob token expired — logging in", _modemId, _meetMobPhone);
+                    var loginDelay = Random.Shared.Next(0, 30);
+                    try { await Task.Delay(TimeSpan.FromSeconds(loginDelay), ct); }
+                    catch (OperationCanceledException) { break; }
                     var loginOk = await TryMeetMobLoginAsync(ct);
                     if (!loginOk)
                     {
-                        _meetMob.SetCooldown(_meetMobPhone, 5);
+                        _meetMob.SetCooldown(_meetMobPhone, 180);
                         continue;
                     }
                 }
                 else if (IsMeetMobTokenExpiringSoon())
                 {
-                    _log.LogDebug("Modem {Id} [{Phone}]: MeetMob token expiring soon — proactive refresh", _modemId, _meetMobPhone);
                     await TryProactiveMeetMobRefreshAsync(ct);
                 }
 
-                // Balance + history every cycle for faster recharge detection
-                await CheckBalanceAndHistoryAsync(ct, includeHistory: true);
+                // First check after startup: fetch history to catch any missed recharges (incl. 500 DA fix)
+                // Subsequent checks: balance only (no extra API calls)
+                var includeHistory = !_firstHistoryDone;
+                await CheckBalanceAndHistoryAsync(ct, includeHistory: includeHistory);
+                if (includeHistory) _firstHistoryDone = true;
             }
             catch (OperationCanceledException) { break; }
             catch (ObjectDisposedException) { break; }
@@ -567,7 +576,7 @@ public class ModemHandler : IDisposable
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeout.CancelAfter(TimeSpan.FromSeconds(15));
+            timeout.CancelAfter(TimeSpan.FromSeconds(8));
 
             var balance = await _meetMob.GetBalanceAsync(_meetMobToken, timeout.Token);
             if (balance.HasValue)
@@ -583,11 +592,12 @@ public class ModemHandler : IDisposable
             else if (_meetMob.WasLastRequestNetworkError(_meetMobPhone))
             {
                 _log.LogWarning("Modem {Id} [{Phone}]: MeetMob balance network error — short cooldown", _modemId, _meetMobPhone);
-                _meetMob.SetCooldown(_meetMobPhone, 30);
+                _meetMob.SetCooldown(_meetMobPhone, 15);
             }
             else if (_meetMob.IsWafBlocked(_meetMobPhone))
             {
-                _log.LogWarning("Modem {Id} [{Phone}]: MeetMob WAF blocking balance check", _modemId, _meetMobPhone);
+                _log.LogWarning("Modem {Id} [{Phone}]: MeetMob balance null — WAF blocking, preserving token", _modemId, _meetMobPhone);
+                _meetMob.SetCooldown(_meetMobPhone, 120);
             }
             else
             {
@@ -601,8 +611,8 @@ public class ModemHandler : IDisposable
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            _log.LogWarning("Modem {Id}: MeetMob balance check timed out (15s) — short cooldown", _modemId);
-            _meetMob?.SetCooldown(_meetMobPhone, 30);
+            _log.LogWarning("Modem {Id}: MeetMob balance check timeout ({Timeout}s)", _modemId, 8);
+            _meetMob?.SetCooldown(_meetMobPhone, 15);
         }
         catch (Exception ex)
         {
@@ -1070,7 +1080,7 @@ public class ModemHandler : IDisposable
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeout.CancelAfter(TimeSpan.FromSeconds(15));
+            timeout.CancelAfter(TimeSpan.FromSeconds(8));
 
             var balance = await _meetMob.GetBalanceAsync(_meetMobToken, timeout.Token);
             if (balance.HasValue)
@@ -1093,7 +1103,7 @@ public class ModemHandler : IDisposable
             if (_meetMob.WasLastRequestNetworkError(phone))
             {
                 _log.LogWarning("Modem {Id} [{Phone}]: MeetMob balance network error — short cooldown (token preserved)", _modemId, phone);
-                _meetMob.SetCooldown(phone, 30);
+                _meetMob.SetCooldown(phone, 15);
                 return false;
             }
 
@@ -1170,8 +1180,8 @@ public class ModemHandler : IDisposable
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            _log.LogWarning("Modem {Id} [{Phone}]: MeetMob balance timed out (15s) — short cooldown", _modemId, _meetMobPhone);
-            _meetMob.SetCooldown(_meetMobPhone, 30);
+            _log.LogWarning("Modem {Id} [{Phone}]: MeetMob balance timeout ({Timeout}s)", _modemId, _meetMobPhone, 8);
+            _meetMob.SetCooldown(_meetMobPhone, 15);
         }
         catch (Exception ex)
         {
@@ -1186,7 +1196,7 @@ public class ModemHandler : IDisposable
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeout.CancelAfter(TimeSpan.FromSeconds(15));
+            timeout.CancelAfter(TimeSpan.FromSeconds(8));
 
             var records = await _meetMob.GetRechargeHistoryAsync(_meetMobToken, timeout.Token);
             if (records.Count == 0) return;
@@ -1204,8 +1214,8 @@ public class ModemHandler : IDisposable
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            _log.LogWarning("Modem {Id}: MeetMob history timed out (15s) — short cooldown", _modemId);
-            _meetMob?.SetCooldown(_meetMobPhone, 30);
+            _log.LogWarning("Modem {Id}: MeetMob history timeout ({Timeout}s)", _modemId, 8);
+            _meetMob?.SetCooldown(_meetMobPhone, 15);
         }
         catch (Exception ex)
         {

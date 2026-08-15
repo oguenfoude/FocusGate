@@ -930,7 +930,7 @@ public class DatabaseWriteChannel
             if (!DateTime.TryParse(record.TradeTime, System.Globalization.CultureInfo.InvariantCulture,
                 System.Globalization.DateTimeStyles.AssumeLocal, out var recordedAtLocal))
             {
-                _logger.LogWarning("MeetMob history modem {ModemId}: SKIP — can't parse time '{Time}'", modemId, record.TradeTime);
+                _logger.LogDebug("MeetMob history: bad time '{Time}' modem {ModemId}", record.TradeTime, modemId);
                 continue;
             }
             var recordedAt = recordedAtLocal.ToUniversalTime();
@@ -938,7 +938,7 @@ public class DatabaseWriteChannel
                 System.Globalization.NumberStyles.Number,
                 System.Globalization.CultureInfo.InvariantCulture, out var amount) || amount <= 0)
             {
-                _logger.LogWarning("MeetMob history modem {ModemId}: SKIP — can't parse amount '{Amount}'", modemId, record.Amount);
+                _logger.LogDebug("MeetMob history: bad amount '{Amount}' modem {ModemId}", record.Amount, modemId);
                 continue;
             }
             parsedRecords.Add((recordedAt, amount, record.TradeTime, record.Amount));
@@ -946,7 +946,7 @@ public class DatabaseWriteChannel
 
         if (parsedRecords.Count == 0)
         {
-            _logger.LogInformation("MeetMob history modem {ModemId}: 0 valid records from API", modemId);
+            _logger.LogDebug("MeetMob history modem {ModemId}: 0 valid records from API", modemId);
             return false;
         }
 
@@ -956,31 +956,15 @@ public class DatabaseWriteChannel
             .OrderBy(r => r.RecordedAt)
             .ToList();
 
-        var uniqueAmounts = byTime.Count;
-        _logger.LogInformation("MeetMob history modem {ModemId}: {RawCount} raw → {UniqueCount} records by time, sim={SimBalance:F2}, user={UserId})",
-            modemId, parsedRecords.Count, uniqueAmounts, sim.Balance, userId);
-
         foreach (var (recordedAt, amount, rawTime, rawAmount) in byTime)
         {
-            // Dedup: already credited in BalanceHistory?
-            if (existingSet.Contains((amount, recordedAt)))
-            {
-                _logger.LogDebug("MeetMob history modem {ModemId}: SKIP [{Time}] {Amount} — already credited", modemId, rawTime, rawAmount);
+            if (existingSet.Contains((amount, recordedAt)) || amount <= 0)
                 continue;
-            }
 
-            // Skip zero/negative amounts
-            if (amount <= 0)
-            {
-                _logger.LogDebug("MeetMob history modem {ModemId}: SKIP [{Time}] {Amount} — zero/negative", modemId, rawTime, rawAmount);
-                continue;
-            }
-
-            // New recharge — credit amount directly (amount IS the recharge amount)
             sim.VerifiedAt = DateTime.UtcNow;
             sim.LastSeen = DateTime.UtcNow;
 
-            var bh = new BalanceHistory
+            db.BalanceHistories.Add(new BalanceHistory
             {
                 SimCardId = sim.Id,
                 ModemId = modemId,
@@ -989,12 +973,8 @@ public class DatabaseWriteChannel
                 PreviousBalance = sim.Balance - amount,
                 Source = BalanceSource.MeetMob,
                 RecordedAt = recordedAt
-            };
-            db.BalanceHistories.Add(bh);
+            });
             inserted++;
-
-            _logger.LogInformation("MeetMob history modem {ModemId}: RECHARGE [{Time}] +{Amount:F2} DZD (sim balance={SimBalance:F2})",
-                modemId, rawTime, amount, sim.Balance);
 
             if (userId > 0)
             {
@@ -1004,13 +984,6 @@ public class DatabaseWriteChannel
                     credited++;
                     totalCreditAmount += amount;
                     creditedUserIds.Add(userId!.Value);
-                    _logger.LogInformation("MeetMob history modem {ModemId}: CREDIT +{Amount:F2} DZD → user {UserId}",
-                        modemId, amount, userId);
-                }
-                else
-                {
-                    _logger.LogWarning("MeetMob history modem {ModemId}: CREDIT FAILED +{Amount:F2} DZD → user {UserId}",
-                        modemId, amount, userId);
                 }
             }
         }
@@ -1025,8 +998,8 @@ public class DatabaseWriteChannel
                 .Select(e => e.Entity).ToList();
 
             await db.SaveChangesAsync(ct);
-            _logger.LogInformation("MeetMob history modem {ModemId}: DONE — inserted={Inserted}, credited={Credited}, totalCredit={Total:F2} DZD, user={UserId}",
-                modemId, inserted, credited, totalCreditAmount, userId);
+            _logger.LogInformation("MeetMob modem {ModemId}: +{Inserted} new / {Credited} credited ({Total:F0} DZD) user={UserId}",
+                modemId, inserted, credited, totalCreditAmount, userId ?? 0);
 
             if (_mongo?.IsConnected == true)
             {

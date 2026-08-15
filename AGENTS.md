@@ -125,6 +125,7 @@ Code is identical across branches — only `mongodb.database` default differs in
 - **USSD lock timeout** — HiLinkCommandService.SendUssdAsync has 15s lock timeout; AT has 10s
 - **SendUssdAsync on HiLink** sends `POST /api/ussd/send` then polls `GET /api/ussd/get` every 2s
 - **125002 error** means SMS inbox full — DeleteAllSmsAsync falls back to index-based deletion (1-50)
+- **MSF.100206 error** means MeetMob OTP rate limit ("sending interval not less than 2 minutes") — SendOtpAsync detects this and sets 120s cooldown
 - **Session refresh failure** clears _sessionCookie, _csrfToken, sets _isOpen=false — forces clean re-handshake
 - **MeetMob login uses OTP** — requires SIM to receive SMS. Phone format: local (0XXXXXXXXX), not country code
 - **MeetMob token TTL** — 45 minutes, proactive refresh at 40 minutes in watchdog loop
