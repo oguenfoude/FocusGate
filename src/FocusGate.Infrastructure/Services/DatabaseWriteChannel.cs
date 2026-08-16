@@ -928,12 +928,13 @@ public class DatabaseWriteChannel
         foreach (var record in records)
         {
             if (!DateTime.TryParse(record.TradeTime, System.Globalization.CultureInfo.InvariantCulture,
-                System.Globalization.DateTimeStyles.AssumeLocal, out var recordedAtLocal))
+                System.Globalization.DateTimeStyles.None, out var recordedAtLocal))
             {
                 _logger.LogDebug("MeetMob history: bad time '{Time}' modem {ModemId}", record.TradeTime, modemId);
                 continue;
             }
-            var recordedAt = recordedAtLocal.ToUniversalTime();
+            // MeetMob API returns UTC timestamps — mark as UTC directly
+            var recordedAt = DateTime.SpecifyKind(recordedAtLocal, DateTimeKind.Utc);
             if (!decimal.TryParse(MeetMobService.NormalizeMeetMobAmount(record.Amount),
                 System.Globalization.NumberStyles.Number,
                 System.Globalization.CultureInfo.InvariantCulture, out var amount) || amount <= 0)
