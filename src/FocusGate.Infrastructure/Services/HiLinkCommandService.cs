@@ -401,9 +401,8 @@ public partial class HiLinkCommandService : IAtCommandService
                         System.Globalization.DateTimeStyles.None, out var parsed))
                     {
                         var unspecified = DateTime.SpecifyKind(parsed, DateTimeKind.Unspecified);
-                        var offsetHours = _config?.Get<int>("modem.timezone_offset_hours", 1) ?? 1;
-                        dt = unspecified.AddHours(-offsetHours);
-                        dt = DateTime.SpecifyKind(dt, DateTimeKind.Utc);
+                        var algeriaTz = TimeZoneInfo.FindSystemTimeZoneById("Africa/Algiers");
+                        dt = TimeZoneInfo.ConvertTimeToUtc(unspecified, algeriaTz);
                     }
                     else
                     {
