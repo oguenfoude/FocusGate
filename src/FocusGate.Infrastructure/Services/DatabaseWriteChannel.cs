@@ -921,7 +921,7 @@ public class DatabaseWriteChannel
         var existingSet = new HashSet<(decimal Amount, DateTime RecordedAt)>(
             existingHistory
                 .Where(h => h.PreviousBalance.HasValue)
-                .Select(h => (h.Balance - h.PreviousBalance!.Value, h.RecordedAt)));
+                .Select(h => (h.Balance - h.PreviousBalance!.Value, DateTime.SpecifyKind(h.RecordedAt, DateTimeKind.Utc))));
 
         // Parse all records
         var parsedRecords = new List<(DateTime RecordedAt, decimal Amount, string RawTime, string RawAmount)>();
