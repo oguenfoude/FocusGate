@@ -43,7 +43,8 @@ public class ModemHandler : IDisposable
     private string _meetMobPhone = string.Empty;
     private decimal? _lastBalance;
     private volatile bool _postStartupDone;
-    private volatile bool _firstHistoryDone;
+    private DateTime _lastHistoryFetchUtc = DateTime.MinValue;
+    private volatile bool _pendingHistoryCheck;
 
     private bool IsMeetMobTokenExpiringSoon()
     {
@@ -413,10 +414,11 @@ public class ModemHandler : IDisposable
                     }
                     await CheckBalanceAndHistoryAsync(ct, includeHistory: true);
                 }
-                catch (OperationCanceledException) { }
+                catch (OperationCanceledException) { _pendingHistoryCheck = true; }
                 catch (Exception ex)
                 {
                     _log.LogWarning(ex, "Modem {Id}: SMS-triggered MeetMob check failed", _modemId);
+                    _pendingHistoryCheck = true;
                 }
             }
         }
@@ -475,11 +477,15 @@ public class ModemHandler : IDisposable
                     await TryProactiveMeetMobRefreshAsync(ct);
                 }
 
-                // First check after startup: fetch history to catch any missed recharges (incl. 500 DA fix)
-                // Subsequent checks: balance only (no extra API calls)
-                var includeHistory = !_firstHistoryDone;
+                // Fetch history: every 5 min, on pending signal, or when balance increased via SMS
+                var includeHistory = _pendingHistoryCheck
+                    || (DateTime.UtcNow - _lastHistoryFetchUtc).TotalMinutes >= 5;
                 await CheckBalanceAndHistoryAsync(ct, includeHistory: includeHistory);
-                if (includeHistory) _firstHistoryDone = true;
+                if (includeHistory)
+                {
+                    _lastHistoryFetchUtc = DateTime.UtcNow;
+                    _pendingHistoryCheck = false;
+                }
             }
             catch (OperationCanceledException) { break; }
             catch (ObjectDisposedException) { break; }
