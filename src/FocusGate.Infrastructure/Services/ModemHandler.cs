@@ -440,6 +440,9 @@ public class ModemHandler : IDisposable
 
             if (_disposed || _meetMob == null) break;
 
+            // Skip during restart drain — let in-flight operations finish, don't start new MeetMob calls
+            if (RestartService.IsRestarting) continue;
+
             // Skip during post-startup phase to avoid duplicate balance calls
             if (!_postStartupDone) continue;
 
