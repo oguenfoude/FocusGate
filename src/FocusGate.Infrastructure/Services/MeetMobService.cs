@@ -355,8 +355,6 @@ public partial class MeetMobService
     private async Task<string?> WaitForOtpAsync(IAtCommandService at, string phone, CancellationToken ct)
     {
         var deadline = DateTime.UtcNow.AddSeconds(OtpPollTimeout);
-        int consecutiveEmpty = 0;
-        bool inboxCleared = false;
         _log.LogDebug("MeetMob [{Phone}]: Polling OTP (timeout={Timeout}s)", phone, OtpPollTimeout);
         while (DateTime.UtcNow < deadline && !ct.IsCancellationRequested)
         {
@@ -370,13 +368,6 @@ public partial class MeetMobService
                     {
                         return code;
                     }
-                }
-                consecutiveEmpty++;
-                if (consecutiveEmpty >= 5 && !inboxCleared)
-                {
-                    _log.LogWarning("MeetMob [{Phone}]: OTP poll — {Count} consecutive empty reads, clearing SMS inbox", phone, consecutiveEmpty);
-                    try { await at.DeleteAllSmsAsync(); } catch { }
-                    inboxCleared = true;
                 }
             }
             catch (Exception ex) when (!ct.IsCancellationRequested)
