@@ -104,39 +104,46 @@ public class DatabaseWriteChannel
             _logger.LogWarning(ex, "MachineId setter resolution failed — MachineId will not be stamped on writes");
         }
 
-        await foreach (var op in _channel.Reader.ReadAllAsync(ct))
+        try
         {
-            try
+            await foreach (var op in _channel.Reader.ReadAllAsync(ct))
             {
-                using var scope = _services.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<FocusGateDbContext>();
-                machineSetter?.Invoke(db);
-
-                bool success = false;
-                switch (op.Type)
+                try
                 {
-                    case Op.InsertModem:         await HandleInsertModemAsync(db, op.Data!, ct); success = true; break;
-                    case Op.UpdateModemStatus:    await HandleUpdateModemStatusAsync(db, op.Data!, ct); success = true; break;
-                    case Op.UpdateModemComPort:   await HandleUpdateModemComPortAsync(db, op.Data!, ct); success = true; break;
-                    case Op.UpsertSimCard:        await HandleUpsertSimCardAsync(db, op.Data!, ct); success = true; break;
-                    case Op.UpdateSimCardPhone:   await HandleUpdateSimCardPhoneAsync(db, op.Data!, ct); success = true; break;
-                    case Op.DeactivateSimCards:   await HandleDeactivateSimCardsAsync(db, op.Data!, ct); success = true; break;
-                    case Op.UpdateSimBalance:     success = await HandleUpdateSimBalanceAsync(db, op.Data!, ct); break;
-                    case Op.InsertSms:            success = await HandleInsertSmsAsync(db, (SmsRecord)op.Data!, ct); break;
-                    case Op.UpdateOrphanedModems: await HandleUpdateOrphanedModemsAsync(db, op.Data!, ct); success = true; break;
-                    case Op.CreateWithdrawalRequest: success = await HandleCreateWithdrawalRequestAsync(db, op.Data!, ct); break;
-                    case Op.ProcessWithdrawal: success = await HandleProcessWithdrawalAsync(db, op.Data!, ct); break;
-                    case Op.TouchModemUpdatedAt:    await HandleTouchModemUpdatedAtAsync(db, op.Data!, ct); success = true; break;
-                    case Op.InsertMeetMobHistory: success = await HandleInsertMeetMobHistoryAsync(db, op.Data!, ct); break;
-                    case Op.CleanupOldSms: success = await HandleCleanupOldSmsAsync(db, ct); break;
+                    using var scope = _services.CreateScope();
+                    var db = scope.ServiceProvider.GetRequiredService<FocusGateDbContext>();
+                    machineSetter?.Invoke(db);
+
+                    bool success = false;
+                    switch (op.Type)
+                    {
+                        case Op.InsertModem:         await HandleInsertModemAsync(db, op.Data!, ct); success = true; break;
+                        case Op.UpdateModemStatus:    await HandleUpdateModemStatusAsync(db, op.Data!, ct); success = true; break;
+                        case Op.UpdateModemComPort:   await HandleUpdateModemComPortAsync(db, op.Data!, ct); success = true; break;
+                        case Op.UpsertSimCard:        await HandleUpsertSimCardAsync(db, op.Data!, ct); success = true; break;
+                        case Op.UpdateSimCardPhone:   await HandleUpdateSimCardPhoneAsync(db, op.Data!, ct); success = true; break;
+                        case Op.DeactivateSimCards:   await HandleDeactivateSimCardsAsync(db, op.Data!, ct); success = true; break;
+                        case Op.UpdateSimBalance:     success = await HandleUpdateSimBalanceAsync(db, op.Data!, ct); break;
+                        case Op.InsertSms:            success = await HandleInsertSmsAsync(db, (SmsRecord)op.Data!, ct); break;
+                        case Op.UpdateOrphanedModems: await HandleUpdateOrphanedModemsAsync(db, op.Data!, ct); success = true; break;
+                        case Op.CreateWithdrawalRequest: success = await HandleCreateWithdrawalRequestAsync(db, op.Data!, ct); break;
+                        case Op.ProcessWithdrawal: success = await HandleProcessWithdrawalAsync(db, op.Data!, ct); break;
+                        case Op.TouchModemUpdatedAt:    await HandleTouchModemUpdatedAtAsync(db, op.Data!, ct); success = true; break;
+                        case Op.InsertMeetMobHistory: success = await HandleInsertMeetMobHistoryAsync(db, op.Data!, ct); break;
+                        case Op.CleanupOldSms: success = await HandleCleanupOldSmsAsync(db, ct); break;
+                    }
+                    op.Completed?.TrySetResult(success);
                 }
-                op.Completed?.TrySetResult(success);
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "WriteChannel error: {OpType}", op.Type);
+                    op.Completed?.TrySetResult(false);
+                }
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "WriteChannel error: {OpType}", op.Type);
-                op.Completed?.TrySetResult(false);
-            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogCritical(ex, "WriteChannel reader failed — all pending writes will be lost");
         }
     }
 

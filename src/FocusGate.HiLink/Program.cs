@@ -23,7 +23,7 @@ AppDomain.CurrentDomain.UnhandledException += (_, e) =>
 
 TaskScheduler.UnobservedTaskException += (_, e) =>
 {
-    // Absorb background task exceptions (e.g. socket timeouts / internet drops from 3rd-party connection pools) to prevent console noise
+    Console.WriteLine($"[ERROR] Unobserved task exception: {e.Exception?.InnerException?.Message ?? e.Exception?.Message ?? "unknown"}");
     e.SetObserved();
 };
 
