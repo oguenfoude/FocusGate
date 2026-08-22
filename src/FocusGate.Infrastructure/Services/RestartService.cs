@@ -88,5 +88,9 @@ public class RestartService : BackgroundService
             _lifetime.StopApplication();
         }
         catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Auto-restart task failed unexpectedly");
+        }
     }
 }

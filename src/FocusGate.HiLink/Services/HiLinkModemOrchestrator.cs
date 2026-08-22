@@ -51,10 +51,20 @@ public class HiLinkModemOrchestrator : BackgroundService
         _log.LogInformation("HiLink Orchestrator ready (max {Max} modems)", _maxModems);
 
         // Daily noon cache-void: runs in background, voids MeetMob token cache at 12:00pm every day
-        _ = Task.Run(() => DailyNoonCacheVoidAsync(ct), ct);
+        _ = Task.Run(async () =>
+        {
+            try { await DailyNoonCacheVoidAsync(ct); }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { _log.LogError(ex, "DailyNoonCacheVoid crashed unexpectedly"); }
+        }, ct);
 
         // Daily SMS cleanup: runs in background, deletes SMS records older than 60 days
-        _ = Task.Run(() => DailySmsCleanupAsync(ct), ct);
+        _ = Task.Run(async () =>
+        {
+            try { await DailySmsCleanupAsync(ct); }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { _log.LogError(ex, "DailySmsCleanup crashed unexpectedly"); }
+        }, ct);
 
         var countBefore = _handlers.Count;
         while (!ct.IsCancellationRequested)
@@ -406,6 +416,7 @@ public class HiLinkModemOrchestrator : BackgroundService
                             try { await _db.EnqueueAsync(new() { Type = DatabaseWriteChannel.Op.UpdateModemStatus, Data = new { ModemId = capturedModemId, Status = ModemStatus.Offline } }); } catch { }
                         }
                     }
+                    catch (OperationCanceledException) { }
                     catch (Exception ex)
                     {
                         _activeImeis.TryRemove(imei, out _);

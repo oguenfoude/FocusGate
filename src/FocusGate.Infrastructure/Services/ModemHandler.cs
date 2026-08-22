@@ -722,7 +722,9 @@ public class ModemHandler : IDisposable
 
         try
         {
-            DisconnectAsync().GetAwaiter().GetResult();
+            var disconnectTask = DisconnectAsync();
+            if (!disconnectTask.Wait(5000))
+                _log.LogWarning("Modem {Id}: DisconnectAsync timed out during dispose", _modemId);
         }
         catch (Exception ex) { _log.LogDebug(ex, "Modem {Id}: DisconnectAsync failed during dispose", _modemId); }
 

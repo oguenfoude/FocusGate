@@ -138,8 +138,12 @@ try
             // Reset restart counter after 30 seconds of successful execution
             _ = Task.Run(async () =>
             {
-                await Task.Delay(30000);
-                restartCount = 0;
+                try
+                {
+                    await Task.Delay(30000);
+                    restartCount = 0;
+                }
+                catch { }
             });
 
             await host.RunAsync(appCts.Token);
