@@ -23,6 +23,7 @@ public class MongoSyncService : BackgroundService
     private DateTime _lastSyncCompleted = DateTime.MinValue;
     private int _totalPulled = 0;
     private string _lastError = "";
+    private DateTime _reconcileCutoffUtc = DateTime.UtcNow;
 
     public DateTime LastSyncStarted => _lastSyncStarted;
     public DateTime LastSyncCompleted => _lastSyncCompleted;
@@ -131,6 +132,10 @@ public class MongoSyncService : BackgroundService
                     await IncrementalSyncAsync(db, stoppingToken);
                 }
                 _lastSyncCompleted = DateTime.UtcNow;
+
+                // Safety net: re-push any entity whose inline MongoDB write was missed
+                // (e.g. brief internet blip at write time). Guarantees eventual consistency.
+                await ReconcilePushAsync(stoppingToken);
             }
             catch (OperationCanceledException) { break; }
             catch (InvalidOperationException ex)
@@ -166,6 +171,39 @@ public class MongoSyncService : BackgroundService
             _logger.LogError(ex, "Final pull failed");
         }
         await base.StopAsync(cancellationToken);
+    }
+
+    private async Task ReconcilePushAsync(CancellationToken ct)
+    {
+        try
+        {
+            var since = _reconcileCutoffUtc.AddMinutes(-2); // 2min overlap guards clock skew
+            var cutoff = DateTime.UtcNow;
+
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<FocusGateDbContext>();
+
+            var modems = await db.Modems.AsNoTracking().Where(m => m.UpdatedAt >= since).ToListAsync(ct);
+            var sims = await db.SimCards.AsNoTracking().Where(s => s.UpdatedAt >= since).ToListAsync(ct);
+            var bhs = await db.BalanceHistories.AsNoTracking().Where(b => b.UpdatedAt >= since).ToListAsync(ct);
+            var ubhs = await db.UserBalanceHistories.AsNoTracking().Where(u => u.UpdatedAt >= since).ToListAsync(ct);
+            var sms = await db.SmsRecords.AsNoTracking().Where(s => s.UpdatedAt >= since).OrderByDescending(s => s.ReceivedAt).Take(500).ToListAsync(ct);
+
+            int pushed = 0;
+            if (modems.Count > 0) pushed += await _mongo.UpsertManyAsync(_mongo.Modems, modems, ct);
+            if (sims.Count > 0) pushed += await _mongo.UpsertManyAsync(_mongo.SimCards, sims, ct);
+            if (bhs.Count > 0) pushed += await _mongo.UpsertManyAsync(_mongo.BalanceHistories, bhs, ct);
+            if (ubhs.Count > 0) pushed += await _mongo.UpsertManyAsync(_mongo.UserBalanceHistories, ubhs, ct);
+            if (sms.Count > 0) pushed += await _mongo.UpsertManyAsync(_mongo.SmsRecords, sms, ct);
+
+            _reconcileCutoffUtc = cutoff;
+            if (pushed > 0)
+                _logger.LogInformation("Reconcile push: {Count} entities re-synced to MongoDB ({Modems} modems, {Sims} sims, {Sms} sms)", pushed, modems.Count, sims.Count, sms.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Reconcile push failed — will retry next cycle");
+        }
     }
 
     private async Task FullSyncAsync(FocusGateDbContext db, CancellationToken ct)
