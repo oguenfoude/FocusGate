@@ -4,6 +4,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
 using MongoDB.Driver;
 using System.Linq.Expressions;
 
@@ -303,6 +305,40 @@ public class MongoSyncService : BackgroundService
         _totalPulled += pulled;
     }
 
+    private async Task<List<T>> PullWithFlexibleIds<T>(
+        IMongoCollection<T> collection,
+        FilterDefinition<T> filter,
+        string collectionName,
+        CancellationToken ct) where T : class, new()
+    {
+        var bsonColl = collection.Database.GetCollection<BsonDocument>(
+            collection.CollectionNamespace.CollectionName);
+        var bsonDocs = await bsonColl.Find(new BsonDocument()).ToListAsync(ct);
+
+        var result = new List<T>();
+        foreach (var bson in bsonDocs)
+        {
+            try
+            {
+                var idElement = bson["_id"];
+                if (idElement.IsInt32 || idElement.IsInt64 || idElement.IsDouble)
+                {
+                    var doc = BsonSerializer.Deserialize<T>(bson);
+                    result.Add(doc);
+                }
+                else
+                {
+                    _logger.LogDebug("Skipping {Collection} doc with non-numeric _id type: {Type}", collectionName, idElement.BsonType);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug("Skipping unconvertible {Collection} doc: {Error}", collectionName, ex.Message);
+            }
+        }
+        return result;
+    }
+
     private async Task<int> PullCollectionAsync<T>(
         FocusGateDbContext db,
         IMongoCollection<T> collection,
@@ -333,6 +369,13 @@ public class MongoSyncService : BackgroundService
                 catch (System.Net.Sockets.SocketException) when (attempt == 1 && !ct.IsCancellationRequested)
                 {
                     await Task.Delay(500, ct);
+                }
+                catch (Exception ex) when (attempt == 1 && !ct.IsCancellationRequested
+                    && (ex.Message.Contains("Int64") || ex.Message.Contains("ObjectId") || ex is FormatException))
+                {
+                    _logger.LogWarning("Pull {Collection}: mixed _id types detected, using tolerant read", collectionName);
+                    mongoDocs = await PullWithFlexibleIds(collection, filter, collectionName, ct);
+                    break;
                 }
             }
 
