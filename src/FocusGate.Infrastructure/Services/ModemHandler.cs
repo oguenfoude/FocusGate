@@ -37,6 +37,8 @@ public class ModemHandler : IDisposable
     private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan DisposeLoopTimeout = TimeSpan.FromSeconds(10);
     private DateTime? _smsCooldownUntil;
+    private DateTime _lastUssdBalanceAttemptUtc = DateTime.MinValue;
+    private static readonly TimeSpan UssdBalanceMinInterval = TimeSpan.FromMinutes(10);
     private MeetMobToken? _meetMobToken;
     private DateTime _lastMeetMobRefreshUtc = DateTime.MinValue;
     private static readonly TimeSpan MeetMobTokenProactiveRefreshWindow = TimeSpan.FromMinutes(5);
@@ -364,6 +366,7 @@ public class ModemHandler : IDisposable
     {
         while (!ct.IsCancellationRequested)
         {
+            Heartbeat.Pulse($"modem.{_modemId}.watchdog");
             try { await Task.Delay(interval, ct); }
             catch (OperationCanceledException) { break; }
 
@@ -384,6 +387,7 @@ public class ModemHandler : IDisposable
     {
         while (!ct.IsCancellationRequested)
         {
+            Heartbeat.Pulse($"modem.{_modemId}.sms-poll");
             try { await Task.Delay(interval, ct); }
             catch (OperationCanceledException) { break; }
 
@@ -435,6 +439,7 @@ public class ModemHandler : IDisposable
 
         while (!ct.IsCancellationRequested)
         {
+            Heartbeat.Pulse($"modem.{_modemId}.meetmob-check");
             try { await Task.Delay(TimeSpan.FromSeconds(checkInterval), ct); }
             catch (OperationCanceledException) { break; }
 
@@ -670,6 +675,13 @@ public class ModemHandler : IDisposable
         }
 
         // --- Step 3: USSD *222# fallback (MeetMob unavailable) ---
+        if (DateTime.UtcNow - _lastUssdBalanceAttemptUtc < UssdBalanceMinInterval)
+        {
+            _log.LogDebug("Modem {Id}: USSD fallback throttled (last attempt {Ago}s ago) — skipping to avoid SMS inbox flood",
+                _modemId, (int)(DateTime.UtcNow - _lastUssdBalanceAttemptUtc).TotalSeconds);
+            return;
+        }
+        _lastUssdBalanceAttemptUtc = DateTime.UtcNow;
         _log.LogDebug("Modem {Id}: MeetMob unavailable — falling back to *222# USSD", _modemId);
         var balance = await _at.GetBalanceAsync();
         if (balance.HasValue)
@@ -1238,6 +1250,9 @@ public class ModemHandler : IDisposable
     {
         if (_ussdUnavailableSince.HasValue && DateTime.UtcNow - _ussdUnavailableSince.Value < TimeSpan.FromMinutes(10))
             return;
+        if (DateTime.UtcNow - _lastUssdBalanceAttemptUtc < UssdBalanceMinInterval)
+            return;
+        _lastUssdBalanceAttemptUtc = DateTime.UtcNow;
         _ussdUnavailableSince = null;
         try
         {
@@ -1322,6 +1337,7 @@ public class ModemHandler : IDisposable
     {
         while (!ct.IsCancellationRequested)
         {
+            Heartbeat.Pulse($"modem.{_modemId}.network-retry");
             try { await Task.Delay(TimeSpan.FromSeconds(30), ct); }
             catch (OperationCanceledException) { break; }
 

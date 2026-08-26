@@ -108,6 +108,7 @@ public class DatabaseWriteChannel
         {
             await foreach (var op in _channel.Reader.ReadAllAsync(ct))
             {
+                Heartbeat.Pulse("write-channel");
                 try
                 {
                     using var scope = _services.CreateScope();

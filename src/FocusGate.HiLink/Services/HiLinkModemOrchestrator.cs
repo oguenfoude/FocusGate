@@ -69,6 +69,7 @@ public class HiLinkModemOrchestrator : BackgroundService
         var countBefore = _handlers.Count;
         while (!ct.IsCancellationRequested)
         {
+            Heartbeat.Pulse("orchestrator.scan");
             try
             {
                 _log.LogDebug("Scan cycle starting ({Count} handlers active, {Blacklisted} blacklisted IPs)", _handlers.Count, _blacklistedIps.Count);

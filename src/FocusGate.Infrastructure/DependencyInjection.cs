@@ -88,6 +88,7 @@ public static class DependencyInjection
         services.AddHostedService(sp => sp.GetRequiredService<MongoSyncService>());
         services.AddHostedService<ConsoleCommandHandler>();
         services.AddHostedService<RestartService>();
+        services.AddHostedService<FreezeWatchdog>();
 
         return services;
     }

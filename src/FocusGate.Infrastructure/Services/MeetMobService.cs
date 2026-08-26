@@ -42,21 +42,19 @@ public partial class MeetMobService
     private readonly ConcurrentDictionary<string, string?> _lastErrorCodes = new();
     private readonly SemaphoreSlim _httpThrottle = new(3, 3); // Max 3 concurrent HTTP requests to MeetMob
     private static DateTime _lastRequestUtc = DateTime.MinValue;
-    private static readonly object _rateLimitLock = new();
+    private static readonly SemaphoreSlim _rateGate = new(1, 1);
 
     private static async Task ThrottleGlobalAsync(CancellationToken ct)
     {
-        lock (_rateLimitLock)
+        await _rateGate.WaitAsync(ct);
+        try
         {
             var elapsed = DateTime.UtcNow - _lastRequestUtc;
             if (elapsed < TimeSpan.FromMilliseconds(500))
-            {
-                var wait = TimeSpan.FromMilliseconds(500) - elapsed;
-                Task.Delay(wait, ct).Wait(ct);
-            }
+                await Task.Delay(TimeSpan.FromMilliseconds(500) - elapsed, ct);
             _lastRequestUtc = DateTime.UtcNow;
         }
-        await Task.CompletedTask;
+        finally { _rateGate.Release(); }
     }
 
     public bool WasLastRequestNetworkError(string? key = null)

@@ -98,6 +98,7 @@ public class MongoSyncService : BackgroundService
 
         while (!stoppingToken.IsCancellationRequested)
         {
+            Heartbeat.Pulse("mongo-sync");
             try
             {
                 if (!_mongo.IsConnected)

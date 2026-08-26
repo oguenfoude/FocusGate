@@ -7,7 +7,7 @@ public class MeetMobTokenStore
 {
     private readonly string _filePath;
     private readonly SemaphoreSlim _lock = new(1, 1);
-    private Dictionary<string, MeetMobToken> _tokens = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, MeetMobToken> _tokens = new();
     private bool _loaded;
 
     public MeetMobTokenStore()
@@ -33,7 +33,7 @@ public class MeetMobTokenStore
     public async Task RemoveAsync(string key)
     {
         await LoadAsync();
-        if (_tokens.Remove(key))
+        if (_tokens.TryRemove(key, out _))
             await PersistAsync();
     }
 
@@ -46,18 +46,13 @@ public class MeetMobTokenStore
     public async Task<int> PurgeExpiredAsync()
     {
         await LoadAsync();
-        await _lock.WaitAsync();
-        try
-        {
-            var now = DateTime.UtcNow;
-            var expired = _tokens.Where(kvp => kvp.Value.ExpiresAt <= now).Select(kvp => kvp.Key).ToList();
-            foreach (var key in expired)
-                _tokens.Remove(key);
-            if (expired.Count > 0)
-                await PersistAsync();
-            return expired.Count;
-        }
-        finally { _lock.Release(); }
+        var now = DateTime.UtcNow;
+        var expired = _tokens.Where(kvp => kvp.Value.ExpiresAt <= now).Select(kvp => kvp.Key).ToList();
+        foreach (var key in expired)
+            _tokens.TryRemove(key, out _);
+        if (expired.Count > 0)
+            await PersistAsync();
+        return expired.Count;
     }
 
     private async Task LoadAsync()
@@ -72,11 +67,13 @@ public class MeetMobTokenStore
                 try
                 {
                     var json = await File.ReadAllTextAsync(_filePath);
-                    _tokens = JsonSerializer.Deserialize<Dictionary<string, MeetMobToken>>(json) ?? new();
+                    var loaded = JsonSerializer.Deserialize<Dictionary<string, MeetMobToken>>(json) ?? new();
+                    foreach (var kvp in loaded)
+                        _tokens[kvp.Key] = kvp.Value;
                 }
                 catch
                 {
-                    _tokens = new();
+                    // keep existing tokens on read failure
                 }
             }
             _loaded = true;

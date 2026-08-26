@@ -17,12 +17,15 @@ WindowsPlatformHelper.DisableConsoleQuickEdit();
 AppDomain.CurrentDomain.UnhandledException += (_, e) =>
 {
     var ex = e.ExceptionObject as Exception;
+    try { Serilog.Log.Fatal(ex, "[FATAL] Unhandled exception | Terminating: {IsTerminating}", e.IsTerminating); } catch { }
+    try { Serilog.Log.CloseAndFlush(); } catch { }
     Console.WriteLine($"[FATAL] Unhandled exception: {ex?.Message ?? e.ExceptionObject.ToString()}");
     Console.WriteLine($"[FATAL] Terminating: {e.IsTerminating}");
 };
 
 TaskScheduler.UnobservedTaskException += (_, e) =>
 {
+    try { Serilog.Log.Error(e.Exception, "[ERROR] Unobserved task exception"); } catch { }
     Console.WriteLine($"[ERROR] Unobserved task exception: {e.Exception?.InnerException?.Message ?? e.Exception?.Message ?? "unknown"}");
     e.SetObserved();
 };
@@ -165,6 +168,7 @@ try
                 break;
 
             restartCount++;
+            try { Serilog.Log.Error(ex, "[!] Process error — auto-restarting in 5s (attempt {Attempt})", restartCount); } catch { }
             Console.WriteLine();
             Console.WriteLine($"[!] Process error: {ex.Message}");
             Console.WriteLine($"    Auto-restarting in 5 seconds... (attempt {restartCount})");
