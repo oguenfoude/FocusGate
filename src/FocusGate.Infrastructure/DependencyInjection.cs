@@ -23,7 +23,6 @@ public static class DependencyInjection
         services.AddSingleton<MachineInfoService>();
         services.AddSingleton<DatabaseWriteChannel>();
         services.AddSingleton<IUssdExecutionEngine, UssdExecutionEngine>();
-        services.AddSingleton<ISmsProcessingEngine, SmsProcessingEngine>();
         var configPath = Path.Combine(dir, "config.json");
         services.AddSingleton<IConfigProvider>(new JsonConfigProvider(configPath));
 

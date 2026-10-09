@@ -121,7 +121,6 @@ public class ModemHandler : IDisposable
     }
 
     private readonly IUssdExecutionEngine _ussdEngine;
-    private readonly ISmsProcessingEngine _smsEngine;
 
     public VirtualModemContext Context { get; }
     public bool IsAlive => !_disposed && _at?.IsOpen == true;
@@ -135,8 +134,7 @@ public class ModemHandler : IDisposable
         string comPort,
         bool isHiLink = false,
         MeetMobService? meetMob = null,
-        IUssdExecutionEngine? ussdEngine = null,
-        ISmsProcessingEngine? smsEngine = null)
+        IUssdExecutionEngine? ussdEngine = null)
     {
         _at = at;
         _db = db;
@@ -148,7 +146,6 @@ public class ModemHandler : IDisposable
         _meetMob = meetMob;
         _loopCts = new CancellationTokenSource();
         _ussdEngine = ussdEngine ?? new UssdExecutionEngine(config, db, Microsoft.Extensions.Logging.Abstractions.NullLogger<UssdExecutionEngine>.Instance);
-        _smsEngine = smsEngine ?? new SmsProcessingEngine(db, Microsoft.Extensions.Logging.Abstractions.NullLogger<SmsProcessingEngine>.Instance);
         Context = new VirtualModemContext
         {
             ModemId = modemId,
@@ -518,12 +515,19 @@ public class ModemHandler : IDisposable
                     var phoneViaUssd = await _at.GetPhoneNumberViaUssdAsync();
                     if (!string.IsNullOrEmpty(phoneViaUssd))
                     {
-                        await _db.EnqueueAsync(new()
+                        if (long.TryParse(phoneViaUssd, out var phoneNum) && phoneNum > 0)
                         {
-                            Type = DatabaseWriteChannel.Op.UpsertSimCard,
-                            Data = new { ModemId = _modemId, PhoneNumber = phoneViaUssd }
-                        });
-                        phoneRaw = phoneViaUssd;
+                            await _db.EnqueueAsync(new()
+                            {
+                                Type = DatabaseWriteChannel.Op.UpdateSimCardPhone,
+                                Data = new { ModemId = _modemId, PhoneNumber = phoneNum }
+                            });
+                            phoneRaw = phoneViaUssd;
+                        }
+                        else
+                        {
+                            _log.LogWarning("Modem {Id}: Phone number not numeric: {Phone}", _modemId, phoneViaUssd);
+                        }
                     }
                 }
                 finally { SafeReleaseAtLock(); }

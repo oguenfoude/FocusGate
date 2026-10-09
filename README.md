@@ -8,14 +8,11 @@ A complete solution for managing Huawei HiLink USB modems, SIM cards, SMS, and u
 
 ```
 USB Modems → .NET Gateway → SQLite (local) → MongoDB Atlas (cloud) ← Next.js Web App (reads MongoDB)
-                                                  ↑
-                                          ASP.NET Dashboard (reads SQLite, port 5080)
 ```
 
 | Component | Stack | Port | Database |
 |-----------|-------|------|----------|
 | .NET Gateway | .NET 10, C#, SQLite | — | `focusgate.db` |
-| .NET Dashboard | ASP.NET Razor Pages | 5080 | SQLite (read-only) |
 | Next.js Web App | Next.js 16, React 19, MongoDB | 3000 | MongoDB Atlas |
 
 ---
@@ -27,9 +24,7 @@ FocusGate/
 ├── src/
 │   ├── FocusGate.Core/              — Models, enums, PathService (no deps)
 │   ├── FocusGate.Infrastructure/    — DbContext, services, MongoDB sync
-│   ├── FocusGate.AT/                — COM port modem entry point
-│   ├── FocusGate.HiLink/            — Huawei HTTP modem entry point
-│   └── FocusGate.Dashboard/         — ASP.NET Razor Pages dashboard
+│   └── FocusGate.HiLink/            — Huawei USB modem entry point (the only gateway)
 │
 ├── focusgate-web/                   — Next.js cloud admin dashboard
 │   ├── src/
@@ -39,12 +34,9 @@ FocusGate/
 │   │   └── i18n/                    — Translations: en.json, fr.json, ar.json
 │   └── ...
 │
-├── dist/                            — Published executables
-│   ├── hilink/                      — Full HiLink gateway + dashboard
-│   ├── at/                          — Full AT modem gateway + dashboard
-│   └── dashboard/                   — Dashboard only
+├── dist/                            — Published executables (gitignored, from `dotnet publish`)
 │
-├── FocusGate.sln                    — Solution file
+├── FocusGate.sln                    — Solution file (3 C# projects)
 └── AGENTS.md                        — Agent instructions
 ```
 
@@ -70,17 +62,11 @@ All branches have the same code — only the default MongoDB database name diffe
 # Build
 dotnet build FocusGate.sln
 
-# Run HiLink modems (auto-launches Dashboard)
+# Run HiLink gateway (console: help, status, modems, exit)
 dotnet run --project src/FocusGate.HiLink
-
-# Run AT modems (auto-launches Dashboard)
-dotnet run --project src/FocusGate.AT
-
-# Dashboard only
-dotnet run --project src/FocusGate.Dashboard
 ```
 
-Dashboard opens at `http://localhost:5080`.
+Use the console commands (`status`, `modems`, `sms`, `users`, …) to inspect the gateway. Type `help` for the full list.
 
 ### Next.js Web App
 
@@ -95,30 +81,26 @@ npm start                   # Production server
 ### Publish for Deployment
 
 ```powershell
-# Publish HiLink gateway + dashboard to dist/hilink/
+# Publish HiLink gateway to dist/hilink/
 dotnet publish src/FocusGate.HiLink -c Release -r win-x64 --self-contained -o dist/hilink
-dotnet publish src/FocusGate.Dashboard -c Release -r win-x64 --self-contained -o dist/dashboard
-Copy-Item dist\dashboard\FocusGate.Dashboard.exe dist\hilink\ -Force
-# ... (copy all Dashboard files to dist/hilink/, see AGENTS.md for full list)
 ```
 
 ---
 
 ## Key Features
 
-### .NET Dashboard (localhost:5080)
+### Gateway console (no web UI — use these commands)
 
-| Page | What it does |
+| Command | What it does |
 |------|-------------|
-| **Dashboard** | 4 stat cards (modems, SIM balance online-only, user wallets, pending withdrawals), recent SMS |
-| **Modems** | Modem list with filter pills (All/Online/Offline/Assigned/Unassigned), 5s auto-refresh |
-| **ModemDetail** | Info + Balance History + SMS tabs, unassign action |
-| **Users** | User CRUD with search, archive/restore, **edit username/password/display name** |
-| **UserDetail** | Modems + Wallet + History + SMS tabs, assign/unassign modems, create withdrawal |
-| **Withdrawals** | Approve/reject withdrawal requests, admin note |
-| **Warnings** | Modems with high SIM balance (>= 45,000 DA) |
-| **AdminSettings** | Change admin username and password |
-| **SetLanguage** | Switch between EN/FR/AR |
+| `status` | Live dashboard (modems online/offline, SMS count, balances, MongoDB state) |
+| `modems` / `modem <id>` | Modem list / modem detail + SIM + SMS stats |
+| `sms [modemId] [days]` / `sim <modemId>` | Recent SMS / SIM history for a modem |
+| `users` / `adduser <u> <p> [d]` | List users / create user |
+| `assign <uid> <mid>` / `unassign <uid> <mid>` | Assign modem to user / remove assignment |
+| `settle <modId> <amt> [note]` | Manual balance adjustment (logged as settlement) |
+| `report balance/sms` | Balance history / SMS report by date range |
+| `config` / `set-config <k> <v>` / `setmongo <uri>` | View / change config / set MongoDB URI |
 
 ### Next.js Web App
 
@@ -151,21 +133,21 @@ Copy-Item dist\dashboard\FocusGate.Dashboard.exe dist\hilink\ -Force
 ### Startup Sequence
 
 ```
-1. Mutex check (Global\FocusGate_HiLink or Global\FocusGate_AT)
+1. Mutex check (Global\FocusGate_HiLink — single instance)
 2. ConfigMerger creates/merges config.json in %APPDATA%\FocusGate\
 3. DatabaseInitializer: EnsureCreated + PRAGMAs + column migrations + indexes
 4. DatabaseWriteChannel starts processing write queue
-5. MongoSyncService waits 15s, connects to MongoDB (5 retries)
+5. MongoSyncService waits 5s, connects to MongoDB (retries forever, non-fatal)
 6. HiLinkDiscovery probes IPs → finds modems
-7. For each modem: connect → get IMEI/IMSI → insert to SQLite → *222# balance → start 3 loops
+7. For each modem: connect → get IMEI/IMSI → insert to SQLite → *101# phone → MeetMob OTP login → start loops
 ```
 
-### Steady State (every 30s)
+### Steady State
 
 ```
-SMS Poll (30s): Read SMS → save to SQLite → dedup → delete from SIM → Mobilis trigger if recharge
-Watchdog (30s): Session refresh → alive check → mark Online/Offline/Disconnect
-Network Retry (2min): Network registration check → mark Online
+SMS Poll (5s): Read SMS → save to SQLite → dedup → delete from SIM → MeetMob check if recharge
+Watchdog (30s): Session refresh → alive check → mark Online/Offline
+MeetMob check (60s): OTP login → balance → recharge history → credit user wallets
 MongoDB Sync (30s): Push SQLite → MongoDB, Pull MongoDB → SQLite
 ```
 
@@ -194,10 +176,10 @@ Config file: `%APPDATA%\FocusGate\config.json` (auto-created by ConfigMerger)
 | **SQLite** | Primary local database — writes always succeed locally |
 | **Soft delete** | `ArchivedAt` field on all entities — never hard-delete |
 | **Online status** | `status === 4` only — no stale `updatedAt` checks on web |
-| **Balance** | Only changed by `*222#` USSD — triggered at startup + Mobilis SMS |
+| **Balance** | MeetMob is source of truth — user wallets credited only from MeetMob history; USSD `*222#` is fallback |
 | **MachineId** | Tracks original creator — never overwritten on push/pull |
 | **Timestamp guards** | Pull operations only overwrite when remote is newer |
-| **No restarts** | System must be stable and self-recovering |
+| **Auto-restart** | RestartService restarts every 8h; self-recovering loops everywhere |
 | **MongoDB sync** | Non-fatal — app works fine without it |
 | **No git push** | Until user explicitly says so |
 
@@ -218,7 +200,7 @@ Config file: `%APPDATA%\FocusGate\config.json` (auto-created by ConfigMerger)
 
 1. Copy `dist/hilink/*` to the PC
 2. Run `FocusGate.HiLink.exe` — auto-creates config + SQLite database
-3. Open `http://localhost:5080` — dashboard works immediately
+3. Type `status` in the console — gateway works immediately
 4. Configure `mongodb.uri` and `mongodb.database` in config.json for cloud sync
 
 ### Database Reset
@@ -241,7 +223,6 @@ Delete `focusgate.db` + `-shm` + `-wal` files, restart to re-seed `admin:admin`.
 # .NET
 dotnet build FocusGate.sln                                    # Build (0 warnings, 0 errors)
 dotnet publish src/FocusGate.HiLink -c Release -r win-x64 --self-contained -o dist/hilink
-dotnet publish src/FocusGate.Dashboard -c Release -r win-x64 --self-contained -o dist/dashboard
 
 # Next.js
 cd focusgate-web

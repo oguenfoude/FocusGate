@@ -148,9 +148,23 @@ public class DatabaseWriteChannel
         }
     }
 
+    // Guards against KeyNotFoundException on malformed write ops: missing keys become
+    // a warning + skip instead of an error. Every dict-based handler must call this first.
+    private bool RequireKeys(Dictionary<string, JsonElement> d, string op, params string[] keys)
+    {
+        foreach (var k in keys)
+            if (!d.ContainsKey(k))
+            {
+                _logger.LogWarning("WriteChannel: op {Op} missing required key '{Key}' — skipping", op, k);
+                return false;
+            }
+        return true;
+    }
+
     private async Task HandleInsertModemAsync(FocusGateDbContext db, object data, CancellationToken ct)
     {
         var d = Deserialize(data);
+        if (!RequireKeys(d, "InsertModem", "IMEI", "IMSI")) return;
         var imei = d["IMEI"].GetString() ?? "";
         var imsi = d["IMSI"].GetString() ?? "";
         var phone = d.ContainsKey("PhoneNumber") ? d["PhoneNumber"].GetInt64() : 0;
@@ -204,6 +218,7 @@ public class DatabaseWriteChannel
     private async Task HandleUpdateModemStatusAsync(FocusGateDbContext db, object data, CancellationToken ct)
     {
         var d = Deserialize(data);
+        if (!RequireKeys(d, "UpdateModemStatus", "ModemId", "Status")) return;
         var modemId = d["ModemId"].GetInt32();
         var status = (ModemStatus)d["Status"].GetInt32();
 
@@ -235,6 +250,7 @@ public class DatabaseWriteChannel
     private async Task HandleTouchModemUpdatedAtAsync(FocusGateDbContext db, object data, CancellationToken ct)
     {
         var d = Deserialize(data);
+        if (!RequireKeys(d, "TouchModemUpdatedAt", "ModemId")) return;
         var modemId = d["ModemId"].GetInt32();
         var now = DateTime.UtcNow;
 
@@ -263,6 +279,7 @@ public class DatabaseWriteChannel
     private async Task HandleUpdateModemComPortAsync(FocusGateDbContext db, object data, CancellationToken ct)
     {
         var d = Deserialize(data);
+        if (!RequireKeys(d, "UpdateModemComPort", "ModemId", "ComPort")) return;
         var modemId = d["ModemId"].GetInt32();
         var comPort = d["ComPort"].ValueKind == JsonValueKind.Null ? null : d["ComPort"].GetString();
 
@@ -286,16 +303,37 @@ public class DatabaseWriteChannel
     private async Task HandleUpsertSimCardAsync(FocusGateDbContext db, object data, CancellationToken ct)
     {
         var d = Deserialize(data);
+        if (!RequireKeys(d, "UpsertSimCard", "ModemId")) return;
         var modemId = d["ModemId"].GetInt32();
-        var imsi = d["IMSI"].GetString() ?? "";
+        var imsi = d.TryGetValue("IMSI", out var imsiElem) && imsiElem.ValueKind == JsonValueKind.String
+            ? imsiElem.GetString() ?? ""
+            : "";
 
         var activeSim = await db.SimCards
             .FirstOrDefaultAsync(s => s.ModemId == modemId && s.IsActive, ct);
 
+        TryGetPhoneNumber(d, out var phone);
+
+        if (string.IsNullOrEmpty(imsi))
+        {
+            // Phone-only update (e.g. *101# result): cannot create a SIM row without IMSI.
+            if (activeSim != null)
+            {
+                if (phone > 0 && activeSim.PhoneNumber != phone)
+                {
+                    activeSim.PhoneNumber = phone;
+                    activeSim.LastSeen = DateTime.UtcNow;
+                    await db.SaveChangesAsync(ct);
+                }
+                return;
+            }
+            _logger.LogWarning("UpsertSimCard: No IMSI and no active SIM on modem {ModemId} — skipping", modemId);
+            return;
+        }
+
         if (activeSim != null && activeSim.IMSI == imsi)
         {
             activeSim.LastSeen = DateTime.UtcNow;
-            var phone = d.ContainsKey("PhoneNumber") ? d["PhoneNumber"].GetInt64() : 0;
             if (phone > 0)
                 activeSim.PhoneNumber = phone;
             await db.SaveChangesAsync(ct);
@@ -316,7 +354,7 @@ public class DatabaseWriteChannel
             activeSim.LastSeen = DateTime.UtcNow;
         }
 
-        var newPhone = d.ContainsKey("PhoneNumber") ? d["PhoneNumber"].GetInt64() : 0;
+        var newPhone = phone;
         var newSim = new SimCard
         {
             ModemId = modemId,
@@ -342,8 +380,13 @@ public class DatabaseWriteChannel
     private async Task HandleUpdateSimCardPhoneAsync(FocusGateDbContext db, object data, CancellationToken ct)
     {
         var d = Deserialize(data);
+        if (!RequireKeys(d, "UpdateSimCardPhone", "ModemId")) return;
         var modemId = d["ModemId"].GetInt32();
-        var phone = d["PhoneNumber"].GetInt64();
+        if (!TryGetPhoneNumber(d, out var phone) || phone <= 0)
+        {
+            _logger.LogWarning("UpdateSimCardPhone: Invalid phone number on modem {ModemId} — skipping", modemId);
+            return;
+        }
 
         var sim = await db.SimCards.FirstOrDefaultAsync(s => s.ModemId == modemId && s.IsActive, ct);
         if (sim == null)
@@ -368,6 +411,7 @@ public class DatabaseWriteChannel
     private async Task HandleDeactivateSimCardsAsync(FocusGateDbContext db, object data, CancellationToken ct)
     {
         var d = Deserialize(data);
+        if (!RequireKeys(d, "DeactivateSimCards", "ModemId")) return;
         var modemId = d["ModemId"].GetInt32();
         var now = DateTime.UtcNow;
 
@@ -398,6 +442,7 @@ public class DatabaseWriteChannel
     private async Task<bool> HandleUpdateSimBalanceAsync(FocusGateDbContext db, object data, CancellationToken ct)
     {
         var d = Deserialize(data);
+        if (!RequireKeys(d, "UpdateSimBalance", "ModemId", "Balance")) return false;
         var modemId = d["ModemId"].GetInt32();
         var newBalance = d["Balance"].GetDecimal();
         var source = BalanceSource.USSD;
@@ -407,6 +452,10 @@ public class DatabaseWriteChannel
                 Enum.TryParse<BalanceSource>(srcElem.GetString(), true, out source);
             else if (srcElem.ValueKind == JsonValueKind.Number)
                 source = (BalanceSource)srcElem.GetInt32();
+        }
+        else
+        {
+            _logger.LogDebug("UpdateSimBalance: no Source key — defaulting to USSD (modem {ModemId})", modemId);
         }
 
         var sim = await db.SimCards.FirstOrDefaultAsync(s => s.ModemId == modemId && s.IsActive, ct);
@@ -682,6 +731,7 @@ public class DatabaseWriteChannel
     private async Task HandleUpdateOrphanedModemsAsync(FocusGateDbContext db, object data, CancellationToken ct)
     {
         var d = Deserialize(data);
+        if (!RequireKeys(d, "UpdateOrphanedModems", "ActiveImeis")) return;
         var activeImeis = d["ActiveImeis"].EnumerateArray()
             .Select(x => x.GetString() ?? "").ToHashSet();
 
@@ -744,6 +794,7 @@ public class DatabaseWriteChannel
     private async Task<bool> HandleCreateWithdrawalRequestAsync(FocusGateDbContext db, object data, CancellationToken ct)
     {
         var d = Deserialize(data);
+        if (!RequireKeys(d, "CreateWithdrawalRequest", "UserId", "Amount")) return false;
         var userId = d["UserId"].GetInt64();
         var amount = d["Amount"].GetDecimal();
         var note = d.ContainsKey("Note") ? d["Note"].GetString() : null;
@@ -783,6 +834,7 @@ public class DatabaseWriteChannel
     private async Task<bool> HandleProcessWithdrawalAsync(FocusGateDbContext db, object data, CancellationToken ct)
     {
         var d = Deserialize(data);
+        if (!RequireKeys(d, "ProcessWithdrawal", "RequestId", "AdminId", "Approved")) return false;
         var requestId = d["RequestId"].GetInt64();
         var adminId = d["AdminId"].GetInt64();
         var approved = d["Approved"].GetBoolean();
@@ -905,6 +957,7 @@ public class DatabaseWriteChannel
     private async Task<bool> HandleInsertMeetMobHistoryAsync(FocusGateDbContext db, object data, CancellationToken ct)
     {
         var d = Deserialize(data);
+        if (!RequireKeys(d, "InsertMeetMobHistory", "ModemId", "Records")) return false;
         var modemId = d["ModemId"].GetInt32();
         var records = JsonSerializer.Deserialize<List<MeetMobRechargeRecordDto>>(d["Records"].GetRawText()) ?? new();
 
@@ -1058,6 +1111,19 @@ public class DatabaseWriteChannel
     {
         var json = JsonSerializer.Serialize(data);
         return JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json) ?? new();
+    }
+
+    /// <summary>Reads PhoneNumber from a write op whether it was enqueued as a JSON number or a numeric string.</summary>
+    private static bool TryGetPhoneNumber(Dictionary<string, JsonElement> d, out long phone)
+    {
+        phone = 0;
+        if (!d.TryGetValue("PhoneNumber", out var elem))
+            return false;
+        if (elem.ValueKind == JsonValueKind.Number && elem.TryGetInt64(out phone))
+            return true;
+        if (elem.ValueKind == JsonValueKind.String)
+            return long.TryParse(elem.GetString(), out phone);
+        return false;
     }
 }
 
